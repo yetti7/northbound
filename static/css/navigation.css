@@ -1,0 +1,135 @@
+.access-code-panel {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 4px 18px;
+  margin: -10px 0 34px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.brand-logo {
+  display: block;
+  width: auto;
+  height: 58px;
+  object-fit: contain;
+}
+
+.brand-logo-light,
+.brand-icon {
+  display: none;
+}
+
+html[data-theme="light"] .brand-logo-dark {
+  display: none;
+}
+
+html[data-theme="light"] .brand-logo-light {
+  display: block;
+}
+
+.access-code-panel span,
+.access-code-panel small {
+  color: var(--muted);
+}
+
+.access-code-panel strong {
+  font-size: 1.3rem;
+  overflow-wrap: anywhere;
+}
+
+.access-code-panel small {
+  grid-column: 1 / -1;
+}
+
+.account-menu {
+  position: relative;
+}
+
+.account-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.account-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu-panel {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  width: 220px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.account-menu-panel a,
+.menu-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-menu-panel a:hover,
+.menu-action:hover {
+  background: var(--panel2);
+}
+
+.account-menu-panel form {
+  display: block;
+  width: 100%;
+}
+
+.card-actions {
+  margin-top: 18px;
+}
+
+@media (max-width: 760px) {
+  .site-header {
+    height: auto;
+    min-height: 72px;
+    padding: 10px 16px;
+    gap: 12px;
+  }
+
+  .site-header nav {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px 10px;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .brand-logo { display: none !important; }
+  .brand-icon { display: block; width: 48px; height: 48px; object-fit: contain; }
+}

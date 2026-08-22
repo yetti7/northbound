@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Month Participants · {{ month.name }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Month Participants</h1><p class="lede">Only these readers can submit books to {{ month.name }}. Team assignment is optional.</p></div>
+  {% if can_manage_participants %}<a class="button primary" href="{% url 'month-participant-add' month.group.slug month.pk %}">Add Participant</a>{% endif %}
+</div>
+<div class="table-wrap"><table><thead><tr><th>Participant</th><th>Group Role</th><th>Team</th><th>Enrolled</th>{% if can_manage_teams or can_remove %}<th>Actions</th>{% endif %}</tr></thead><tbody>
+{% for enrollment in enrollments %}<tr>
+  <td><div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span>{{ enrollment.participant.display_name }}</span></div></td>
+  <td>{{ enrollment.participant.get_role_display }}</td>
+  <td>{% for assignment in enrollment.participant.current_month_team_assignments %}<span class="member-chip">{{ assignment.team.name }}</span>{% empty %}<span class="muted">Unassigned</span>{% endfor %}</td>
+  <td>{{ enrollment.enrolled_at|date:"M j, Y" }}</td>
+  {% if can_manage_teams or can_remove %}<td>{% if can_manage_teams %}<a href="{% url 'month-participant-edit' month.group.slug month.pk enrollment.pk %}">Edit Team</a>{% endif %}{% if can_remove %}<a class="danger-link" href="{% url 'month-participant-remove' month.group.slug month.pk enrollment.pk %}">Remove From Month</a>{% endif %}</td>{% endif %}
+</tr>{% empty %}<tr><td colspan="5">No participants are enrolled in this month.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

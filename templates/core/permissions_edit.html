@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Permissions · {{ participant.display_name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'participant-list' group.slug %}">{{ group.name }} Participants</a></p><h1>{{ participant.display_name }}</h1><p class="lede">The role supplies defaults. Set individual capabilities to Allow or Deny only when this person needs an exception.</p></div></div>
+<section class="form-card"><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save Permissions</button></form></section>
+{% endblock %}

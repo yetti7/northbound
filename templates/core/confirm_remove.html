@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Northbound{% endblock %}
+{% block content %}<section class="form-card"><p class="eyebrow">{{ eyebrow|default:"Owner Action" }}</p><h1 class="confirm-title">{{ title }}</h1><p class="lede">{{ description }}</p><form method="post" class="stacked-form">{% csrf_token %}{% if not hide_reason %}<p><label for="id_reason">Reason</label><textarea id="id_reason" name="reason" rows="3" placeholder="Optional, but helpful for the audit history"></textarea></p>{% endif %}<div class="action-row"><button class="button danger-button">{{ action_label|default:"Confirm Removal" }}</button><a class="button" href="{{ cancel_url }}">Cancel</a></div></form></section>{% endblock %}

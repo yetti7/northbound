@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Your Reading Groups</p><h1>Dashboard</h1></div><div class="action-row"><a class="button" href="{% url 'group-join' %}">Join With Code</a><a class="button primary" href="{% url 'group-create' %}">Create Group</a></div></div>
+<div class="card-grid">
+  {% for group in groups %}
+    <a class="card interactive" href="{% url 'group-detail' group.slug %}"><span class="status-dot"></span><h2>{{ group.name }}</h2><p>{{ group.timezone }}</p></a>
+  {% empty %}<div class="empty-state">You do not belong to a reading group yet. Create one or ask a group owner for its access code.</div>{% endfor %}
+</div>
+{% endblock %}

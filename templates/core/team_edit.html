@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ team.name }} · Northbound{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ team.month.name }}</p><h1>Edit Team</h1><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save</button></form></section>
+<section class="form-card danger-zone"><h2>{% if team.is_archived %}Restore Team{% else %}Archive Team{% endif %}</h2><p class="muted">{% if team.is_archived %}Return this team to active month views and team selectors.{% else %}Hide this team from active views while preserving its roster and history.{% endif %}</p>{% if team.is_archived %}<form method="post" action="{% url 'team-archive-toggle' team.month.group.slug team.month.pk team.pk %}">{% csrf_token %}<button class="button">Restore Team</button></form>{% else %}<a class="button" href="{% url 'team-archive-toggle' team.month.group.slug team.month.pk team.pk %}">Archive Team</a>{% endif %}</section>
+{% if can_delete_team %}<section class="form-card danger-zone"><h2>Delete Team</h2><p class="muted">This team is unused and belongs to a Draft month, so it can be permanently deleted.</p><a class="button danger-button" href="{% url 'team-delete' team.month.group.slug team.month.pk team.pk %}">Delete Team</a></section>{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Northbound{% endblock %}</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'branding/favicon-32.png' %}?v=2">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'branding/apple-touch-icon.png' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=6">
+  <link rel="stylesheet" href="{% static 'css/navigation.css' %}">
+  <link rel="stylesheet" href="{% static 'css/profile.css' %}">
+  <script src="{% static 'js/app.js' %}?v=7" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{% if user.is_superuser %}{% url 'config-dashboard' %}{% else %}{% url 'dashboard' %}{% endif %}" aria-label="Northbound dashboard">
+      <img class="brand-logo brand-logo-dark" src="{% static 'branding/northbound-header-dark.png' %}?v=2" alt="Northbound">
+      <img class="brand-logo brand-logo-light" src="{% static 'branding/northbound-header-light.png' %}?v=2" alt="Northbound">
+      <img class="brand-icon" src="{% static 'branding/northbound-icon-512.png' %}?v=2" alt="Northbound">
+    </a>
+    {% if user.is_authenticated %}
+      <nav>
+        <details class="account-menu">
+          <summary>{{ user.username }} <span aria-hidden="true">▾</span></summary>
+          <div class="account-menu-panel">
+            {% if user.is_superuser %}
+              <a href="{% url 'config-dashboard' %}">Configuration</a>
+              <a href="{% url 'config-user-list' %}">User Management</a>
+              <a href="{% url 'config-audit' %}">Audit Activity</a>
+            {% else %}
+              <a href="{% url 'dashboard' %}">Home</a>
+              <a href="{% url 'account' %}">My Account</a>
+              <a href="{% url 'my-stats' %}">My Stats</a>
+            {% endif %}
+            <button class="menu-action" type="button" data-theme-toggle><span data-theme-icon>☾</span> Light / Dark</button>
+            <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="menu-action">Sign Out</button></form>
+          </div>
+        </details>
+      </nav>
+    {% endif %}
+  </header>
+  <main class="page-shell">
+    {% if request.path != '/' and request.path != '/setup/' %}<button class="back-button" type="button" data-back-button>← Back</button>{% endif %}
+    {% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

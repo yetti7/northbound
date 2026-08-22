@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}User Management · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Configuration Center</a></p><h1>User Management</h1></div></div>
+<div class="table-wrap"><table><thead><tr><th>Account</th><th>Email</th><th>Groups</th><th>Last Sign-In</th><th>Status</th></tr></thead><tbody>{% for account in users %}<tr><td><strong><a href="{% url 'config-user-detail' account.pk %}">{{ account.username }}</a></strong><br><span class="muted">{{ account.get_full_name|default:"No display name" }}</span></td><td>{{ account.email|default:"—" }}</td><td>{{ account.membership_count }}</td><td>{{ account.last_login|date:"M j, Y g:i a"|default:"Never" }}</td><td>{% if account.is_active %}<span class="pill">Active</span>{% else %}<span class="pill">Inactive</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="5">No regular accounts exist.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

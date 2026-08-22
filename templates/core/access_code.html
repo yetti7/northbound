@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Access Code · {{ group.name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">{{ group.name }}</p><h1>Access Code</h1></div></div>
+<div class="access-code-panel"><span>Current Code</span><strong>{{ group.join_code }}</strong><small>Visible to {{ group.get_access_code_visibility_display|lower }}.</small></div>
+{% if can_manage_access_code %}<section class="form-card"><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save Settings</button></form></section>{% endif %}
+{% endblock %}

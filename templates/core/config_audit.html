@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Audit Activity · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Configuration Center</a></p><h1>Audit Activity</h1><p class="lede">The 200 most recent platform and group administration events.</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Group</th><th>Action</th><th>Summary</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ event.created_at|date:"M j, Y g:i a" }}</td><td>{{ event.actor.username|default:"System" }}</td><td>{{ event.group.name|default:"Platform" }}</td><td>{{ event.action }}</td><td>{{ event.summary }}</td></tr>{% empty %}<tr><td colspan="5">No audit activity has been recorded.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

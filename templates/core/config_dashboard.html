@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Developer Configuration · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Platform Root</p><h1>Configuration Center</h1></div></div>
+<div class="stats"><div class="stat"><span>Regular Accounts</span><strong>{{ user_count }}</strong></div><div class="stat"><span>Reading Groups</span><strong>{{ group_count }}</strong></div><div class="stat"><span>Challenge Months</span><strong>{{ month_count }}</strong></div></div>
+<section><div class="section-heading"><h2>Platform Controls</h2></div><div class="card-grid"><a class="card interactive" href="{% url 'config-user-list' %}"><span class="pill">Accounts</span><h3>User Management</h3><p>Account status, temporary passwords, memberships, roles, and permission overrides.</p></a><a class="card interactive" href="{% url 'config-audit' %}"><span class="pill">History</span><h3>Audit Activity</h3><p>Review security, administration, and content-management events.</p></a><div class="card"><span class="pill">Planned</span><h3>Platform Integrations</h3><p>Email delivery, exports, and installation-wide defaults.</p></div></div></section>
+<section><div class="section-heading"><h2>Recent Audit Activity</h2><a href="{% url 'config-audit' %}">View Full Audit →</a></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Summary</th></tr></thead><tbody>{% for event in recent_events %}<tr><td>{{ event.created_at|date:"M j, Y g:i a" }}</td><td>{{ event.actor.username|default:"System" }}</td><td>{{ event.action }}</td><td>{{ event.summary }}</td></tr>{% empty %}<tr><td colspan="4">No platform activity has been recorded.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

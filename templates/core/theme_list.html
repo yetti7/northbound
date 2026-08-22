@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Themes · {{ month.name }} · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Themes</h1><p class="lede">Books completed during a theme window can earn its fixed page bonus after staff approval.</p></div>{% if can_manage %}<a class="button primary" href="{% url 'theme-create' month.group.slug month.pk %}">Add Theme</a>{% endif %}</div>
+<div class="card-grid">{% for theme in themes %}<div class="card"><span class="pill">{% if theme.is_active %}Active{% else %}Inactive{% endif %}</span><h2>{{ theme.name }}</h2>{% if can_manage %}<a class="button contextual-edit" href="{% url 'theme-edit' month.group.slug month.pk theme.pk %}">Edit</a>{% endif %}<p>{{ theme.starts_on }} – {{ theme.ends_on }}</p><p><strong>+{{ theme.bonus_pages }} pages</strong></p>{% if theme.description %}<p>{{ theme.description }}</p>{% endif %}{% if theme.prompt %}<p class="muted">Prompt: {{ theme.prompt }}</p>{% endif %}<p class="muted">{% if theme.allow_stacking %}Can stack with other themes{% else %}Cannot be stacked{% endif %}{% if not theme.is_visible %} · Hidden from readers{% endif %}</p></div>{% empty %}<div class="empty-state">No themes have been configured for this month.</div>{% endfor %}</div>
+{% endblock %}

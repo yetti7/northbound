@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}My Account · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Personal Settings</p><h1>My Account</h1><p class="lede">Update your sign-in and recovery information. Your email address is private and is not shown in group rosters.</p></div><div class="action-row">{% if not user.is_superuser %}<a class="button" href="{% url 'my-stats' %}">My Stats</a>{% endif %}<a class="button" href="{% url 'password-change' %}">Change Password</a></div></div>
+<section class="form-card">
+{% if user.northbound_profile.avatar_url %}<div class="profile-picture-preview"><img class="profile-picture profile-picture-large" src="{{ user.northbound_profile.avatar_url }}" alt="{{ user.username }} profile picture"></div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="stacked-form">{% csrf_token %}
+  {{ form.non_field_errors }}
+  <p>{{ form.username.label_tag }}{{ form.username }}{{ form.username.errors }}</p>
+  <p>{{ form.first_name.label_tag }}{{ form.first_name }}{{ form.first_name.errors }}</p>
+  <p>{{ form.last_name.label_tag }}{{ form.last_name }}{{ form.last_name.errors }}</p>
+  <p>{{ form.email.label_tag }}{{ form.email }}{{ form.email.errors }}</p>
+  {% include "core/includes/avatar_fields.html" %}
+  <button class="button primary">Save Account</button>
+</form>
+</section>
+{% endblock %}

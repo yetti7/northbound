@@ -1,0 +1,15 @@
+{% load static %}
+<fieldset class="avatar-picker">
+  <legend>Profile Picture</legend>
+  {{ form.selected_avatar.errors }}
+  <div class="avatar-grid">
+    {% for radio in form.selected_avatar %}
+      <label class="avatar-option">
+        {{ radio.tag }}
+        {% if radio.data.value %}<img src="{% static 'avatars/'|add:radio.data.value %}" alt="{{ radio.choice_label }}">{% else %}<span class="profile-picture profile-picture-fallback avatar-choice-fallback">{{ user.username|default:'?'|first|upper }}</span>{% endif %}
+        <span>{{ radio.choice_label }}</span>
+      </label>
+    {% endfor %}
+  </div>
+  <p>{{ form.profile_picture.label_tag }}{{ form.profile_picture }}{{ form.profile_picture.errors }}<span class="helptext">{{ form.profile_picture.help_text }}</span></p>
+</fieldset>

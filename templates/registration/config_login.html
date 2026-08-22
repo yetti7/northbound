@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Developer Configuration · Northbound{% endblock %}
+{% block content %}
+<section class="auth-card config-auth-card">
+  <p class="eyebrow">Restricted Platform Access</p>
+  <h1>Developer Sign In</h1>
+  <form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Open Configuration</button></form>
+</section>
+{% endblock %}
