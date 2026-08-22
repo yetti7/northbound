@@ -22,7 +22,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "${NORTHBOUND_BIND_ADDRESS:-127.0.0.1}:${NORTHBOUND_PORT:-8000}:8000"
+      - "${NORTHBOUND_BIND_ADDRESS:-192.168.0.11}:${NORTHBOUND_PORT:-8060}:8000"
     volumes:
       - ${NORTHBOUND_DATA_DIR:-/srv/appdata/northbound}/media:/app/media
     healthcheck:

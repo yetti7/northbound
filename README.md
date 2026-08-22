@@ -58,9 +58,9 @@ docker compose -f compose.production.yaml up -d
 docker compose -f compose.production.yaml ps
 ```
 
-Persistent PostgreSQL and uploaded-media data default to `/srv/appdata/northbound`. The web service binds to `127.0.0.1:8000` by default so it can sit behind the existing reverse proxy. Configure that proxy for `northbound.deepnorth.app`, including HTTPS and forwarded-protocol headers.
+Persistent PostgreSQL and uploaded-media data default to `/srv/appdata/northbound`. The production example publishes container port `8000` at `192.168.0.11:8060` on DeepNorth. It supports both direct LAN access at <http://192.168.0.11:8060> and public access at <https://northbound.deepnorth.app> through Nginx Proxy Manager. Configure the proxy host to forward to `192.168.0.11:8060`, enable HTTPS, and pass the original protocol through `X-Forwarded-Proto`.
 
-The example environment enables HTTPS redirects and one year of HSTS for `northbound.deepnorth.app`, without including subdomains or requesting browser preload. Confirm that HTTPS works through the reverse proxy before exposing the application publicly.
+Because direct LAN HTTP is intentionally supported, the example disables Django's global HTTPS redirect and the `Secure` attribute on session and CSRF cookies. HTTPS detection behind Nginx Proxy Manager remains enabled through `SECURE_PROXY_SSL_HEADER`. One year of HSTS applies to HTTPS responses for `northbound.deepnorth.app`, without including subdomains or requesting browser preload.
 
 Before the first deployment, create the persistent directories:
 
