@@ -58,7 +58,11 @@ docker compose -f compose.production.yaml up -d
 docker compose -f compose.production.yaml ps
 ```
 
-Persistent PostgreSQL and uploaded-media data default to `/srv/appdata/northbound`. The production example publishes container port `8000` at `192.168.0.11:8060` on DeepNorth. It supports both direct LAN access at <http://192.168.0.11:8060> and public access at <https://northbound.deepnorth.app> through Nginx Proxy Manager. Configure the proxy host to forward to `192.168.0.11:8060`, enable HTTPS, and pass the original protocol through `X-Forwarded-Proto`.
+Persistent PostgreSQL and uploaded-media data default to `/srv/appdata/northbound`. The production Compose stack includes an internal Nginx gateway that publishes container port `8000` at `192.168.0.11:8060` on DeepNorth. It serves `/media/` directly from the persistent media directory and proxies every other request to Gunicorn. Django continues to handle uploads and WhiteNoise continues to handle application static files.
+
+The gateway supports both direct LAN access at <http://192.168.0.11:8060> and public access at <https://northbound.deepnorth.app> through Nginx Proxy Manager. Configure the Nginx Proxy Manager proxy host to forward to `192.168.0.11:8060`, enable HTTPS, and pass the original protocol through `X-Forwarded-Proto`. The internal gateway preserves that header for Django; direct LAN requests are forwarded with the `http` scheme.
+
+The same host media directory is mounted read/write at `/app/media` in the application container and read-only at `/srv/media` in the gateway. Profile-picture URLs such as `/media/profile-pictures/user-4.png` therefore survive container recreation and are served without routing user uploads through Django.
 
 Because direct LAN HTTP is intentionally supported, the example disables Django's global HTTPS redirect and the `Secure` attribute on session and CSRF cookies. HTTPS detection behind Nginx Proxy Manager remains enabled through `SECURE_PROXY_SSL_HEADER`. One year of HSTS applies to HTTPS responses for `northbound.deepnorth.app`, without including subdomains or requesting browser preload.
 
@@ -74,6 +78,13 @@ The application container runs as UID/GID `10001`. Give that account ownership o
 
 ```bash
 sudo chown -R 10001:10001 /srv/appdata/northbound/media
+```
+
+The gateway receives supplemental group `10001` and mounts media read-only. Keep directories group-readable and files readable by that group. To verify media delivery after deployment:
+
+```bash
+curl --fail --head http://192.168.0.11:8060/media/profile-pictures/user-4.png
+curl --fail --head https://northbound.deepnorth.app/media/profile-pictures/user-4.png
 ```
 
 Back up both persistent directories before upgrades. Database migrations run automatically when the web container starts, so take the PostgreSQL backup before pulling and recreating containers.
