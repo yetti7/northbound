@@ -33,6 +33,7 @@ jobs:
 
       - name: Validate production media gateway
         run: |
+          cp .env.example .env
           docker compose --env-file .env.example -f compose.production.yaml config --quiet
           mkdir -p "$RUNNER_TEMP/northbound-media/profile-pictures"
           cp static/branding/favicon-32.png "$RUNNER_TEMP/northbound-media/profile-pictures/media-check.png"
