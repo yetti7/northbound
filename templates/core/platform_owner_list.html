@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Platform Owners · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Platform Administration</a></p><h1>Platform Owners</h1><p class="lede">Every owner has equal, unrestricted control over this Northbound installation. Platform ownership is separate from all group roles.</p></div><a class="button primary" href="{% url 'platform-owner-create' %}">Add Platform Owner</a></div>
+<div class="table-wrap"><table><thead><tr><th>Owner</th><th>Email</th><th>Last Sign-In</th><th>Status</th></tr></thead><tbody>{% for owner in owners %}<tr><td><strong>{{ owner.username }}</strong>{% if owner == user %}<br><span class="muted">Current account</span>{% endif %}</td><td>{{ owner.email }}</td><td>{{ owner.last_login|date:"M j, Y g:i a"|default:"Never" }}</td><td>{% if owner.is_active %}<span class="pill">Active Owner</span>{% else %}<span class="pill">Inactive</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

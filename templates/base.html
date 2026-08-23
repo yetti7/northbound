@@ -26,7 +26,8 @@
           <summary>{{ user.username }} <span aria-hidden="true">▾</span></summary>
           <div class="account-menu-panel">
             {% if user.is_superuser %}
-              <a href="{% url 'config-dashboard' %}">Configuration</a>
+              <a href="{% url 'config-dashboard' %}">Platform Administration</a>
+              <a href="{% url 'platform-owner-list' %}">Platform Owners</a>
               <a href="{% url 'config-user-list' %}">User Management</a>
               <a href="{% url 'config-audit' %}">Audit Activity</a>
             {% else %}

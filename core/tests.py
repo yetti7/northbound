@@ -304,7 +304,12 @@ class HardcoverConnectionTests(TestCase):
 
 
 class FirstRunSetupTests(TestCase):
-    def test_setup_creates_only_hidden_superuser(self):
+    def test_fresh_install_redirects_to_setup_wizard(self):
+        response = self.client.get(reverse("dashboard"))
+        self.assertRedirects(response, reverse("setup"), fetch_redirect_response=False)
+        self.assertEqual(self.client.get(reverse("setup")).status_code, 200)
+
+    def test_setup_creates_initial_platform_owner(self):
         response = self.client.post(reverse("setup"), {
             "username": "taylor",
             "email": "taylor@example.com",
@@ -314,8 +319,19 @@ class FirstRunSetupTests(TestCase):
         self.assertRedirects(response, reverse("config-dashboard"))
         user = get_user_model().objects.get(username="taylor")
         self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
         self.assertFalse(ReadingGroup.objects.exists())
         self.assertFalse(Membership.objects.filter(user=user).exists())
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=user,
+            action="platform.initial_owner_created",
+            object_id=str(user.pk),
+        ).exists())
+
+    def test_setup_is_unavailable_after_an_owner_exists(self):
+        get_user_model().objects.create_superuser("existing-owner", "owner@example.com", "test-password-482!")
+        response = self.client.get(reverse("setup"))
+        self.assertRedirects(response, reverse("config-login"))
 
 
 class MyStatsTests(TestCase):
@@ -725,13 +741,13 @@ class AccountAndConfigurationAccessTests(TestCase):
         self.root = User.objects.create_superuser("platform-root", "root@example.com", "root-test-password-482!")
         self.reader = User.objects.create_user("account-reader", "reader@example.com", "reader-test-password-482!")
 
-    def test_regular_user_cannot_use_developer_login(self):
+    def test_regular_user_cannot_use_platform_owner_login(self):
         response = self.client.post(reverse("config-login"), {
             "username": "account-reader",
             "password": "reader-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "not authorized for developer configuration access")
+        self.assertContains(response, "not authorized for platform owner access")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_root_cannot_use_regular_login(self):
@@ -740,7 +756,7 @@ class AccountAndConfigurationAccessTests(TestCase):
             "password": "root-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "must use the separate configuration sign-in")
+        self.assertContains(response, "must use the separate owner sign-in")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_regular_authenticated_user_cannot_open_configuration_center(self):
@@ -755,9 +771,47 @@ class AccountAndConfigurationAccessTests(TestCase):
         })
         self.assertRedirects(response, reverse("config-dashboard"))
         response = self.client.get(reverse("config-dashboard"))
-        self.assertContains(response, "Configuration Center")
+        self.assertContains(response, "Platform Administration")
         from .models import AuditEvent
         self.assertTrue(AuditEvent.objects.filter(actor=self.root, action="platform.root_login").exists())
+
+    def test_owner_can_create_an_equal_second_owner(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-create"), {
+            "username": "second-owner",
+            "email": "second-owner@example.com",
+            "password1": "second-owner-test-password-739!",
+            "password2": "second-owner-test-password-739!",
+            "current_password": "root-test-password-482!",
+        })
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        second_owner = get_user_model().objects.get(username="second-owner")
+        self.assertTrue(second_owner.is_superuser)
+        self.assertTrue(second_owner.is_staff)
+        self.assertFalse(Membership.objects.filter(user=second_owner).exists())
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_created",
+            object_id=str(second_owner.pk),
+        ).exists())
+
+    def test_creating_owner_requires_current_owner_password(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-create"), {
+            "username": "blocked-owner",
+            "email": "blocked-owner@example.com",
+            "password1": "blocked-owner-test-password-739!",
+            "password2": "blocked-owner-test-password-739!",
+            "current_password": "wrong-password",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your current password is incorrect")
+        self.assertFalse(get_user_model().objects.filter(username="blocked-owner").exists())
+
+    def test_regular_user_cannot_manage_platform_owners(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-owner-list")).status_code, 403)
+        self.assertEqual(self.client.get(reverse("platform-owner-create")).status_code, 403)
 
     def test_user_can_update_account_and_change_password(self):
         self.client.force_login(self.reader)
@@ -832,6 +886,13 @@ class OwnerRemovalTests(TestCase):
 
 
 class RegistrationAndGroupAccessTests(TestCase):
+    def setUp(self):
+        get_user_model().objects.create_superuser(
+            "registration-platform-owner",
+            "platform-owner@example.com",
+            "platform-owner-test-password-482!",
+        )
+
     def test_registration_can_choose_built_in_avatar(self):
         response = self.client.post(reverse("register"), {
             "username": "avatar-signup",

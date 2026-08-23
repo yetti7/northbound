@@ -4,16 +4,16 @@
 
 | Role | Scope | Main capabilities |
 |---|---|---|
-| Platform super-administrator | Entire installation | Provision groups, support owners, inspect audit history, manage integrations and recovery |
+| Platform owner | Entire installation | Manage equal platform owners, users, groups, audit history, integrations, and recovery |
 | Group owner | One group | Full group control, administrator management, exports, retention decisions |
 | Group administrator | One group | Months, participants, teams, themes, challenges, reports |
 | Moderator | One group | Review submissions, approve claims, resolve duplicates, record adjustments |
 | Game manager | One group | Upload game artwork and update permitted visual tracker state |
 | Reader | One group | Submit books and view personal/team progress |
 
-An account can belong to multiple groups with a different role in each. Creating a group makes a normal user its owner. Joining with an access code creates a reader membership; an owner or platform root can then adjust that role.
+An account can belong to multiple groups with a different role in each. Creating a group makes a normal user its owner. Joining with an access code creates a reader membership; a group owner or platform owner can then adjust that role.
 
-The platform super-administrator is a support role, not a web-based development shell. Code deployment and schema migrations remain deployment operations.
+Platform owners have equal installation-wide authority and remain separate from group roles. Code deployment and schema migrations remain deployment operations.
 
 ## Challenge-month states
 

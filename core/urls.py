@@ -4,6 +4,8 @@ from . import views
 urlpatterns = [
     path("config/login/", views.RootLoginView.as_view(), name="config-login"),
     path("config/", views.config_dashboard, name="config-dashboard"),
+    path("config/owners/", views.platform_owner_list, name="platform-owner-list"),
+    path("config/owners/new/", views.platform_owner_create, name="platform-owner-create"),
     path("config/users/", views.config_user_list, name="config-user-list"),
     path("config/users/<int:pk>/", views.config_user_detail, name="config-user-detail"),
     path("config/users/<int:pk>/reset-password/", views.config_user_password_reset, name="config-user-password-reset"),

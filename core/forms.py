@@ -71,7 +71,7 @@ class AvatarFieldsMixin(forms.Form):
 class RootAuthenticationForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
-        "not_root": "The credentials entered are not authorized for developer configuration access.",
+        "not_root": "The credentials entered are not authorized for platform owner access.",
     }
 
     def confirm_login_allowed(self, user):
@@ -83,7 +83,7 @@ class RootAuthenticationForm(AuthenticationForm):
 class RegularAuthenticationForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
-        "root_account": "Developer root accounts must use the separate configuration sign-in.",
+        "root_account": "Platform owner accounts must use the separate owner sign-in.",
     }
 
     def confirm_login_allowed(self, user):
@@ -121,6 +121,51 @@ class FirstRunSetupForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
         model = get_user_model()
         fields = ("username", "email")
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"]
+        user.is_staff = True
+        user.is_superuser = True
+        if commit:
+            user.save()
+        return user
+
+
+class PlatformOwnerCreationForm(UserCreationForm):
+    email = forms.EmailField()
+    current_password = forms.CharField(
+        label="Your Current Password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+        help_text="Confirm your identity before granting full platform access.",
+    )
+
+    class Meta(UserCreationForm.Meta):
+        model = get_user_model()
+        fields = ("username", "email")
+
+    def __init__(self, *args, owner, **kwargs):
+        self.owner = owner
+        super().__init__(*args, **kwargs)
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
+
+    def clean_current_password(self):
+        password = self.cleaned_data["current_password"]
+        if not self.owner.check_password(password):
+            raise forms.ValidationError("Your current password is incorrect.")
+        return password
 
     def save(self, commit=True):
         user = super().save(commit=False)

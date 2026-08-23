@@ -12,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 import secrets
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerCreationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
@@ -48,7 +48,7 @@ class RootLoginView(LoginView):
             action="platform.root_login",
             object_type="User",
             object_id=str(self.request.user.pk),
-            summary="Developer root signed into the configuration center.",
+            summary="Platform owner signed into platform administration.",
         )
         return response
 
@@ -68,7 +68,7 @@ class NorthboundPasswordChangeView(PasswordChangeView):
                 action="account.temporary_password_replaced",
                 object_type="User",
                 object_id=str(self.request.user.pk),
-                summary="User replaced a developer-issued temporary password.",
+                summary="User replaced a platform-owner-issued temporary password.",
             )
         messages.success(self.request, "Your password was changed.")
         return response
@@ -128,7 +128,7 @@ def my_stats(request):
 @login_required(login_url="config-login")
 def config_dashboard(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     context = {
         "user_count": get_user_model().objects.filter(is_superuser=False).count(),
         "group_count": ReadingGroup.objects.count(),
@@ -139,9 +139,37 @@ def config_dashboard(request):
 
 
 @login_required(login_url="config-login")
+def platform_owner_list(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    owners = get_user_model().objects.filter(is_superuser=True).order_by("username")
+    return render(request, "core/platform_owner_list.html", {"owners": owners})
+
+
+@login_required(login_url="config-login")
+def platform_owner_create(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    form = PlatformOwnerCreationForm(request.POST or None, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            owner = form.save()
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="platform.owner_created",
+                object_type="User",
+                object_id=str(owner.pk),
+                summary=f"Created platform owner {owner.username}.",
+            )
+        messages.success(request, f"{owner.username} is now a platform owner.")
+        return redirect("platform-owner-list")
+    return render(request, "core/platform_owner_create.html", {"form": form})
+
+
+@login_required(login_url="config-login")
 def config_user_list(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     users = get_user_model().objects.filter(is_superuser=False).annotate(
         membership_count=Count("reading_memberships", distinct=True)
     ).order_by("username")
@@ -151,7 +179,7 @@ def config_user_list(request):
 @login_required(login_url="config-login")
 def config_user_detail(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     profile, _ = UserProfile.objects.get_or_create(user=account_user)
     memberships = account_user.reading_memberships.select_related("group").order_by("group__name")
@@ -165,7 +193,7 @@ def config_user_detail(request, pk):
 @login_required(login_url="config-login")
 def config_user_password_reset(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     if request.method == "POST":
         temporary_password = secrets.token_urlsafe(12)
@@ -183,7 +211,7 @@ def config_user_password_reset(request, pk):
         )
         return render(request, "core/config_temporary_password.html", {"account_user": account_user, "temporary_password": temporary_password})
     return render(request, "core/confirm_remove.html", {
-        "eyebrow": "Developer User Management",
+        "eyebrow": "Platform User Management",
         "title": f"Reset {account_user.username}'s password?",
         "description": "Northbound will generate a temporary password and require the user to replace it after signing in. Their existing password cannot be viewed or recovered.",
         "cancel_url": reverse("config-user-detail", kwargs={"pk": account_user.pk}),
@@ -195,7 +223,7 @@ def config_user_password_reset(request, pk):
 @login_required(login_url="config-login")
 def config_user_status_toggle(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     action = "deactivate" if account_user.is_active else "reactivate"
     if request.method == "POST":
@@ -211,7 +239,7 @@ def config_user_status_toggle(request, pk):
         messages.success(request, f"{account_user.username} was {action}d.")
         return redirect("config-user-detail", pk=account_user.pk)
     return render(request, "core/confirm_remove.html", {
-        "eyebrow": "Developer User Management",
+        "eyebrow": "Platform User Management",
         "title": f"{action.title()} {account_user.username}?",
         "description": "The account's groups, submissions, and history will be preserved.",
         "cancel_url": reverse("config-user-detail", kwargs={"pk": account_user.pk}),
@@ -223,17 +251,29 @@ def config_user_status_toggle(request, pk):
 @login_required(login_url="config-login")
 def config_audit(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     events = AuditEvent.objects.select_related("actor", "group")[:200]
     return render(request, "core/config_audit.html", {"events": events})
 
 
 def setup(request):
     if get_user_model().objects.filter(is_superuser=True).exists():
+        if request.user.is_authenticated and request.user.is_superuser:
+            return redirect("config-dashboard")
         return redirect("config-login")
     form = FirstRunSetupForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        user = form.save()
+        with transaction.atomic():
+            if get_user_model().objects.filter(is_superuser=True).exists():
+                return redirect("config-login")
+            user = form.save()
+            AuditEvent.objects.create(
+                actor=user,
+                action="platform.initial_owner_created",
+                object_type="User",
+                object_id=str(user.pk),
+                summary="Completed first-run setup and created the initial platform owner.",
+            )
         login(request, user)
         messages.success(request, "Platform setup complete.")
         return redirect("config-dashboard")
@@ -519,7 +559,7 @@ def participant_role_edit(request, group_slug, pk):
         return HttpResponseForbidden("Group owner or platform root access is required.")
     participant = get_object_or_404(Membership, pk=pk, group=group, user__is_superuser=False)
     if participant.user_id == request.user.id and not request.user.is_superuser:
-        messages.error(request, "Owners cannot change their own role. Another owner or platform root must do that.")
+        messages.error(request, "Group owners cannot change their own role. Another group owner or Platform Owner must do that.")
         return redirect("participant-list", group_slug=group.slug)
     form = MembershipRoleForm(request.POST or None, instance=participant)
     if request.method == "POST" and form.is_valid():
@@ -528,7 +568,7 @@ def participant_role_edit(request, group_slug, pk):
         AuditEvent.objects.create(actor=request.user, group=group, action="membership.role_changed", object_type="Membership", object_id=str(updated.pk), summary=f"Changed {updated.display_name} from {previous_role} to {updated.role}; active={updated.is_active}")
         messages.success(request, f"Updated {updated.display_name}'s access.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.display_name}", "eyebrow": "Platform Root Control"})
+    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.display_name}", "eyebrow": "Platform Owner Control"})
 
 
 @login_required
@@ -971,7 +1011,7 @@ def submission_create(request, group_slug, month_pk):
         messages.error(request, "This challenge month is not open for submissions.")
         return redirect(month)
     if request.user.is_superuser and not participant:
-        raise Http404("A super-administrator must also have a group membership to submit books.")
+        raise Http404("A Platform Owner must also have a group membership to submit books.")
     if not MonthEnrollment.objects.filter(month=month, participant=participant).exists():
         messages.error(request, "You are not enrolled in this challenge month. Ask a group administrator to add you to the month or one of its teams.")
         return redirect(month)

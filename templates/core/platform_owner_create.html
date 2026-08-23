@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Add Platform Owner · Northbound{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow"><a href="{% url 'platform-owner-list' %}">Platform Owners</a></p><h1>Add an Equal Owner</h1><p class="lede">This person will have the same unrestricted platform access you do, including the ability to create other owners. This does not assign them any group role.</p><div class="notice error">Only grant this access to someone you trust with the entire installation.</div><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">Create Platform Owner</button><a class="button" href="{% url 'platform-owner-list' %}">Cancel</a></div></form></section>
+{% endblock %}
