@@ -2,13 +2,13 @@
 
 ## Default installation
 
-Northbound's normal self-hosted deployment is one application container using SQLite. The database and uploaded media share one persistent Docker volume.
+Northbound's normal self-hosted deployment is one application container using SQLite. The database and uploaded media share one persistent Docker volume mounted at `/data`.
 
 ```bash
 cp .env.example .env
 ```
 
-Generate a secret with `openssl rand -hex 32` and use it for `DJANGO_SECRET_KEY`. Then start Northbound:
+Generate a secret with `openssl rand -hex 32` and use it for `DJANGO_SECRET_KEY`. Set `NORTHBOUND_URL` to the address people will use and, if needed, change `NORTHBOUND_PORT`. Then start Northbound:
 
 ```bash
 docker compose pull
@@ -16,7 +16,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Open <http://localhost:8000/setup/>. No PostgreSQL administration or database password is required.
+Open `/setup/` at the configured URL. No PostgreSQL administration or database password is required.
 
 ## Persistent data
 
@@ -68,7 +68,7 @@ The archive contains both SQLite and uploaded media. Test restoration periodical
 
 ## PostgreSQL option
 
-PostgreSQL remains supported for hosted platforms, larger installations, and operators who prefer it. Add `POSTGRES_PASSWORD` to `.env`, then apply the optional override:
+PostgreSQL remains supported for hosted platforms, multiple application replicas, larger installations, and operators who prefer it. Add `POSTGRES_PASSWORD` to `.env`, then apply the optional override:
 
 ```bash
 docker compose -f compose.yaml -f compose.postgres.yaml pull

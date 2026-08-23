@@ -17,22 +17,30 @@ Northbound currently includes:
 
 See [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) for the product direction.
 
-## Self-host with Docker
+## Quick start with Docker
 
-Northbound's default deployment is one application container with SQLite and uploaded media in one persistent volume. It does not require PostgreSQL, Nginx, or another reverse proxy for local or LAN use.
+Northbound's standard self-hosted deployment is one application container with SQLite and uploaded media together in one persistent `/data` volume. It does not require PostgreSQL, an internal Nginx container, or a separate database server.
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and replace `DJANGO_SECRET_KEY` with a random value. For example, `openssl rand -hex 32` can generate one. Then pull and start Northbound:
+Edit `.env` and set:
+
+- `DJANGO_SECRET_KEY` to a random value (for example, from `openssl rand -hex 32`);
+- `NORTHBOUND_URL` to the address people will use; and
+- `NORTHBOUND_PORT` if you do not want the default host port `8000`.
+
+Then pull and start Northbound:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open <http://localhost:8000/setup/> to create the first administrator account. SQLite and uploaded media persist across container recreation.
+Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open `/setup/` at the configured URL to create the first administrator account. The SQLite database and uploaded media persist across image pulls and container recreation.
+
+This same container can run locally, on a LAN, on a VPS, or behind Nginx Proxy Manager, Cloudflare Tunnel, Caddy, Traefik, or another external proxy. Platform services such as Railway or Render can use the image with an externally managed PostgreSQL database and persistent media storage.
 
 See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for LAN access, upgrades, backups, and external databases. See [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) before placing Northbound behind HTTPS, Cloudflare Tunnel, Nginx, Caddy, Traefik, or another proxy.
 
@@ -56,4 +64,4 @@ docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 
 ## PostgreSQL
 
-Use `compose.postgres.yaml` with the default file when PostgreSQL is preferred. See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). The disposable DeepNorth test deployment will be reset separately after this image is published.
+PostgreSQL is optional, not part of the normal self-hosted install. Use `compose.postgres.yaml` when a larger or advanced deployment needs it. See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
