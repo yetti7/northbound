@@ -26,3 +26,8 @@ html[data-theme="light"]{--bg:#f5f3ff;--panel:#ffffff;--panel2:#f9f8ff;--text:#1
 .stacked-form #id_themes>.theme-claim-option>.theme-response{margin:0;padding:2px 14px 14px}
 .stacked-form #id_themes>.theme-claim-option>.theme-response label{display:block;margin-bottom:7px}
 [hidden]{display:none!important}
+.backup-action-layout{margin-top:24px}
+.system-status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.system-status-grid .card,.system-status-grid .details dd{min-width:0}
+.system-status-grid .details dd,.system-status-grid .details code{overflow-wrap:anywhere;word-break:break-word}
+@media(max-width:760px){.system-status-grid{grid-template-columns:1fr}.system-status-grid .details{grid-template-columns:minmax(110px,140px) minmax(0,1fr)}}
