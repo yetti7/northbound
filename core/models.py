@@ -97,6 +97,9 @@ class PlatformBackupSettings(models.Model):
     backup_time = models.TimeField(default=datetime_time(1, 0))
     retention_count = models.PositiveSmallIntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(100)])
     last_run_date = models.DateField(null=True, blank=True, editable=False)
+    last_success_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_failure_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_error = models.TextField(blank=True, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod

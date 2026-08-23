@@ -23,20 +23,35 @@ def automatic_backup_directory():
     return data_root() / "backups"
 
 
-def list_automatic_backups():
+def list_stored_backups():
     directory = automatic_backup_directory()
     if not directory.exists():
         return []
-    return sorted(directory.glob("northbound-automatic-*.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return sorted(directory.glob("northbound-*.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
 
 
-def create_automatic_backup(retention_count):
+def list_automatic_backups():
+    return [path for path in list_stored_backups() if path.name.startswith("northbound-automatic-")]
+
+
+def stored_backup_path(filename):
+    if (
+        Path(filename).name != filename
+        or not filename.endswith(".zip")
+        or not filename.startswith(("northbound-automatic-", "northbound-manual-"))
+    ):
+        raise ValueError("Invalid stored backup name.")
+    return automatic_backup_directory() / filename
+
+
+def create_stored_backup(*, automatic=False):
     if connection.vendor != "sqlite":
-        raise ValueError("Automatic in-app backups require SQLite.")
+        raise ValueError("In-app backups require SQLite.")
     directory = automatic_backup_directory()
     directory.mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(timezone.utc)
-    final_path = directory / f"northbound-automatic-{created_at:%Y%m%d-%H%M%S}.zip"
+    backup_kind = "automatic" if automatic else "manual"
+    final_path = directory / f"northbound-{backup_kind}-{created_at:%Y%m%d-%H%M%S-%f}.zip"
     temporary_archive = final_path.with_suffix(".creating")
     with tempfile.TemporaryDirectory(dir=data_root(), prefix="backup-") as temporary_directory:
         database_copy = Path(temporary_directory) / "northbound.sqlite3"
@@ -51,15 +66,20 @@ def create_automatic_backup(retention_count):
             media_root = Path(settings.MEDIA_ROOT)
             if media_root.exists():
                 for media_file in media_root.rglob("*"):
-                    if media_file.is_file():
+                    if media_file.is_file() and not media_file.is_symlink() and media_file.name != ".env":
                         backup_zip.write(media_file, Path("media") / media_file.relative_to(media_root))
             backup_zip.writestr("northbound-backup.json", json.dumps({
                 "created_at": created_at.isoformat(),
                 "database": "sqlite",
                 "contents": ["northbound.sqlite3", "media/"],
-                "automatic": True,
+                "automatic": automatic,
             }, indent=2))
     os.replace(temporary_archive, final_path)
+    return final_path
+
+
+def create_automatic_backup(retention_count):
+    final_path = create_stored_backup(automatic=True)
     for expired_backup in list_automatic_backups()[retention_count:]:
         expired_backup.unlink(missing_ok=True)
     return final_path
@@ -68,15 +88,30 @@ def create_automatic_backup(retention_count):
 def validate_backup(path):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError("The backup contains duplicate archive entries.")
         for name in names:
             archive_path = PurePosixPath(name)
-            if archive_path.is_absolute() or ".." in archive_path.parts:
+            if "\\" in name or archive_path.is_absolute() or ".." in archive_path.parts:
                 raise ValueError("The backup contains an unsafe path.")
         if "northbound.sqlite3" not in names or "northbound-backup.json" not in names:
             raise ValueError("This is not a complete Northbound SQLite backup.")
+        allowed_names = {"northbound.sqlite3", "northbound-backup.json"}
+        for name in names:
+            if name not in allowed_names and not name.startswith("media/"):
+                raise ValueError("The backup contains an unexpected file.")
         metadata = json.loads(archive.read("northbound-backup.json"))
+        if not isinstance(metadata, dict):
+            raise ValueError("The backup metadata is invalid.")
         if metadata.get("database") != "sqlite":
             raise ValueError("This backup does not contain a SQLite database.")
+        try:
+            datetime.fromisoformat(metadata["created_at"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("The backup metadata has an invalid creation time.")
+        contents = metadata.get("contents")
+        if not isinstance(contents, list) or "northbound.sqlite3" not in contents or "media/" not in contents:
+            raise ValueError("The backup metadata does not describe the required contents.")
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "northbound.sqlite3"
             with archive.open("northbound.sqlite3") as source, database_path.open("wb") as destination:
@@ -100,6 +135,21 @@ def stage_restore(uploaded_file):
             destination.write(chunk)
     try:
         validate_backup(temporary_path)
+        os.replace(temporary_path, target)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def stage_stored_restore(source):
+    source = Path(source)
+    validate_backup(source)
+    target = pending_restore_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = target.with_suffix(".copying")
+    try:
+        shutil.copy2(source, temporary_path)
         os.replace(temporary_path, target)
     except Exception:
         temporary_path.unlink(missing_ok=True)

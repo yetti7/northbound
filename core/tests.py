@@ -1,8 +1,9 @@
 from datetime import date, timedelta
 import shutil
 import tempfile
-import io
+import os
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -1095,6 +1096,9 @@ class AccountAndConfigurationAccessTests(TestCase):
 class PlatformSettingsTests(TransactionTestCase):
     def setUp(self):
         self.media_root = tempfile.mkdtemp()
+        self.data_root = tempfile.mkdtemp()
+        self.data_root_patch = patch("core.backups.data_root", return_value=Path(self.data_root))
+        self.data_root_patch.start()
         self.override = override_settings(MEDIA_ROOT=self.media_root)
         self.override.enable()
         self.owner = get_user_model().objects.create_superuser(
@@ -1103,20 +1107,77 @@ class PlatformSettingsTests(TransactionTestCase):
 
     def tearDown(self):
         self.override.disable()
+        self.data_root_patch.stop()
         shutil.rmtree(self.media_root, ignore_errors=True)
+        shutil.rmtree(self.data_root, ignore_errors=True)
 
-    def test_owner_can_download_sqlite_and_media_backup(self):
+    def test_owner_can_create_and_then_download_stored_manual_backup(self):
         with open(f"{self.media_root}/profile-picture.txt", "wb") as media_file:
             media_file.write(b"profile-picture")
+        Path(self.data_root, ".env").write_text("DJANGO_SECRET_KEY=must-not-be-backed-up")
         self.client.force_login(self.owner)
-        response = self.client.post(reverse("platform-backup-download"))
-        self.assertEqual(response.status_code, 200)
-        archive_bytes = b"".join(response.streaming_content)
-        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as backup_zip:
+        response = self.client.post(reverse("platform-backup-create"))
+        self.assertRedirects(response, reverse("platform-backups"))
+        backup_path = next(Path(self.data_root, "backups").glob("northbound-manual-*.zip"))
+        with zipfile.ZipFile(backup_path) as backup_zip:
             self.assertIn("northbound.sqlite3", backup_zip.namelist())
             self.assertIn("media/profile-picture.txt", backup_zip.namelist())
             self.assertIn("northbound-backup.json", backup_zip.namelist())
+            self.assertNotIn(".env", backup_zip.namelist())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_created", actor=self.owner).exists())
+
+        listing = self.client.get(reverse("platform-backups"))
+        self.assertContains(listing, "Stored Backups")
+        self.assertContains(listing, "Manual")
+        self.assertContains(listing, reverse("stored-backup-restore", kwargs={"filename": backup_path.name}))
+        self.assertContains(listing, reverse("stored-backup-download", kwargs={"filename": backup_path.name}))
+        self.assertContains(listing, reverse("stored-backup-delete", kwargs={"filename": backup_path.name}))
+
+        download = self.client.get(reverse("stored-backup-download", kwargs={"filename": backup_path.name}))
+        self.assertEqual(download.status_code, 200)
+        self.assertGreater(len(b"".join(download.streaming_content)), 0)
         self.assertTrue(AuditEvent.objects.filter(action="platform.backup_downloaded", actor=self.owner).exists())
+
+    def test_stored_backup_delete_requires_confirmation(self):
+        from .backups import create_stored_backup
+
+        backup_path = create_stored_backup()
+        self.client.force_login(self.owner)
+        url = reverse("stored-backup-delete", kwargs={"filename": backup_path.name})
+        confirmation = self.client.get(url)
+        self.assertContains(confirmation, "Delete This Backup?")
+        self.assertTrue(backup_path.exists())
+        response = self.client.post(url)
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertFalse(backup_path.exists())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_deleted", actor=self.owner).exists())
+
+    @override_settings(NORTHBOUND_WEB_RESTART=False)
+    def test_stored_backup_restore_requires_password_and_restore_confirmation(self):
+        from .backups import create_stored_backup, pending_restore_path
+
+        backup_path = create_stored_backup()
+        self.client.force_login(self.owner)
+        url = reverse("stored-backup-restore", kwargs={"filename": backup_path.name})
+        response = self.client.post(url, {
+            "current_password": "wrong-password",
+            "confirmation": "RESTORE",
+        })
+        self.assertContains(response, "Your current password is incorrect")
+        self.assertFalse(pending_restore_path().exists())
+        response = self.client.post(url, {
+            "current_password": "backup-test-password-482!",
+            "confirmation": "not-restore",
+        })
+        self.assertContains(response, "Enter RESTORE exactly")
+        self.assertFalse(pending_restore_path().exists())
+        response = self.client.post(url, {
+            "current_password": "backup-test-password-482!",
+            "confirmation": "RESTORE",
+        })
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertTrue(pending_restore_path().exists())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.restore_staged", actor=self.owner).exists())
 
     def test_automatic_backup_defaults_and_schedule_are_configurable(self):
         self.client.force_login(self.owner)
@@ -1138,6 +1199,80 @@ class PlatformSettingsTests(TransactionTestCase):
         self.assertEqual(backup_settings.weekdays, [PlatformBackupSettings.Weekday.MONDAY, PlatformBackupSettings.Weekday.FRIDAY])
         self.assertEqual(backup_settings.backup_time.hour, 3)
         self.assertEqual(backup_settings.retention_count, 9)
+
+    def test_retention_removes_only_oldest_automatic_backups(self):
+        backup_directory = Path(self.data_root, "backups")
+        backup_directory.mkdir()
+        manual = backup_directory / "northbound-manual-20260823-010000-000000.zip"
+        automatic_old = backup_directory / "northbound-automatic-20260821-010000-000000.zip"
+        automatic_new = backup_directory / "northbound-automatic-20260822-010000-000000.zip"
+        for index, path in enumerate((automatic_old, automatic_new, manual), start=1):
+            path.write_bytes(b"backup")
+            os.utime(path, (index, index))
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-backups"), {
+            "enabled": "on",
+            "weekdays": [PlatformBackupSettings.Weekday.MONDAY],
+            "backup_time": "01:00",
+            "retention_count": 1,
+        })
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertFalse(automatic_old.exists())
+        self.assertTrue(automatic_new.exists())
+        self.assertTrue(manual.exists())
+
+    def test_scheduler_records_success_and_latest_failure(self):
+        from django.core.management import call_command
+
+        backup_settings = PlatformBackupSettings.load()
+        local_now = timezone.localtime()
+        backup_settings.weekdays = [local_now.weekday()]
+        backup_settings.backup_time = (local_now - timedelta(minutes=1)).time().replace(tzinfo=None)
+        backup_settings.last_run_date = None
+        backup_settings.save()
+        with patch("core.management.commands.run_backup_scheduler.create_automatic_backup", return_value=Path("backup.zip")):
+            call_command("run_backup_scheduler", "--once")
+        backup_settings.refresh_from_db()
+        self.assertIsNotNone(backup_settings.last_success_at)
+
+        backup_settings.last_run_date = None
+        backup_settings.save(update_fields=["last_run_date"])
+        with patch("core.management.commands.run_backup_scheduler.create_automatic_backup", side_effect=OSError("disk full")):
+            call_command("run_backup_scheduler", "--once")
+        backup_settings.refresh_from_db()
+        self.assertIsNotNone(backup_settings.last_failure_at)
+        self.assertEqual(backup_settings.last_error, "disk full")
+        self.assertIsNone(backup_settings.last_run_date)
+
+    def test_all_weekdays_produce_a_daily_next_run_and_status_is_exposed(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.weekdays = list(range(7))
+        backup_settings.backup_time = (timezone.localtime() + timedelta(minutes=1)).time().replace(tzinfo=None)
+        backup_settings.last_success_at = timezone.now() - timedelta(hours=2)
+        backup_settings.last_failure_at = timezone.now() - timedelta(hours=1)
+        backup_settings.last_error = "Example failure"
+        backup_settings.save()
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-backups"))
+        self.assertIsNotNone(response.context["next_scheduled_run"])
+        self.assertContains(response, str(Path(self.data_root, "backups")))
+        self.assertContains(response, "Example failure")
+
+    def test_backup_validation_rejects_invalid_metadata_and_unexpected_files(self):
+        from .backups import create_stored_backup, validate_backup
+
+        valid_backup = create_stored_backup()
+        with zipfile.ZipFile(valid_backup, "a") as backup_zip:
+            backup_zip.writestr(".env", "DJANGO_SECRET_KEY=unexpected")
+        with self.assertRaisesMessage(ValueError, "unexpected file"):
+            validate_backup(valid_backup)
+
+        invalid_metadata = Path(self.data_root, "invalid-metadata.zip")
+        with zipfile.ZipFile(invalid_metadata, "w") as backup_zip:
+            backup_zip.writestr("northbound.sqlite3", b"not-reached")
+            backup_zip.writestr("northbound-backup.json", '{"database": "sqlite"}')
+        with self.assertRaisesMessage(ValueError, "invalid creation time"):
+            validate_backup(invalid_metadata)
 
 
 class GroupEditingTests(TestCase):

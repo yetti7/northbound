@@ -15,20 +15,19 @@ from django.utils import timezone
 import secrets
 import json
 import sqlite3
-import tempfile
 import zipfile
 import os
 import signal
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
-from .backups import automatic_backup_directory, list_automatic_backups, pending_restore_path, stage_restore
+from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 
 
 CONFIGURABLE_MONTH_STATUSES = {ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN}
@@ -470,6 +469,36 @@ def platform_settings(request):
     return render(request, "core/platform_settings.html")
 
 
+def _next_scheduled_backup(backup_settings):
+    if not backup_settings.enabled or not backup_settings.weekdays:
+        return None
+    local_now = timezone.localtime()
+    local_time = local_now.time().replace(tzinfo=None)
+    for day_offset in range(8):
+        candidate_date = local_now.date() + timedelta(days=day_offset)
+        if candidate_date.weekday() not in backup_settings.weekdays:
+            continue
+        if day_offset == 0 and (
+            backup_settings.last_run_date == candidate_date or backup_settings.backup_time <= local_time
+        ):
+            continue
+        return timezone.make_aware(
+            datetime.combine(candidate_date, backup_settings.backup_time),
+            timezone.get_current_timezone(),
+        )
+    return None
+
+
+def _stored_backup_or_404(filename):
+    try:
+        backup_path = stored_backup_path(filename)
+    except ValueError:
+        raise Http404
+    if not backup_path.is_file():
+        raise Http404
+    return backup_path
+
+
 @login_required(login_url="config-login")
 def platform_backups(request):
     if not request.user.is_superuser:
@@ -479,78 +508,97 @@ def platform_backups(request):
     backup_settings_form = PlatformBackupSettingsForm(request.POST or None, instance=backup_settings)
     if request.method == "POST" and backup_settings_form.is_valid():
         backup_settings_form.save()
-        for expired_backup in list_automatic_backups()[backup_settings.retention_count:]:
-            expired_backup.unlink(missing_ok=True)
+        if is_sqlite:
+            for expired_backup in list_automatic_backups()[backup_settings.retention_count:]:
+                expired_backup.unlink(missing_ok=True)
         selected_days = ", ".join(dict(PlatformBackupSettings.Weekday.choices)[day] for day in backup_settings.weekdays)
         AuditEvent.objects.create(actor=request.user, action="platform.backup_settings_updated", object_type="PlatformBackupSettings", object_id=str(backup_settings.pk), summary=f"Updated automatic backups to {selected_days} at {backup_settings.backup_time}; retaining {backup_settings.retention_count}.")
         messages.success(request, "Automatic backup settings were updated.")
         return redirect("platform-backups")
-    automatic_backups = [{"name": path.name, "size": path.stat().st_size, "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.get_current_timezone())} for path in list_automatic_backups()]
+    stored_paths = list_stored_backups() if is_sqlite else []
+    stored_backups = [{
+        "name": path.name,
+        "size": path.stat().st_size,
+        "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.get_current_timezone()),
+        "kind": "Automatic" if path.name.startswith("northbound-automatic-") else "Manual",
+    } for path in stored_paths]
     return render(request, "core/platform_backups.html", {
         "is_sqlite": is_sqlite,
         "restore_pending": pending_restore_path().exists() if is_sqlite else False,
         "web_restart_enabled": settings.NORTHBOUND_WEB_RESTART,
         "backup_settings_form": backup_settings_form,
-        "automatic_backups": automatic_backups,
+        "stored_backups": stored_backups,
+        "backup_location": str(automatic_backup_directory()) if is_sqlite else None,
+        "stored_backup_size": sum(backup["size"] for backup in stored_backups),
+        "next_scheduled_run": _next_scheduled_backup(backup_settings) if is_sqlite else None,
         "platform_timezone": settings.TIME_ZONE,
     })
 
 
 @login_required(login_url="config-login")
-def platform_backup_download(request):
+def platform_backup_create(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     if request.method != "POST":
         return redirect("platform-backups")
     if connection.vendor != "sqlite":
-        messages.error(request, "In-app backup downloads currently support the standard SQLite deployment. Back up PostgreSQL with its native tools.")
+        messages.error(request, "In-app backups currently support the standard SQLite deployment. Back up PostgreSQL with its native tools.")
         return redirect("platform-backups")
-
-    created_at = timezone.now()
-    temporary_directory = tempfile.TemporaryDirectory(prefix="northbound-backup-")
-    sqlite_backup_path = Path(temporary_directory.name) / "northbound.sqlite3"
-    connection.ensure_connection()
-    destination = sqlite3.connect(sqlite_backup_path)
     try:
-        connection.connection.backup(destination)
-    finally:
-        destination.close()
+        backup_path = create_stored_backup()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        messages.error(request, f"The backup could not be created: {exc}")
+        return redirect("platform-backups")
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.backup_created",
+        object_type="PlatformBackup",
+        object_id=backup_path.name,
+        summary="Created a stored manual backup containing SQLite data and uploaded media.",
+    )
+    messages.success(request, "Backup created and added to Stored Backups.")
+    return redirect("platform-backups")
 
-    archive = tempfile.TemporaryFile()
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as backup_zip:
-        backup_zip.write(sqlite_backup_path, "northbound.sqlite3")
-        media_root = Path(settings.MEDIA_ROOT)
-        if media_root.exists():
-            for media_file in media_root.rglob("*"):
-                if media_file.is_file():
-                    backup_zip.write(media_file, Path("media") / media_file.relative_to(media_root))
-        backup_zip.writestr("northbound-backup.json", json.dumps({
-            "created_at": created_at.isoformat(),
-            "database": "sqlite",
-            "contents": ["northbound.sqlite3", "media/"],
-        }, indent=2))
-    temporary_directory.cleanup()
-    archive.seek(0)
+
+@login_required(login_url="config-login")
+def stored_backup_download(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    backup_path = _stored_backup_or_404(filename)
     AuditEvent.objects.create(
         actor=request.user,
         action="platform.backup_downloaded",
         object_type="PlatformBackup",
-        summary="Generated and downloaded a platform backup containing SQLite data and uploaded media.",
+        object_id=filename,
+        summary=f"Downloaded stored backup {filename}.",
     )
-    filename = f"northbound-backup-{created_at:%Y%m%d-%H%M%S}.zip"
-    return FileResponse(archive, as_attachment=True, filename=filename, content_type="application/zip")
+    return FileResponse(backup_path.open("rb"), as_attachment=True, filename=filename, content_type="application/zip")
 
 
 @login_required(login_url="config-login")
-def automatic_backup_download(request, filename):
+def stored_backup_delete(request, filename):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
-    if Path(filename).name != filename or not filename.startswith("northbound-automatic-") or not filename.endswith(".zip"):
-        raise Http404
-    backup_path = automatic_backup_directory() / filename
-    if not backup_path.is_file():
-        raise Http404
-    return FileResponse(backup_path.open("rb"), as_attachment=True, filename=filename, content_type="application/zip")
+    backup_path = _stored_backup_or_404(filename)
+    if request.method == "POST":
+        backup_path.unlink()
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="platform.backup_deleted",
+            object_type="PlatformBackup",
+            object_id=filename,
+            summary=f"Deleted stored backup {filename}.",
+        )
+        messages.success(request, "The stored backup was deleted.")
+        return redirect("platform-backups")
+    return render(request, "core/confirm_remove.html", {
+        "eyebrow": "Stored Backups",
+        "title": "Delete This Backup?",
+        "description": f"{filename} will be permanently removed from stored backups.",
+        "cancel_url": reverse("platform-backups"),
+        "action_label": "Delete Backup",
+        "hide_reason": True,
+    })
 
 
 @login_required(login_url="config-login")
@@ -577,6 +625,70 @@ def health(request):
     return JsonResponse({"ok": True, "restore_pending": pending_restore_path().exists()})
 
 
+def _restore_confirmation_error(request):
+    if not request.user.check_password(request.POST.get("current_password", "")):
+        return "Your current password is incorrect."
+    if request.POST.get("confirmation") != "RESTORE":
+        return "Enter RESTORE exactly to confirm."
+    return ""
+
+
+def _render_restore_restarting(request):
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.restore_restart_requested",
+        object_type="PlatformBackup",
+        summary="Requested a graceful application restart to apply the staged restore.",
+    )
+
+    def stop_gunicorn():
+        try:
+            master_pid = int(Path("/tmp/northbound-gunicorn.pid").read_text().strip())
+            os.kill(master_pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+
+    threading.Timer(2, stop_gunicorn).start()
+    return render(request, "core/platform_restore_restarting.html")
+
+
+@login_required(login_url="config-login")
+def stored_backup_restore(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if connection.vendor != "sqlite":
+        return redirect("platform-backups")
+    backup_path = _stored_backup_or_404(filename)
+    error = ""
+    if request.method == "POST":
+        error = _restore_confirmation_error(request)
+        if not error:
+            try:
+                stage_stored_restore(backup_path)
+            except (ValueError, zipfile.BadZipFile, json.JSONDecodeError, OSError) as exc:
+                error = f"The backup could not be staged: {exc}"
+            else:
+                AuditEvent.objects.create(
+                    actor=request.user,
+                    action="platform.restore_staged",
+                    object_type="PlatformBackup",
+                    object_id=filename,
+                    summary=f"Validated and staged stored backup {filename} for restoration.",
+                )
+                if settings.NORTHBOUND_WEB_RESTART:
+                    return _render_restore_restarting(request)
+                messages.success(
+                    request,
+                    "Backup validated and staged. Restart Northbound to apply it before the web server starts.",
+                )
+                return redirect("platform-backups")
+    return render(request, "core/platform_restore_restart.html", {
+        "error": error,
+        "backup_name": filename,
+        "form_action": reverse("stored-backup-restore", kwargs={"filename": filename}),
+    })
+
+
 @login_required(login_url="config-login")
 def platform_restore_restart(request):
     if not request.user.is_superuser:
@@ -586,23 +698,13 @@ def platform_restore_restart(request):
         return redirect("platform-backups")
     error = ""
     if request.method == "POST":
-        if not request.user.check_password(request.POST.get("current_password", "")):
-            error = "Your current password is incorrect."
-        elif request.POST.get("confirmation") != "RESTORE":
-            error = "Enter RESTORE exactly to confirm."
-        else:
-            AuditEvent.objects.create(actor=request.user, action="platform.restore_restart_requested", object_type="PlatformBackup", summary="Requested a graceful application restart to apply the staged restore.")
-
-            def stop_gunicorn():
-                try:
-                    master_pid = int(Path("/tmp/northbound-gunicorn.pid").read_text().strip())
-                    os.kill(master_pid, signal.SIGTERM)
-                except (OSError, ValueError):
-                    pass
-
-            threading.Timer(2, stop_gunicorn).start()
-            return render(request, "core/platform_restore_restarting.html")
-    return render(request, "core/platform_restore_restart.html", {"error": error})
+        error = _restore_confirmation_error(request)
+        if not error:
+            return _render_restore_restarting(request)
+    return render(request, "core/platform_restore_restart.html", {
+        "error": error,
+        "form_action": reverse("platform-restore-restart"),
+    })
 
 
 def setup(request):

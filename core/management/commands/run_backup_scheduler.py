@@ -43,7 +43,12 @@ class Command(BaseCommand):
             backup_settings.save(update_fields=["last_run_date"])
         try:
             path = create_automatic_backup(backup_settings.retention_count)
+            PlatformBackupSettings.objects.filter(pk=backup_settings.pk).update(last_success_at=timezone.now())
             self.stdout.write(self.style.SUCCESS(f"Created automatic backup: {path}"))
-        except Exception:
-            PlatformBackupSettings.objects.filter(pk=backup_settings.pk, last_run_date=local_now.date()).update(last_run_date=None)
+        except Exception as exc:
+            PlatformBackupSettings.objects.filter(pk=backup_settings.pk, last_run_date=local_now.date()).update(
+                last_run_date=None,
+                last_failure_at=timezone.now(),
+                last_error=str(exc)[:2000],
+            )
             raise
