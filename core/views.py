@@ -6,7 +6,7 @@ from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db import connection
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery, Sum
 from django.forms import inlineformset_factory
 from django.http import FileResponse, Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -152,6 +152,99 @@ def config_dashboard(request):
         "recent_events": AuditEvent.objects.select_related("actor", "group")[:12],
     }
     return render(request, "core/config_dashboard.html", context)
+
+
+def _platform_group_directory(group_slug=None):
+    owner_memberships = Membership.objects.filter(
+        is_active=True,
+        role=Membership.Role.OWNER,
+        user__is_superuser=False,
+    ).select_related("user")
+    current_months = ChallengeMonth.objects.exclude(
+        status=ChallengeMonth.Status.ARCHIVED
+    ).order_by("-starts_on")
+    latest_event = AuditEvent.objects.filter(group=OuterRef("pk")).order_by("-created_at")
+    group_query = ReadingGroup.objects.annotate(
+        participant_count=Count(
+            "memberships",
+            filter=Q(memberships__is_active=True, memberships__user__is_superuser=False),
+            distinct=True,
+        ),
+        recent_activity_summary=Subquery(latest_event.values("summary")[:1]),
+        recent_activity_at=Subquery(latest_event.values("created_at")[:1]),
+        recent_activity_actor=Subquery(latest_event.values("actor__username")[:1]),
+    )
+    if group_slug is not None:
+        group_query = group_query.filter(slug=group_slug)
+    groups = list(
+        group_query
+        .prefetch_related(
+            Prefetch("memberships", queryset=owner_memberships, to_attr="directory_owners"),
+            Prefetch("challenge_months", queryset=current_months, to_attr="directory_months"),
+        )
+        .order_by("name", "pk")
+    )
+    for group in groups:
+        group.current_challenge = next(
+            (month for month in group.directory_months if month.status == ChallengeMonth.Status.OPEN),
+            group.directory_months[0] if group.directory_months else None,
+        )
+    return groups
+
+
+@login_required(login_url="config-login")
+def config_group_list(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/config_group_list.html", {"groups": _platform_group_directory()})
+
+
+@login_required(login_url="config-login")
+def config_group_detail(request, group_slug):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    group = next(iter(_platform_group_directory(group_slug)), None)
+    if group is None:
+        raise Http404
+    return render(request, "core/config_group_detail.html", {"group": group})
+
+
+@login_required(login_url="config-login")
+def config_group_status_toggle(request, group_slug):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    group = get_object_or_404(ReadingGroup, slug=group_slug)
+    action = "Deactivate" if group.is_active else "Reactivate"
+    if request.method == "POST":
+        group.is_active = not group.is_active
+        group.save(update_fields=["is_active"])
+        new_state = "reactivated" if group.is_active else "deactivated"
+        reason = request.POST.get("reason", "").strip()
+        summary = f"{new_state.capitalize()} reading group {group.name}."
+        if reason:
+            summary += f" Reason: {reason}"
+        AuditEvent.objects.create(
+            actor=request.user,
+            group=group,
+            action=f"group.{new_state}",
+            object_type="ReadingGroup",
+            object_id=str(group.pk),
+            summary=summary,
+        )
+        messages.success(request, f"{group.name} was {new_state}. Its URL and history were preserved.")
+        return redirect("config-group-detail", group_slug=group.slug)
+    return render(request, "core/confirm_remove.html", {
+        "eyebrow": "Group Lifecycle",
+        "title": f"{action} {group.name}?",
+        "description": (
+            "The group will be hidden from normal account access, while its stable URL, memberships, "
+            "challenge months, submissions, teams, scoring, and audit history remain stored."
+            if group.is_active else
+            "The group will return to normal account access with its stable URL, memberships, and history unchanged."
+        ),
+        "cancel_url": reverse("config-group-detail", kwargs={"group_slug": group.slug}),
+        "action_label": action,
+    })
 
 
 @login_required(login_url="config-login")
@@ -536,6 +629,8 @@ def group_create(request):
                 )
             AuditEvent.objects.create(actor=request.user, group=group, action="group.created", object_type="ReadingGroup", object_id=str(group.pk), summary=f"Created reading group {group.name}")
         messages.success(request, f"{group.name} was created. Share its six-character access code with invited readers.")
+        if request.user.is_superuser:
+            return redirect("config-group-detail", group_slug=group.slug)
         return redirect("group-detail", group_slug=group.slug)
     return render(request, "core/group_create.html", {"form": form})
 

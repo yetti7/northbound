@@ -199,6 +199,122 @@ class PlatformAccountManagementTests(TestCase):
         self.assertTrue(self.reader.is_active)
 
 
+class PlatformGroupManagementTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.root = User.objects.create_superuser("group-platform-owner", "root@example.com", "root-password")
+        self.owner = User.objects.create_user("central-owner", "owner@example.com", "owner-password")
+        self.reader = User.objects.create_user("central-reader", "reader@example.com", "reader-password")
+        self.group = ReadingGroup.objects.create(name="Central Reading Group", slug="central-reading-group")
+        self.inactive_group = ReadingGroup.objects.create(name="Inactive Archive", slug="inactive-archive", is_active=False)
+        self.owner_membership = Membership.objects.create(
+            group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Central Owner"
+        )
+        self.reader_membership = Membership.objects.create(
+            group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Central Reader"
+        )
+        self.month = ChallengeMonth.objects.create(
+            group=self.group,
+            name="August Challenge",
+            starts_on=date(2026, 8, 1),
+            ends_on=date(2026, 8, 31),
+            status=ChallengeMonth.Status.OPEN,
+        )
+        AuditEvent.objects.create(
+            actor=self.owner,
+            group=self.group,
+            action="group.test_activity",
+            object_type="ReadingGroup",
+            object_id=str(self.group.pk),
+            summary="Updated the group for directory testing.",
+        )
+
+    def test_group_directory_lists_all_groups_with_identity_only_filters_and_summaries(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-group-list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Central Reading Group")
+        self.assertContains(response, "Inactive Archive")
+        self.assertContains(response, "Central Owner")
+        self.assertContains(response, "August Challenge")
+        self.assertContains(response, "Updated the group for directory testing.")
+        self.assertContains(response, 'data-search="central reading group central-reading-group"')
+        self.assertNotContains(response, 'data-search="central reading group central-reading-group active"')
+        self.assertContains(response, 'value="active"')
+        self.assertContains(response, 'value="inactive"')
+        self.assertContains(response, 'value="all"')
+
+        groups = {group.slug: group for group in response.context["groups"]}
+        self.assertEqual(groups[self.group.slug].participant_count, 2)
+        self.assertEqual(groups[self.group.slug].current_challenge, self.month)
+        self.assertEqual(groups[self.group.slug].directory_owners, [self.owner_membership])
+
+    def test_dashboard_and_overview_link_to_central_group_management_without_membership(self):
+        self.client.force_login(self.root)
+        dashboard = self.client.get(reverse("config-dashboard"))
+        self.assertContains(dashboard, reverse("config-group-list"))
+        overview = self.client.get(reverse("config-group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertContains(overview, reverse("group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertContains(overview, "Central Owner")
+        self.assertFalse(Membership.objects.filter(group=self.group, user=self.root).exists())
+
+        inactive_overview = self.client.get(
+            reverse("config-group-detail", kwargs={"group_slug": self.inactive_group.slug})
+        )
+        self.assertEqual(inactive_overview.status_code, 200)
+        self.assertContains(inactive_overview, "Reactivate")
+
+    def test_platform_owner_creation_uses_normal_group_rules_without_hidden_membership(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Platform Created Group",
+            "timezone": "America/New_York",
+            "announcement": "",
+            "hardcover_api_token": "",
+        })
+        group = ReadingGroup.objects.get(name="Platform Created Group")
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": group.slug}))
+        self.assertEqual(group.slug, "platform-created-group")
+        self.assertEqual(len(group.join_code), 6)
+        self.assertFalse(Membership.objects.filter(group=group, user=self.root).exists())
+        self.assertFalse(group.memberships.exists())
+        self.assertTrue(AuditEvent.objects.filter(action="group.created", group=group, actor=self.root).exists())
+
+    def test_deactivation_and_reactivation_preserve_group_url_and_history_and_are_audited(self):
+        self.client.force_login(self.root)
+        url = reverse("config-group-status-toggle", kwargs={"group_slug": self.group.slug})
+        confirmation = self.client.get(url)
+        self.assertContains(confirmation, "Deactivate Central Reading Group?")
+        self.assertTrue(ReadingGroup.objects.get(pk=self.group.pk).is_active)
+
+        response = self.client.post(url, {"reason": "Season complete"})
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": self.group.slug}))
+        self.group.refresh_from_db()
+        self.assertFalse(self.group.is_active)
+        self.assertEqual(self.group.slug, "central-reading-group")
+        self.assertTrue(Membership.objects.filter(pk=self.owner_membership.pk).exists())
+        self.assertTrue(Membership.objects.filter(pk=self.reader_membership.pk).exists())
+        self.assertTrue(ChallengeMonth.objects.filter(pk=self.month.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(action="group.deactivated", group=self.group).exists())
+
+        self.client.post(url)
+        self.group.refresh_from_db()
+        self.assertTrue(self.group.is_active)
+        self.assertTrue(AuditEvent.objects.filter(action="group.reactivated", group=self.group).exists())
+
+    def test_regular_accounts_cannot_use_central_group_management(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("config-group-list")).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse("config-group-detail", kwargs={"group_slug": self.group.slug})).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(reverse("config-group-status-toggle", kwargs={"group_slug": self.group.slug})).status_code,
+            403,
+        )
+
+
 class HardcoverCatalogServiceTests(TestCase):
     def test_parses_book_and_edition_links(self):
         edition = parse_hardcover_url("https://hardcover.app/books/carls-doomsday-scenario/editions/30407787")

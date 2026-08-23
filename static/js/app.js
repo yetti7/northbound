@@ -148,6 +148,34 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     applyAccountDirectory();
   }
+
+  const groupDirectory = document.querySelector("[data-group-directory]");
+  const groupTable = document.querySelector("[data-group-table]");
+  if (groupDirectory && groupTable) {
+    const search = groupDirectory.querySelector("[data-group-search]");
+    const statusControls = [...groupDirectory.querySelectorAll("[data-group-status]")];
+    const rows = [...groupTable.querySelectorAll("[data-group-row]")];
+    const resultSummary = document.querySelector("[data-group-results]");
+    const filterEmpty = groupTable.querySelector("[data-group-filter-empty]");
+
+    const applyGroupDirectory = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      const selectedStatus = statusControls.find((control) => control.checked)?.value || "all";
+      let visibleCount = 0;
+      rows.forEach((row) => {
+        const identityMatches = !query || row.dataset.search.includes(query);
+        const statusMatches = selectedStatus === "all" || row.dataset.status === selectedStatus;
+        row.hidden = !(identityMatches && statusMatches);
+        if (!row.hidden) visibleCount += 1;
+      });
+      filterEmpty.hidden = visibleCount !== 0 || rows.length === 0;
+      resultSummary.textContent = `${visibleCount} of ${rows.length} groups shown`;
+    };
+
+    search.addEventListener("input", applyGroupDirectory);
+    statusControls.forEach((control) => control.addEventListener("change", applyGroupDirectory));
+    applyGroupDirectory();
+  }
 });
 
 document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
