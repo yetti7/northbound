@@ -18,6 +18,8 @@ services:
     image: ${NORTHBOUND_IMAGE}
     restart: unless-stopped
     env_file: .env
+    environment:
+      NORTHBOUND_TRUST_PROXY_HEADERS: "1"
     depends_on:
       db:
         condition: service_healthy

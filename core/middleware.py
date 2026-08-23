@@ -1,6 +1,23 @@
+from django.conf import settings
+from django.http import HttpResponse
 from django.shortcuts import redirect
 
 from .models import UserProfile
+
+
+class RequestSizeLimitMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        content_length = request.META.get("CONTENT_LENGTH", "")
+        try:
+            request_size = int(content_length) if content_length else 0
+        except ValueError:
+            return HttpResponse("Invalid Content-Length header.", status=400, content_type="text/plain")
+        if request_size > settings.NORTHBOUND_MAX_REQUEST_BYTES:
+            return HttpResponse("Request body is too large.", status=413, content_type="text/plain")
+        return self.get_response(request)
 
 
 class RequirePasswordChangeMiddleware:

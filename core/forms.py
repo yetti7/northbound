@@ -39,6 +39,13 @@ class AvatarFieldsMixin(forms.Form):
             self.fields["profile_picture"].initial = profile.profile_picture
             self.fields["selected_avatar"].initial = profile.selected_avatar
 
+    def clean_profile_picture(self):
+        uploaded_picture = self.cleaned_data.get("profile_picture")
+        if uploaded_picture and uploaded_picture.size > settings.NORTHBOUND_MAX_PROFILE_PICTURE_BYTES:
+            maximum_mb = settings.NORTHBOUND_MAX_PROFILE_PICTURE_BYTES / (1024 * 1024)
+            raise forms.ValidationError(f"Profile pictures must be {maximum_mb:g} MB or smaller.")
+        return uploaded_picture
+
     def save_avatar(self, user):
         profile, _ = UserProfile.objects.get_or_create(user=user)
         uploaded_picture = self.cleaned_data.get("profile_picture")

@@ -63,6 +63,26 @@ class ProfilePictureTests(TestCase):
         self.assertEqual(profile.avatar_url, "/static/avatars/3d_1.png")
         self.assertContains(self.client.get(reverse("my-stats")), profile.avatar_url)
 
+    @override_settings(NORTHBOUND_MAX_PROFILE_PICTURE_BYTES=32)
+    def test_profile_picture_upload_has_a_size_limit(self):
+        self.client.force_login(self.user)
+        gif = SimpleUploadedFile(
+            "oversized.gif",
+            b"GIF87a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00ccc,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;",
+            content_type="image/gif",
+        )
+
+        response = self.client.post(reverse("account"), {
+            "username": self.user.username,
+            "first_name": "Avatar",
+            "last_name": "Reader",
+            "email": self.user.email,
+            "profile_picture": gif,
+        })
+
+        self.assertContains(response, "Profile pictures must be")
+        self.assertFalse(UserProfile.objects.get(user=self.user).profile_picture)
+
 
 class PermissionOverrideTests(TestCase):
     def setUp(self):
