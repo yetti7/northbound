@@ -2,7 +2,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
-from django.core.files.storage import default_storage
+from django.core.files.storage import FileSystemStorage
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 
 
@@ -13,9 +13,10 @@ def serve_media(request, path):
     if request.method not in {"GET", "HEAD"}:
         return HttpResponseNotAllowed(["GET", "HEAD"])
 
+    storage = FileSystemStorage(location=settings.MEDIA_ROOT, base_url=settings.MEDIA_URL)
     try:
-        media_file = default_storage.open(path, "rb")
-    except (FileNotFoundError, SuspiciousFileOperation, ValueError):
+        media_file = storage.open(path, "rb")
+    except (FileNotFoundError, IsADirectoryError, SuspiciousFileOperation, ValueError):
         raise Http404 from None
 
     response = FileResponse(media_file, filename=Path(path).name)
