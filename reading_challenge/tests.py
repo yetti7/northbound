@@ -15,8 +15,9 @@ class MediaServingTests(TestCase):
         self.addCleanup(self.media_directory.cleanup)
         self.media_root = Path(self.media_directory.name)
         (self.media_root / "profile-pictures").mkdir()
-        (self.media_root / "profile-pictures" / "reader.png").write_bytes(b"northbound-image")
+        (self.media_root / "profile-pictures" / "user-4_fkuYvxY.png").write_bytes(b"northbound-image")
         self.settings_override = override_settings(
+            DEBUG=False,
             MEDIA_ROOT=self.media_root,
             NORTHBOUND_SERVE_MEDIA=True,
         )
@@ -24,7 +25,7 @@ class MediaServingTests(TestCase):
         self.addCleanup(self.settings_override.disable)
 
     def test_serves_media_with_safe_headers(self):
-        response = self.client.get("/media/profile-pictures/reader.png")
+        response = self.client.get("/media/profile-pictures/user-4_fkuYvxY.png")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b"".join(response.streaming_content), b"northbound-image")
@@ -36,10 +37,10 @@ class MediaServingTests(TestCase):
 
     def test_media_can_be_disabled(self):
         with override_settings(NORTHBOUND_SERVE_MEDIA=False):
-            self.assertEqual(self.client.get("/media/profile-pictures/reader.png").status_code, 404)
+            self.assertEqual(self.client.get("/media/profile-pictures/user-4_fkuYvxY.png").status_code, 404)
 
     def test_media_rejects_write_methods(self):
-        response = self.client.post("/media/profile-pictures/reader.png")
+        response = self.client.post("/media/profile-pictures/user-4_fkuYvxY.png")
         self.assertEqual(response.status_code, 405)
         self.assertEqual(response.headers["Allow"], "GET, HEAD")
 
