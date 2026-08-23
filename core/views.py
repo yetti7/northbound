@@ -5,13 +5,19 @@ from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db import connection
 from django.db.models import Count, Prefetch, Q, Sum
 from django.forms import inlineformset_factory
-from django.http import Http404, HttpResponseForbidden, JsonResponse
+from django.http import FileResponse, Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 import secrets
+import json
+import sqlite3
+import tempfile
+import zipfile
+from pathlib import Path
 
 from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
@@ -310,6 +316,59 @@ def config_audit(request):
         return HttpResponseForbidden("Platform owner access is required.")
     events = AuditEvent.objects.select_related("actor", "group")[:200]
     return render(request, "core/config_audit.html", {"events": events})
+
+
+@login_required(login_url="config-login")
+def platform_settings(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    is_sqlite = connection.vendor == "sqlite"
+    return render(request, "core/platform_settings.html", {"is_sqlite": is_sqlite})
+
+
+@login_required(login_url="config-login")
+def platform_backup_download(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if request.method != "POST":
+        return redirect("platform-settings")
+    if connection.vendor != "sqlite":
+        messages.error(request, "In-app backup downloads currently support the standard SQLite deployment. Back up PostgreSQL with its native tools.")
+        return redirect("platform-settings")
+
+    created_at = timezone.now()
+    temporary_directory = tempfile.TemporaryDirectory(prefix="northbound-backup-")
+    sqlite_backup_path = Path(temporary_directory.name) / "northbound.sqlite3"
+    connection.ensure_connection()
+    destination = sqlite3.connect(sqlite_backup_path)
+    try:
+        connection.connection.backup(destination)
+    finally:
+        destination.close()
+
+    archive = tempfile.TemporaryFile()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as backup_zip:
+        backup_zip.write(sqlite_backup_path, "northbound.sqlite3")
+        media_root = Path(settings.MEDIA_ROOT)
+        if media_root.exists():
+            for media_file in media_root.rglob("*"):
+                if media_file.is_file():
+                    backup_zip.write(media_file, Path("media") / media_file.relative_to(media_root))
+        backup_zip.writestr("northbound-backup.json", json.dumps({
+            "created_at": created_at.isoformat(),
+            "database": "sqlite",
+            "contents": ["northbound.sqlite3", "media/"],
+        }, indent=2))
+    temporary_directory.cleanup()
+    archive.seek(0)
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.backup_downloaded",
+        object_type="PlatformBackup",
+        summary="Generated and downloaded a platform backup containing SQLite data and uploaded media.",
+    )
+    filename = f"northbound-backup-{created_at:%Y%m%d-%H%M%S}.zip"
+    return FileResponse(archive, as_attachment=True, filename=filename, content_type="application/zip")
 
 
 def setup(request):

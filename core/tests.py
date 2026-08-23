@@ -1,12 +1,14 @@
 from datetime import date, timedelta
 import shutil
 import tempfile
+import io
+import zipfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -874,6 +876,33 @@ class AccountAndConfigurationAccessTests(TestCase):
         self.reader.refresh_from_db()
         self.assertTrue(self.reader.check_password("new-reader-test-password-739!"))
         self.assertIn("_auth_user_id", self.client.session)
+
+
+class PlatformSettingsTests(TransactionTestCase):
+    def setUp(self):
+        self.media_root = tempfile.mkdtemp()
+        self.override = override_settings(MEDIA_ROOT=self.media_root)
+        self.override.enable()
+        self.owner = get_user_model().objects.create_superuser(
+            "backup-owner", "backup@example.com", "backup-test-password-482!"
+        )
+
+    def tearDown(self):
+        self.override.disable()
+        shutil.rmtree(self.media_root, ignore_errors=True)
+
+    def test_owner_can_download_sqlite_and_media_backup(self):
+        with open(f"{self.media_root}/profile-picture.txt", "wb") as media_file:
+            media_file.write(b"profile-picture")
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-backup-download"))
+        self.assertEqual(response.status_code, 200)
+        archive_bytes = b"".join(response.streaming_content)
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as backup_zip:
+            self.assertIn("northbound.sqlite3", backup_zip.namelist())
+            self.assertIn("media/profile-picture.txt", backup_zip.namelist())
+            self.assertIn("northbound-backup.json", backup_zip.namelist())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_downloaded", actor=self.owner).exists())
 
 
 class GroupEditingTests(TestCase):
