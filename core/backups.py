@@ -4,11 +4,12 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 from django.conf import settings
 from django.db import connection
+from django.utils import timezone as django_timezone
 
 
 def data_root():
@@ -42,6 +43,26 @@ def stored_backup_path(filename):
     ):
         raise ValueError("Invalid stored backup name.")
     return automatic_backup_directory() / filename
+
+
+def next_scheduled_backup(backup_settings, now=None):
+    if not backup_settings.enabled or not backup_settings.weekdays:
+        return None
+    local_now = django_timezone.localtime(now or django_timezone.now())
+    local_time = local_now.time().replace(tzinfo=None)
+    for day_offset in range(8):
+        candidate_date = local_now.date() + timedelta(days=day_offset)
+        if candidate_date.weekday() not in backup_settings.weekdays:
+            continue
+        if day_offset == 0 and (
+            backup_settings.last_run_date == candidate_date or backup_settings.backup_time <= local_time
+        ):
+            continue
+        return django_timezone.make_aware(
+            datetime.combine(candidate_date, backup_settings.backup_time),
+            django_timezone.get_current_timezone(),
+        )
+    return None
 
 
 def create_stored_backup(*, automatic=False):

@@ -1275,6 +1275,132 @@ class PlatformSettingsTests(TransactionTestCase):
             validate_backup(invalid_metadata)
 
 
+class PlatformSystemStatusTests(TestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_directory.cleanup)
+        self.owner = get_user_model().objects.create_superuser(
+            "status-owner", "status@example.com", "status-owner-password-482!"
+        )
+        self.reader = get_user_model().objects.create_user(
+            "status-reader", "reader@example.com", "reader-password-482!"
+        )
+
+    def test_platform_owner_sees_read_only_status_without_secrets(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.last_success_at = timezone.now() - timedelta(hours=1)
+        backup_settings.save(update_fields=["last_success_at"])
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="https://northbound.example.com",
+            NORTHBOUND_TRUST_PROXY_HEADERS=True,
+            TIME_ZONE="America/New_York",
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+            SECRET_KEY="system-status-secret-key",
+            TOKEN_ENCRYPTION_KEY="system-status-token-key",
+        ):
+            self.client.force_login(self.owner)
+            response = self.client.get(reverse("platform-system-status"))
+            settings_page = self.client.get(reverse("platform-settings"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "2026.8-test")
+        self.assertContains(response, "SQLite")
+        self.assertContains(response, "America/New_York")
+        self.assertContains(response, "https://northbound.example.com")
+        self.assertContains(response, "Trusted proxy headers enabled")
+        self.assertContains(response, str(Path(self.media_directory.name).resolve()))
+        self.assertContains(response, "Migration State")
+        self.assertContains(response, "Up to date")
+        self.assertContains(response, "Backup Scheduler")
+        self.assertContains(response, "Successful")
+        self.assertContains(response, "Storage Availability")
+        self.assertNotContains(response, "system-status-secret-key")
+        self.assertNotContains(response, "system-status-token-key")
+        self.assertNotContains(response, "Restart Northbound")
+        self.assertNotContains(response, "Run Migrations")
+        self.assertNotContains(response, "Repair Database")
+
+        self.assertContains(settings_page, reverse("platform-system-status"))
+
+    def test_regular_account_cannot_access_system_status(self):
+        self.client.force_login(self.reader)
+        response = self.client.get(reverse("platform-system-status"))
+        self.assertEqual(response.status_code, 403)
+        self.assertNotContains(response, "Database Location", status_code=403)
+
+    def test_actionable_warnings_cover_proxy_debug_scheduler_and_backup_failure(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.enabled = True
+        backup_settings.last_success_at = timezone.now() - timedelta(days=1)
+        backup_settings.last_failure_at = timezone.now()
+        backup_settings.last_error = "sensitive implementation detail remains on Backups only"
+        backup_settings.save()
+        self.client.force_login(self.owner)
+        with override_settings(
+            NORTHBOUND_VERSION="development",
+            NORTHBOUND_URL="https://northbound.example.com",
+            NORTHBOUND_TRUST_PROXY_HEADERS=False,
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=True,
+        ):
+            response = self.client.get(reverse("platform-system-status"))
+
+        self.assertContains(response, "Development build")
+        self.assertContains(response, "HTTPS proxy headers are not trusted")
+        self.assertContains(response, "Debug mode is enabled")
+        self.assertContains(response, "The latest automatic backup failed")
+        self.assertContains(response, "Failed — review Settings → Backups")
+        self.assertNotContains(response, "sensitive implementation detail")
+
+    @patch("core.system_status.MigrationExecutor")
+    def test_pending_migrations_are_reported_without_running_them(self, executor_class):
+        executor = executor_class.return_value
+        executor.loader.graph.leaf_nodes.return_value = [("core", "0025_backup_operational_status")]
+        executor.migration_plan.return_value = [object(), object()]
+        self.client.force_login(self.owner)
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="http://localhost:8000",
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+        ):
+            response = self.client.get(reverse("platform-system-status"))
+
+        self.assertContains(response, "2 pending")
+        self.assertContains(response, "Database migrations are pending")
+        executor.migration_plan.assert_called_once()
+
+    @patch("core.system_status._migration_status", return_value={"label": "Up to date", "pending_count": 0})
+    @patch("core.system_status.connection")
+    def test_postgresql_status_never_displays_database_credentials(self, status_connection, _migration_status):
+        from .system_status import build_system_status
+
+        status_connection.vendor = "postgresql"
+        status_connection.settings_dict = {
+            "HOST": "database.internal",
+            "PORT": "5432",
+            "NAME": "northbound",
+            "USER": "private-database-user",
+            "PASSWORD": "private-database-password",
+        }
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="http://localhost:8000",
+            NORTHBOUND_TRUST_PROXY_HEADERS=False,
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+        ):
+            status = build_system_status()
+
+        self.assertEqual(status["database_backend"], "PostgreSQL")
+        self.assertEqual(status["database_location"], "database.internal:5432 / northbound")
+        rendered_values = repr(status)
+        self.assertNotIn("private-database-user", rendered_values)
+        self.assertNotIn("private-database-password", rendered_values)
+
+
 class GroupEditingTests(TestCase):
     def setUp(self):
         User = get_user_model()

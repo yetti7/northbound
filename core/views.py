@@ -20,14 +20,15 @@ import os
 import signal
 import threading
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
-from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
+from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
+from .system_status import build_system_status
 
 
 CONFIGURABLE_MONTH_STATUSES = {ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN}
@@ -469,24 +470,11 @@ def platform_settings(request):
     return render(request, "core/platform_settings.html")
 
 
-def _next_scheduled_backup(backup_settings):
-    if not backup_settings.enabled or not backup_settings.weekdays:
-        return None
-    local_now = timezone.localtime()
-    local_time = local_now.time().replace(tzinfo=None)
-    for day_offset in range(8):
-        candidate_date = local_now.date() + timedelta(days=day_offset)
-        if candidate_date.weekday() not in backup_settings.weekdays:
-            continue
-        if day_offset == 0 and (
-            backup_settings.last_run_date == candidate_date or backup_settings.backup_time <= local_time
-        ):
-            continue
-        return timezone.make_aware(
-            datetime.combine(candidate_date, backup_settings.backup_time),
-            timezone.get_current_timezone(),
-        )
-    return None
+@login_required(login_url="config-login")
+def platform_system_status(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/platform_system_status.html", build_system_status())
 
 
 def _stored_backup_or_404(filename):
@@ -530,7 +518,7 @@ def platform_backups(request):
         "stored_backups": stored_backups,
         "backup_location": str(automatic_backup_directory()) if is_sqlite else None,
         "stored_backup_size": sum(backup["size"] for backup in stored_backups),
-        "next_scheduled_run": _next_scheduled_backup(backup_settings) if is_sqlite else None,
+        "next_scheduled_run": next_scheduled_backup(backup_settings) if is_sqlite else None,
         "platform_timezone": settings.TIME_ZONE,
     })
 

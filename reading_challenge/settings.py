@@ -17,6 +17,7 @@ def env_list(name, default=""):
 
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-development-key-change-me")
+NORTHBOUND_VERSION = os.getenv("NORTHBOUND_VERSION", "development").strip() or "development"
 TOKEN_ENCRYPTION_KEY = os.getenv("NORTHBOUND_TOKEN_ENCRYPTION_KEY", "")
 HARDCOVER_GRAPHQL_URL = os.getenv("HARDCOVER_GRAPHQL_URL", "https://api.hardcover.app/v1/graphql")
 DEBUG = env_bool("DJANGO_DEBUG", True)

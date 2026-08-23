@@ -19,6 +19,7 @@ urlpatterns = [
     path("config/groups/<slug:group_slug>/status/", views.config_group_status_toggle, name="config-group-status-toggle"),
     path("config/audit/", views.config_audit, name="config-audit"),
     path("config/settings/", views.platform_settings, name="platform-settings"),
+    path("config/settings/status/", views.platform_system_status, name="platform-system-status"),
     path("config/settings/backups/", views.platform_backups, name="platform-backups"),
     path("config/settings/backups/create/", views.platform_backup_create, name="platform-backup-create"),
     path("config/settings/backups/<str:filename>/download/", views.stored_backup_download, name="stored-backup-download"),
