@@ -5,6 +5,9 @@ from django.db import models
 from django.db.models import Q, Sum
 from django.urls import reverse
 from django.templatetags.static import static
+from django.utils import timezone
+from datetime import timedelta
+import hashlib
 import secrets
 
 
@@ -29,6 +32,48 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile for {self.user.username}"
+
+
+def hash_platform_owner_invitation_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class PlatformOwnerInvitation(models.Model):
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="platform_owner_invitations_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    redeemed_at = models.DateTimeField(null=True, blank=True)
+    redeemed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="platform_owner_invitation_redeemed")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="platform_owner_invitations_revoked")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @classmethod
+    def issue(cls, created_by):
+        token = secrets.token_urlsafe(32)
+        invitation = cls.objects.create(
+            token_hash=hash_platform_owner_invitation_token(token),
+            created_by=created_by,
+            expires_at=timezone.now() + timedelta(days=7),
+        )
+        return invitation, token
+
+    @property
+    def is_valid(self):
+        return not self.redeemed_at and not self.revoked_at and self.expires_at > timezone.now()
+
+    @property
+    def status(self):
+        if self.redeemed_at:
+            return "Redeemed"
+        if self.revoked_at:
+            return "Revoked"
+        if self.expires_at <= timezone.now():
+            return "Expired"
+        return "Active"
 
 
 ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

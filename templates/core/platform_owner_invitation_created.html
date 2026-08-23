@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Owner Invitation Created · Northbound{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">Platform Owner Invitation</p><h1>Invitation Link Created</h1><p class="lede">Send this link privately to the new owner. It expires on {{ invitation.expires_at|date:"M j, Y g:i a" }} and will not be shown again.</p><div class="temporary-secret"><code>{{ invitation_url }}</code></div><div class="notice error">Anyone with this link can become a Platform Owner until it is used, revoked, or expires.</div><a class="button primary" href="{% url 'platform-owner-list' %}">Return to Platform Owners</a></section>
+{% endblock %}

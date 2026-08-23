@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import shutil
 import tempfile
 from unittest.mock import patch
@@ -8,10 +8,11 @@ from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from .integrations.hardcover import HardcoverLinkError, lookup_edition, parse_hardcover_url, resolve_scoring_edition, search_books
 from .integrations.secrets import decrypt_token
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -775,38 +776,77 @@ class AccountAndConfigurationAccessTests(TestCase):
         from .models import AuditEvent
         self.assertTrue(AuditEvent.objects.filter(actor=self.root, action="platform.root_login").exists())
 
-    def test_owner_can_create_an_equal_second_owner(self):
+    def test_owner_can_generate_and_redeem_one_time_invitation(self):
         self.client.force_login(self.root)
         response = self.client.post(reverse("platform-owner-create"), {
+            "current_password": "root-test-password-482!",
+        })
+        self.assertEqual(response.status_code, 200)
+        invitation = PlatformOwnerInvitation.objects.get()
+        invitation_url = response.context["invitation_url"]
+        token = invitation_url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertNotEqual(invitation.token_hash, token)
+        self.assertAlmostEqual(
+            invitation.expires_at,
+            timezone.now() + timedelta(days=7),
+            delta=timedelta(seconds=5),
+        )
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_invitation_created",
+            object_id=str(invitation.pk),
+        ).exists())
+
+        self.client.logout()
+        accept_url = reverse("platform-owner-accept", kwargs={"token": token})
+        response = self.client.post(accept_url, {
             "username": "second-owner",
             "email": "second-owner@example.com",
             "password1": "second-owner-test-password-739!",
             "password2": "second-owner-test-password-739!",
-            "current_password": "root-test-password-482!",
         })
-        self.assertRedirects(response, reverse("platform-owner-list"))
+        self.assertRedirects(response, reverse("config-dashboard"))
         second_owner = get_user_model().objects.get(username="second-owner")
         self.assertTrue(second_owner.is_superuser)
         self.assertTrue(second_owner.is_staff)
         self.assertFalse(Membership.objects.filter(user=second_owner).exists())
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.redeemed_by, second_owner)
+        self.assertIsNotNone(invitation.redeemed_at)
         self.assertTrue(AuditEvent.objects.filter(
-            actor=self.root,
-            action="platform.owner_created",
-            object_id=str(second_owner.pk),
+            actor=second_owner,
+            action="platform.owner_invitation_redeemed",
+            object_id=str(invitation.pk),
         ).exists())
+        self.client.logout()
+        self.assertEqual(self.client.get(accept_url).status_code, 410)
 
-    def test_creating_owner_requires_current_owner_password(self):
+    def test_generating_invitation_requires_current_owner_password(self):
         self.client.force_login(self.root)
         response = self.client.post(reverse("platform-owner-create"), {
-            "username": "blocked-owner",
-            "email": "blocked-owner@example.com",
-            "password1": "blocked-owner-test-password-739!",
-            "password2": "blocked-owner-test-password-739!",
             "current_password": "wrong-password",
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Your current password is incorrect")
-        self.assertFalse(get_user_model().objects.filter(username="blocked-owner").exists())
+        self.assertFalse(PlatformOwnerInvitation.objects.exists())
+
+    def test_owner_can_revoke_unused_invitation(self):
+        invitation, token = PlatformOwnerInvitation.issue(self.root)
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-invitation-revoke", kwargs={"pk": invitation.pk}))
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.revoked_by, self.root)
+        self.assertIsNotNone(invitation.revoked_at)
+        self.client.logout()
+        self.assertEqual(self.client.get(reverse("platform-owner-accept", kwargs={"token": token})).status_code, 410)
+
+    def test_expired_invitation_cannot_be_redeemed(self):
+        invitation, token = PlatformOwnerInvitation.issue(self.root)
+        invitation.expires_at = timezone.now() - timedelta(seconds=1)
+        invitation.save(update_fields=["expires_at"])
+        response = self.client.get(reverse("platform-owner-accept", kwargs={"token": token}))
+        self.assertEqual(response.status_code, 410)
 
     def test_regular_user_cannot_manage_platform_owners(self):
         self.client.force_login(self.reader)

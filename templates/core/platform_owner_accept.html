@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Accept Owner Invitation · Northbound{% endblock %}
+{% block content %}
+<section class="auth-card wide"><p class="eyebrow">Platform Owner Invitation</p><h1>Create Your Owner Account</h1><p class="lede">This account will have unrestricted control over the entire Northbound installation. Platform ownership is separate from all group roles.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Accept Invitation and Create Owner</button></form></section>
+{% endblock %}

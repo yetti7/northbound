@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.conf import settings
 from django.core import signing
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
@@ -12,10 +13,10 @@ from django.urls import reverse
 from django.utils import timezone
 import secrets
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerCreationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
-from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
 
 
@@ -143,27 +144,82 @@ def platform_owner_list(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     owners = get_user_model().objects.filter(is_superuser=True).order_by("username")
-    return render(request, "core/platform_owner_list.html", {"owners": owners})
+    invitations = PlatformOwnerInvitation.objects.select_related("created_by", "redeemed_by", "revoked_by")
+    return render(request, "core/platform_owner_list.html", {"owners": owners, "invitations": invitations})
 
 
 @login_required(login_url="config-login")
 def platform_owner_create(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
-    form = PlatformOwnerCreationForm(request.POST or None, owner=request.user)
+    form = PlatformOwnerInvitationForm(request.POST or None, owner=request.user)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
-            owner = form.save()
+            invitation, token = PlatformOwnerInvitation.issue(request.user)
             AuditEvent.objects.create(
                 actor=request.user,
-                action="platform.owner_created",
-                object_type="User",
-                object_id=str(owner.pk),
-                summary=f"Created platform owner {owner.username}.",
+                action="platform.owner_invitation_created",
+                object_type="PlatformOwnerInvitation",
+                object_id=str(invitation.pk),
+                summary="Created a seven-day platform owner invitation.",
             )
-        messages.success(request, f"{owner.username} is now a platform owner.")
-        return redirect("platform-owner-list")
+        base_url = settings.NORTHBOUND_URL or request.build_absolute_uri("/").rstrip("/")
+        invitation_url = f"{base_url}{reverse('platform-owner-accept', kwargs={'token': token})}"
+        return render(request, "core/platform_owner_invitation_created.html", {
+            "invitation": invitation,
+            "invitation_url": invitation_url,
+        })
     return render(request, "core/platform_owner_create.html", {"form": form})
+
+
+def platform_owner_accept(request, token):
+    invitation = PlatformOwnerInvitation.objects.filter(
+        token_hash=hash_platform_owner_invitation_token(token)
+    ).first()
+    if not invitation or not invitation.is_valid:
+        return render(request, "core/platform_owner_invitation_invalid.html", status=410)
+
+    form = PlatformOwnerAcceptanceForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            invitation = PlatformOwnerInvitation.objects.select_for_update().get(pk=invitation.pk)
+            if not invitation.is_valid:
+                return render(request, "core/platform_owner_invitation_invalid.html", status=410)
+            owner = form.save()
+            invitation.redeemed_at = timezone.now()
+            invitation.redeemed_by = owner
+            invitation.save(update_fields=["redeemed_at", "redeemed_by"])
+            AuditEvent.objects.create(
+                actor=owner,
+                action="platform.owner_invitation_redeemed",
+                object_type="PlatformOwnerInvitation",
+                object_id=str(invitation.pk),
+                summary=f"Redeemed a platform owner invitation as {owner.username}.",
+            )
+        login(request, owner)
+        messages.success(request, "Your Platform Owner account is ready.")
+        return redirect("config-dashboard")
+    return render(request, "core/platform_owner_accept.html", {"form": form, "invitation": invitation})
+
+
+@login_required(login_url="config-login")
+def platform_owner_invitation_revoke(request, pk):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    invitation = get_object_or_404(PlatformOwnerInvitation, pk=pk)
+    if request.method == "POST" and invitation.is_valid:
+        invitation.revoked_at = timezone.now()
+        invitation.revoked_by = request.user
+        invitation.save(update_fields=["revoked_at", "revoked_by"])
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="platform.owner_invitation_revoked",
+            object_type="PlatformOwnerInvitation",
+            object_id=str(invitation.pk),
+            summary="Revoked an unused platform owner invitation.",
+        )
+        messages.success(request, "The platform owner invitation was revoked.")
+    return redirect("platform-owner-list")
 
 
 @login_required(login_url="config-login")

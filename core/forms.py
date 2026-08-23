@@ -138,34 +138,37 @@ class FirstRunSetupForm(UserCreationForm):
         return user
 
 
-class PlatformOwnerCreationForm(UserCreationForm):
-    email = forms.EmailField()
+class PlatformOwnerInvitationForm(forms.Form):
     current_password = forms.CharField(
         label="Your Current Password",
         strip=False,
         widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
-        help_text="Confirm your identity before granting full platform access.",
+        help_text="Confirm your identity before generating a full-access invitation.",
     )
-
-    class Meta(UserCreationForm.Meta):
-        model = get_user_model()
-        fields = ("username", "email")
 
     def __init__(self, *args, owner, **kwargs):
         self.owner = owner
         super().__init__(*args, **kwargs)
-
-    def clean_email(self):
-        email = self.cleaned_data["email"].strip()
-        if get_user_model().objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError("An account with this email address already exists.")
-        return email
 
     def clean_current_password(self):
         password = self.cleaned_data["current_password"]
         if not self.owner.check_password(password):
             raise forms.ValidationError("Your current password is incorrect.")
         return password
+
+
+class PlatformOwnerAcceptanceForm(UserCreationForm):
+    email = forms.EmailField()
+
+    class Meta(UserCreationForm.Meta):
+        model = get_user_model()
+        fields = ("username", "email")
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
 
     def save(self, commit=True):
         user = super().save(commit=False)
