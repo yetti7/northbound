@@ -7,6 +7,7 @@ urlpatterns = [
     path("config/", views.config_dashboard, name="config-dashboard"),
     path("config/owners/", views.platform_owner_list, name="platform-owner-list"),
     path("config/owners/new/", views.platform_owner_create, name="platform-owner-create"),
+    path("config/owners/<int:pk>/status/", views.platform_owner_status_toggle, name="platform-owner-status-toggle"),
     path("config/owners/invitations/<int:pk>/revoke/", views.platform_owner_invitation_revoke, name="platform-owner-invitation-revoke"),
     path("owner-invitations/<str:token>/", views.platform_owner_accept, name="platform-owner-accept"),
     path("config/users/", views.config_user_list, name="config-user-list"),

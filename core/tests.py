@@ -991,10 +991,83 @@ class AccountAndConfigurationAccessTests(TestCase):
         response = self.client.get(reverse("platform-owner-accept", kwargs={"token": token}))
         self.assertEqual(response.status_code, 410)
 
+    def test_owner_can_deactivate_and_reactivate_another_owner_with_password_confirmation(self):
+        second_owner = get_user_model().objects.create_superuser(
+            "lifecycle-owner", "lifecycle@example.com", "lifecycle-owner-password-739!"
+        )
+        historical_event = AuditEvent.objects.create(
+            actor=second_owner,
+            action="platform.lifecycle_history",
+            object_type="User",
+            object_id=str(second_owner.pk),
+            summary="Historical owner activity.",
+        )
+        self.client.force_login(self.root)
+        status_url = reverse("platform-owner-status-toggle", kwargs={"pk": second_owner.pk})
+        listing = self.client.get(reverse("platform-owner-list"))
+        self.assertContains(listing, status_url)
+
+        response = self.client.post(status_url, {"current_password": "root-test-password-482!"})
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        second_owner.refresh_from_db()
+        self.assertFalse(second_owner.is_active)
+        self.assertTrue(get_user_model().objects.filter(pk=second_owner.pk, is_superuser=True).exists())
+        historical_event.refresh_from_db()
+        self.assertEqual(historical_event.actor, second_owner)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_deactivated",
+            object_id=str(second_owner.pk),
+        ).exists())
+
+        response = self.client.post(status_url, {"current_password": "root-test-password-482!"})
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        second_owner.refresh_from_db()
+        self.assertTrue(second_owner.is_active)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_reactivated",
+            object_id=str(second_owner.pk),
+        ).exists())
+
+    def test_owner_status_change_rejects_wrong_current_password(self):
+        second_owner = get_user_model().objects.create_superuser(
+            "protected-owner", "protected@example.com", "protected-owner-password-739!"
+        )
+        self.client.force_login(self.root)
+        response = self.client.post(
+            reverse("platform-owner-status-toggle", kwargs={"pk": second_owner.pk}),
+            {"current_password": "wrong-password"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your current password is incorrect")
+        second_owner.refresh_from_db()
+        self.assertTrue(second_owner.is_active)
+        self.assertFalse(AuditEvent.objects.filter(action="platform.owner_deactivated").exists())
+
+    def test_owner_cannot_deactivate_self_or_leave_no_active_owner(self):
+        self.client.force_login(self.root)
+        response = self.client.post(
+            reverse("platform-owner-status-toggle", kwargs={"pk": self.root.pk}),
+            {"current_password": "root-test-password-482!"},
+        )
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        self.root.refresh_from_db()
+        self.assertTrue(self.root.is_active)
+        self.assertEqual(
+            get_user_model().objects.filter(is_superuser=True, is_active=True).count(),
+            1,
+        )
+        self.assertFalse(AuditEvent.objects.filter(action="platform.owner_deactivated").exists())
+
     def test_regular_user_cannot_manage_platform_owners(self):
         self.client.force_login(self.reader)
         self.assertEqual(self.client.get(reverse("platform-owner-list")).status_code, 403)
         self.assertEqual(self.client.get(reverse("platform-owner-create")).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse("platform-owner-status-toggle", kwargs={"pk": self.root.pk})).status_code,
+            403,
+        )
 
     def test_user_can_update_account_and_change_password(self):
         self.client.force_login(self.reader)

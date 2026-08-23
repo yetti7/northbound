@@ -157,6 +157,25 @@ class PlatformOwnerInvitationForm(forms.Form):
         return password
 
 
+class PlatformOwnerStatusForm(forms.Form):
+    current_password = forms.CharField(
+        label="Your Current Password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+        help_text="Confirm your identity before changing another Platform Owner's access.",
+    )
+
+    def __init__(self, *args, owner, **kwargs):
+        self.owner = owner
+        super().__init__(*args, **kwargs)
+
+    def clean_current_password(self):
+        password = self.cleaned_data["current_password"]
+        if not self.owner.check_password(password):
+            raise forms.ValidationError("Your current password is incorrect.")
+        return password
+
+
 class PlatformOwnerAcceptanceForm(UserCreationForm):
     email = forms.EmailField()
 

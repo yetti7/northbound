@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}{{ action }} {{ owner.username }} · Northbound{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow"><a href="{% url 'platform-owner-list' %}">Platform Owners</a></p><h1 class="confirm-title">{{ action }} {{ owner.username }}?</h1><p class="lede">{% if owner.is_active %}This owner will immediately lose access to Platform Administration. Their account and audit attribution will be preserved for later reactivation.{% else %}This owner will regain equal, unrestricted Platform Owner access to this installation.{% endif %}</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button {% if owner.is_active %}danger-button{% else %}primary{% endif %}">{{ action }} Platform Owner</button><a class="button" href="{% url 'platform-owner-list' %}">Cancel</a></div></form></section>
+{% endblock %}

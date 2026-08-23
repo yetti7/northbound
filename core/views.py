@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
@@ -328,6 +328,49 @@ def platform_owner_invitation_revoke(request, pk):
         )
         messages.success(request, "The platform owner invitation was revoked.")
     return redirect("platform-owner-list")
+
+
+@login_required(login_url="config-login")
+def platform_owner_status_toggle(request, pk):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    owner = get_object_or_404(get_user_model(), pk=pk, is_superuser=True)
+    if owner.pk == request.user.pk:
+        messages.error(request, "You cannot deactivate or reactivate your own Platform Owner account.")
+        return redirect("platform-owner-list")
+
+    action = "Deactivate" if owner.is_active else "Reactivate"
+    form = PlatformOwnerStatusForm(request.POST or None, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            locked_owners = list(
+                get_user_model().objects.select_for_update().filter(is_superuser=True).only("pk", "is_active")
+            )
+            owner = next((locked_owner for locked_owner in locked_owners if locked_owner.pk == pk), None)
+            if owner is None:
+                raise Http404
+            if owner.is_active:
+                active_owner_count = sum(locked_owner.is_active for locked_owner in locked_owners)
+                if active_owner_count <= 1:
+                    messages.error(request, "Northbound must retain at least one active Platform Owner.")
+                    return redirect("platform-owner-list")
+            owner.is_active = not owner.is_active
+            owner.save(update_fields=["is_active"])
+            new_state = "reactivated" if owner.is_active else "deactivated"
+            AuditEvent.objects.create(
+                actor=request.user,
+                action=f"platform.owner_{new_state}",
+                object_type="User",
+                object_id=str(owner.pk),
+                summary=f"{new_state.capitalize()} Platform Owner {owner.username}.",
+            )
+        messages.success(request, f"{owner.username} was {new_state} as a Platform Owner.")
+        return redirect("platform-owner-list")
+    return render(request, "core/platform_owner_status.html", {
+        "owner": owner,
+        "form": form,
+        "action": action,
+    })
 
 
 @login_required(login_url="config-login")
