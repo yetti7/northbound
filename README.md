@@ -19,20 +19,20 @@ See [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) for the product directi
 
 ## Self-host with Docker
 
-Northbound's default deployment includes the application, PostgreSQL, and persistent named volumes. It does not require Nginx or another reverse proxy for local or LAN use.
+Northbound's default deployment is one application container with SQLite and uploaded media in one persistent volume. It does not require PostgreSQL, Nginx, or another reverse proxy for local or LAN use.
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and replace `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD` with different random values. For example, `openssl rand -hex 32` can generate each value. Then pull and start Northbound:
+Edit `.env` and replace `DJANGO_SECRET_KEY` with a random value. For example, `openssl rand -hex 32` can generate one. Then pull and start Northbound:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open <http://localhost:8000/setup/> to create the first administrator account. Uploaded profile pictures and PostgreSQL data persist across container recreation.
+Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open <http://localhost:8000/setup/> to create the first administrator account. SQLite and uploaded media persist across container recreation.
 
 See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for LAN access, upgrades, backups, and external databases. See [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) before placing Northbound behind HTTPS, Cloudflare Tunnel, Nginx, Caddy, Traefik, or another proxy.
 
@@ -46,7 +46,7 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-Without `DATABASE_URL` or `POSTGRES_HOST`, local development uses SQLite. This convenience does not change the recommended PostgreSQL production deployment.
+Without `DATABASE_URL` or `POSTGRES_HOST`, Northbound uses SQLite. PostgreSQL remains supported for hosted and advanced deployments.
 
 To build the current checkout in Docker instead of pulling the released image:
 
@@ -54,6 +54,6 @@ To build the current checkout in Docker instead of pulling the released image:
 docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
-## Existing DeepNorth installation
+## PostgreSQL
 
-The current DeepNorth deployment remains available through `compose.production.yaml` and continues using `/srv/appdata/northbound`. Do not replace that running stack with the default named-volume deployment. Its migration will be handled separately after the portable deployment is verified. See [docs/DEEPNORTH.md](docs/DEEPNORTH.md).
+Use `compose.postgres.yaml` with the default file when PostgreSQL is preferred. See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). The disposable DeepNorth test deployment will be reset separately after this image is published.

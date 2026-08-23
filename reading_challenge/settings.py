@@ -111,7 +111,12 @@ elif os.getenv("POSTGRES_HOST"):
         "CONN_HEALTH_CHECKS": True,
     }
 else:
-    database_config = dj_database_url.parse(f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
+    sqlite_path = Path(os.getenv("NORTHBOUND_SQLITE_PATH", BASE_DIR / "db.sqlite3"))
+    database_config = dj_database_url.parse(f"sqlite:///{sqlite_path}")
+    database_config["OPTIONS"] = {
+        "timeout": int(os.getenv("NORTHBOUND_SQLITE_TIMEOUT", "20")),
+        "transaction_mode": "IMMEDIATE",
+    }
 
 DATABASES = {"default": database_config}
 

@@ -15,7 +15,8 @@ COPY . .
 
 RUN python manage.py collectstatic --noinput
 
-RUN chown -R northbound:northbound /app
+RUN mkdir -p /data/media \
+    && chown -R northbound:northbound /app /data
 
 USER northbound
 

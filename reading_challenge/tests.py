@@ -71,6 +71,7 @@ class PortableSettingsTests(SimpleTestCase):
         "DJANGO_SECRET_KEY",
         "NORTHBOUND_TRUST_PROXY_HEADERS",
         "NORTHBOUND_URL",
+        "NORTHBOUND_SQLITE_PATH",
         "POSTGRES_HOST",
         "POSTGRES_PASSWORD",
     }
@@ -134,3 +135,15 @@ class PortableSettingsTests(SimpleTestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DJANGO_SECRET_KEY must be set", result.stderr)
+
+    def test_sqlite_path_and_locking_options_are_configurable(self):
+        result = self.read_isolated_settings(
+            "[settings.DATABASES['default']['NAME'], settings.DATABASES['default']['OPTIONS']]",
+            NORTHBOUND_SQLITE_PATH="/data/northbound.sqlite3",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        name, options = json.loads(result.stdout)
+        self.assertEqual(name, "/data/northbound.sqlite3")
+        self.assertEqual(options["timeout"], 20)
+        self.assertEqual(options["transaction_mode"], "IMMEDIATE")

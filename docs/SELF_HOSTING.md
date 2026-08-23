@@ -1,26 +1,14 @@
 # Self-hosting Northbound
 
-## Requirements
+## Default installation
 
-- Docker Engine with the Docker Compose plugin
-- enough storage for PostgreSQL and uploaded profile pictures
-
-## First installation
-
-Clone the repository, enter its directory, and create the local environment file:
+Northbound's normal self-hosted deployment is one application container using SQLite. The database and uploaded media share one persistent Docker volume.
 
 ```bash
 cp .env.example .env
 ```
 
-Generate two different secrets:
-
-```bash
-openssl rand -hex 32
-openssl rand -hex 32
-```
-
-Use one for `DJANGO_SECRET_KEY` and the other for `POSTGRES_PASSWORD`. Keep `.env` private and backed up. Pull the published application and database images, then start the application:
+Generate a secret with `openssl rand -hex 32` and use it for `DJANGO_SECRET_KEY`. Then start Northbound:
 
 ```bash
 docker compose pull
@@ -28,46 +16,34 @@ docker compose up -d
 docker compose ps
 ```
 
-The normal installation uses `ghcr.io/yetti7/northbound:latest`; it does not require a local application build. Open <http://localhost:8000/setup/> and create the first administrator account.
+Open <http://localhost:8000/setup/>. No PostgreSQL administration or database password is required.
 
-## Build from source
+## Persistent data
 
-Developers can apply the optional Compose override to build the current checkout and tag it locally as `northbound:dev`:
+The `northbound_data` volume contains:
 
-```bash
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+```text
+/data/northbound.sqlite3
+/data/media/
 ```
 
-The override is explicit so a normal `docker compose up -d` always remains on the published image path.
+`docker compose down` preserves this volume. Do not use `docker compose down --volumes` unless you intend to delete all Northbound data and uploads.
 
-## LAN access
+SQLite is intended for a single Northbound container on local storage. Use PostgreSQL instead for multiple application replicas or a database on another host.
 
-The default container port is published on all host interfaces. Change `NORTHBOUND_URL` to the address people will use, for example:
+## LAN and proxy access
+
+For LAN access, set the address people will use:
 
 ```dotenv
 NORTHBOUND_URL=http://192.168.1.20:8000
 ```
 
-Restart the web container after changing settings:
-
-```bash
-docker compose up -d
-```
-
-Do not expose an unencrypted HTTP installation directly to the internet.
-
-## Persistent data
-
-The default deployment creates two Docker named volumes:
-
-- `northbound_postgres_data` for the database
-- `northbound_media_data` for uploaded profile pictures
-
-`docker compose down` preserves these volumes. Do not use `docker compose down --volumes` unless you intentionally want to delete Northbound's persistent data.
+See [REVERSE_PROXY.md](REVERSE_PROXY.md) before enabling a public HTTPS domain or Cloudflare Tunnel.
 
 ## Upgrades
 
-Back up the database and media volume first. Then retrieve the current Compose configuration and pull the released images:
+Back up the data volume, then pull and recreate the application:
 
 ```bash
 git pull --ff-only
@@ -76,36 +52,35 @@ docker compose up -d
 docker compose ps
 ```
 
-Database migrations run automatically before the web process starts. Review release notes before upgrading across major versions.
+Database migrations run automatically before Gunicorn starts.
 
 ## Backups
 
-Create a PostgreSQL dump outside the containers:
+For a simple consistent backup, briefly stop Northbound and archive the complete data volume:
 
 ```bash
-docker compose exec -T db pg_dump -U northbound -d northbound > northbound-postgres.sql
+docker compose stop
+docker run --rm -v northbound_northbound_data:/source:ro -v "$PWD":/backup alpine tar -czf /backup/northbound-data.tar.gz -C /source .
+docker compose start
 ```
 
-If you changed `POSTGRES_USER` or `POSTGRES_DB`, use those values in the command.
+The archive contains both SQLite and uploaded media. Test restoration periodically. Do not copy only the live SQLite file while the application is writing to it.
 
-Back up the media volume separately. One portable approach is:
+## PostgreSQL option
+
+PostgreSQL remains supported for hosted platforms, larger installations, and operators who prefer it. Add `POSTGRES_PASSWORD` to `.env`, then apply the optional override:
 
 ```bash
-docker run --rm -v northbound_media_data:/source:ro -v "$PWD":/backup alpine tar -czf /backup/northbound-media.tar.gz -C /source .
+docker compose -f compose.yaml -f compose.postgres.yaml pull
+docker compose -f compose.yaml -f compose.postgres.yaml up -d
 ```
 
-A complete backup requires both the PostgreSQL dump and the media archive. Test restoration periodically rather than assuming an untested backup is usable.
+An externally managed PostgreSQL database can instead be configured with `DATABASE_URL`.
 
-## Existing PostgreSQL
+## Build from source
 
-Outside Compose, Northbound accepts a conventional `DATABASE_URL`. Hosted PostgreSQL URLs, including supported SSL query parameters, are parsed by `dj-database-url`.
+Developers can build the current checkout explicitly:
 
-When `DATABASE_URL` is absent, local Python development uses SQLite. PostgreSQL remains the recommended production database.
-
-## Uploaded media
-
-The default single-instance deployment streams uploaded files through Northbound with production debug mode disabled. This mode is intended for profile pictures and similarly small files.
-
-Profile pictures are limited to 10 MB, and Northbound rejects requests whose declared body size exceeds 11 MB. A public reverse proxy should enforce its own request-size limit as an additional boundary.
-
-Large, high-traffic, or horizontally scaled installations should use object storage when that backend becomes available. WhiteNoise serves versioned application static assets; it is not being used as mutable upload storage.
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+```
