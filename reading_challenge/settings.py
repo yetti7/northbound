@@ -66,11 +66,11 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "core.middleware.RequestSizeLimitMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.RequestSizeLimitMiddleware",
     "core.middleware.RequirePlatformSetupMiddleware",
     "core.middleware.RequirePasswordChangeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -149,6 +149,7 @@ MEDIA_ROOT = Path(os.getenv("NORTHBOUND_MEDIA_ROOT", BASE_DIR / "media"))
 NORTHBOUND_SERVE_MEDIA = env_bool("NORTHBOUND_SERVE_MEDIA", DEBUG)
 NORTHBOUND_MAX_PROFILE_PICTURE_BYTES = int(os.getenv("NORTHBOUND_MAX_PROFILE_PICTURE_BYTES", str(10 * 1024 * 1024)))
 NORTHBOUND_MAX_REQUEST_BYTES = int(os.getenv("NORTHBOUND_MAX_REQUEST_BYTES", str(11 * 1024 * 1024)))
+NORTHBOUND_MAX_BACKUP_BYTES = int(os.getenv("NORTHBOUND_MAX_BACKUP_BYTES", str(1024 * 1024 * 1024)))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"

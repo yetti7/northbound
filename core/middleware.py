@@ -16,7 +16,10 @@ class RequestSizeLimitMiddleware:
             request_size = int(content_length) if content_length else 0
         except ValueError:
             return HttpResponse("Invalid Content-Length header.", status=400, content_type="text/plain")
-        if request_size > settings.NORTHBOUND_MAX_REQUEST_BYTES:
+        limit = settings.NORTHBOUND_MAX_REQUEST_BYTES
+        if request.path == "/config/settings/restore/" and request.user.is_authenticated and request.user.is_superuser:
+            limit = settings.NORTHBOUND_MAX_BACKUP_BYTES
+        if request_size > limit:
             return HttpResponse("Request body is too large.", status=413, content_type="text/plain")
         return self.get_response(request)
 

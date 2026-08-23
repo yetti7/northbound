@@ -24,6 +24,7 @@ from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
+from .backups import pending_restore_path, stage_restore
 
 
 CONFIGURABLE_MONTH_STATUSES = {ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN}
@@ -323,7 +324,10 @@ def platform_settings(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     is_sqlite = connection.vendor == "sqlite"
-    return render(request, "core/platform_settings.html", {"is_sqlite": is_sqlite})
+    return render(request, "core/platform_settings.html", {
+        "is_sqlite": is_sqlite,
+        "restore_pending": pending_restore_path().exists() if is_sqlite else False,
+    })
 
 
 @login_required(login_url="config-login")
@@ -369,6 +373,26 @@ def platform_backup_download(request):
     )
     filename = f"northbound-backup-{created_at:%Y%m%d-%H%M%S}.zip"
     return FileResponse(archive, as_attachment=True, filename=filename, content_type="application/zip")
+
+
+@login_required(login_url="config-login")
+def platform_backup_restore(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if request.method != "POST" or connection.vendor != "sqlite":
+        return redirect("platform-settings")
+    uploaded_backup = request.FILES.get("backup")
+    if not uploaded_backup:
+        messages.error(request, "Choose a Northbound backup ZIP to restore.")
+        return redirect("platform-settings")
+    try:
+        stage_restore(uploaded_backup)
+    except (ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        messages.error(request, f"The backup could not be staged: {exc}")
+        return redirect("platform-settings")
+    AuditEvent.objects.create(actor=request.user, action="platform.restore_staged", object_type="PlatformBackup", summary="Validated and staged a platform restore for the next application restart.")
+    messages.success(request, "Backup validated and staged. Restart Northbound to apply it before the web server starts.")
+    return redirect("platform-settings")
 
 
 def setup(request):

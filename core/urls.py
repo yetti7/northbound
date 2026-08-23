@@ -15,6 +15,7 @@ urlpatterns = [
     path("config/audit/", views.config_audit, name="config-audit"),
     path("config/settings/", views.platform_settings, name="platform-settings"),
     path("config/settings/backup/", views.platform_backup_download, name="platform-backup-download"),
+    path("config/settings/restore/", views.platform_backup_restore, name="platform-backup-restore"),
     path("setup/", views.setup, name="setup"),
     path("register/", views.register, name="register"),
     path("account/", views.account, name="account"),
