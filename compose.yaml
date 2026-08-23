@@ -9,6 +9,7 @@ services:
       NORTHBOUND_SQLITE_PATH: /data/northbound.sqlite3
       NORTHBOUND_MEDIA_ROOT: /data/media
       NORTHBOUND_SERVE_MEDIA: ${NORTHBOUND_SERVE_MEDIA:-1}
+      NORTHBOUND_WEB_RESTART: "1"
       PORT: ${PORT:-8000}
     ports:
       - "${NORTHBOUND_BIND_ADDRESS:-0.0.0.0}:${NORTHBOUND_PORT:-8000}:${PORT:-8000}"

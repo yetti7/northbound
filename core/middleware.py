@@ -25,7 +25,7 @@ class RequestSizeLimitMiddleware:
 
 
 class RequirePlatformSetupMiddleware:
-    EXEMPT_PREFIXES = ("/setup/", "/static/", "/media/")
+    EXEMPT_PREFIXES = ("/setup/", "/health/", "/static/", "/media/")
 
     def __init__(self, get_response):
         self.get_response = get_response

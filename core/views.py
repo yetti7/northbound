@@ -17,6 +17,9 @@ import json
 import sqlite3
 import tempfile
 import zipfile
+import os
+import signal
+import threading
 from pathlib import Path
 
 from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
@@ -327,6 +330,7 @@ def platform_settings(request):
     return render(request, "core/platform_settings.html", {
         "is_sqlite": is_sqlite,
         "restore_pending": pending_restore_path().exists() if is_sqlite else False,
+        "web_restart_enabled": settings.NORTHBOUND_WEB_RESTART,
     })
 
 
@@ -393,6 +397,38 @@ def platform_backup_restore(request):
     AuditEvent.objects.create(actor=request.user, action="platform.restore_staged", object_type="PlatformBackup", summary="Validated and staged a platform restore for the next application restart.")
     messages.success(request, "Backup validated and staged. Restart Northbound to apply it before the web server starts.")
     return redirect("platform-settings")
+
+
+def health(request):
+    return JsonResponse({"ok": True, "restore_pending": pending_restore_path().exists()})
+
+
+@login_required(login_url="config-login")
+def platform_restore_restart(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if not settings.NORTHBOUND_WEB_RESTART or connection.vendor != "sqlite" or not pending_restore_path().exists():
+        messages.error(request, "A web-controlled restore restart is not available.")
+        return redirect("platform-settings")
+    error = ""
+    if request.method == "POST":
+        if not request.user.check_password(request.POST.get("current_password", "")):
+            error = "Your current password is incorrect."
+        elif request.POST.get("confirmation") != "RESTORE":
+            error = "Enter RESTORE exactly to confirm."
+        else:
+            AuditEvent.objects.create(actor=request.user, action="platform.restore_restart_requested", object_type="PlatformBackup", summary="Requested a graceful application restart to apply the staged restore.")
+
+            def stop_gunicorn():
+                try:
+                    master_pid = int(Path("/tmp/northbound-gunicorn.pid").read_text().strip())
+                    os.kill(master_pid, signal.SIGTERM)
+                except (OSError, ValueError):
+                    pass
+
+            threading.Timer(2, stop_gunicorn).start()
+            return render(request, "core/platform_restore_restarting.html")
+    return render(request, "core/platform_restore_restart.html", {"error": error})
 
 
 def setup(request):
