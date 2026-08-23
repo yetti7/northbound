@@ -17,7 +17,7 @@ services:
       retries: 10
 
   web:
-    build: .
+    image: ghcr.io/yetti7/northbound:latest
     restart: unless-stopped
     env_file: .env
     environment:

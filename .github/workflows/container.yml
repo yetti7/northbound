@@ -37,6 +37,7 @@ jobs:
         run: |
           cp .env.example .env
           docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example -f compose.yaml -f compose.dev.yaml config --quiet
           NORTHBOUND_IMAGE=ghcr.io/${{ github.repository }}:latest \
             docker compose --env-file .env.example -f compose.production.yaml config --quiet
           mkdir -p "$RUNNER_TEMP/northbound-media/profile-pictures"

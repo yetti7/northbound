@@ -25,13 +25,14 @@ Northbound's default deployment includes the application, PostgreSQL, and persis
 cp .env.example .env
 ```
 
-Edit `.env` and replace `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD` with different random values. For example, `openssl rand -hex 32` can generate each value. Then start Northbound:
+Edit `.env` and replace `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD` with different random values. For example, `openssl rand -hex 32` can generate each value. Then pull and start Northbound:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-Open <http://localhost:8000/setup/> to create the first administrator account. Uploaded profile pictures and PostgreSQL data persist across container recreation.
+Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open <http://localhost:8000/setup/> to create the first administrator account. Uploaded profile pictures and PostgreSQL data persist across container recreation.
 
 See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for LAN access, upgrades, backups, and external databases. See [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) before placing Northbound behind HTTPS, Cloudflare Tunnel, Nginx, Caddy, Traefik, or another proxy.
 
@@ -46,6 +47,12 @@ python manage.py runserver
 ```
 
 Without `DATABASE_URL` or `POSTGRES_HOST`, local development uses SQLite. This convenience does not change the recommended PostgreSQL production deployment.
+
+To build the current checkout in Docker instead of pulling the released image:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+```
 
 ## Existing DeepNorth installation
 

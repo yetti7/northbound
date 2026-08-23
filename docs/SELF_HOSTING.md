@@ -20,14 +20,25 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Use one for `DJANGO_SECRET_KEY` and the other for `POSTGRES_PASSWORD`. Keep `.env` private and backed up. Start the application:
+Use one for `DJANGO_SECRET_KEY` and the other for `POSTGRES_PASSWORD`. Keep `.env` private and backed up. Pull the published application and database images, then start the application:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
-Open <http://localhost:8000/setup/> and create the first administrator account.
+The normal installation uses `ghcr.io/yetti7/northbound:latest`; it does not require a local application build. Open <http://localhost:8000/setup/> and create the first administrator account.
+
+## Build from source
+
+Developers can apply the optional Compose override to build the current checkout and tag it locally as `northbound:dev`:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+```
+
+The override is explicit so a normal `docker compose up -d` always remains on the published image path.
 
 ## LAN access
 
@@ -56,11 +67,11 @@ The default deployment creates two Docker named volumes:
 
 ## Upgrades
 
-Back up the database and media volume first. Then update the repository and rebuild:
+Back up the database and media volume first. Then retrieve the current Compose configuration and pull the released images:
 
 ```bash
 git pull --ff-only
-docker compose build --pull
+docker compose pull
 docker compose up -d
 docker compose ps
 ```
