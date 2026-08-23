@@ -21,13 +21,14 @@ import os
 import signal
 import threading
 from pathlib import Path
+from datetime import datetime
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
-from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
+from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
-from .backups import pending_restore_path, stage_restore
+from .backups import automatic_backup_directory, list_automatic_backups, pending_restore_path, stage_restore
 
 
 CONFIGURABLE_MONTH_STATUSES = {ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN}
@@ -327,10 +328,23 @@ def platform_settings(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     is_sqlite = connection.vendor == "sqlite"
+    backup_settings = PlatformBackupSettings.load()
+    backup_settings_form = PlatformBackupSettingsForm(request.POST or None, instance=backup_settings)
+    if request.method == "POST" and backup_settings_form.is_valid():
+        backup_settings_form.save()
+        for expired_backup in list_automatic_backups()[backup_settings.retention_count:]:
+            expired_backup.unlink(missing_ok=True)
+        AuditEvent.objects.create(actor=request.user, action="platform.backup_settings_updated", object_type="PlatformBackupSettings", object_id=str(backup_settings.pk), summary=f"Updated automatic backups to {backup_settings.get_weekday_display()} at {backup_settings.backup_time}; retaining {backup_settings.retention_count}.")
+        messages.success(request, "Automatic backup settings were updated.")
+        return redirect("platform-settings")
+    automatic_backups = [{"name": path.name, "size": path.stat().st_size, "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.get_current_timezone())} for path in list_automatic_backups()]
     return render(request, "core/platform_settings.html", {
         "is_sqlite": is_sqlite,
         "restore_pending": pending_restore_path().exists() if is_sqlite else False,
         "web_restart_enabled": settings.NORTHBOUND_WEB_RESTART,
+        "backup_settings_form": backup_settings_form,
+        "automatic_backups": automatic_backups,
+        "platform_timezone": settings.TIME_ZONE,
     })
 
 
@@ -377,6 +391,18 @@ def platform_backup_download(request):
     )
     filename = f"northbound-backup-{created_at:%Y%m%d-%H%M%S}.zip"
     return FileResponse(archive, as_attachment=True, filename=filename, content_type="application/zip")
+
+
+@login_required(login_url="config-login")
+def automatic_backup_download(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if Path(filename).name != filename or not filename.startswith("northbound-automatic-") or not filename.endswith(".zip"):
+        raise Http404
+    backup_path = automatic_backup_directory() / filename
+    if not backup_path.is_file():
+        raise Http404
+    return FileResponse(backup_path.open("rb"), as_attachment=True, filename=filename, content_type="application/zip")
 
 
 @login_required(login_url="config-login")

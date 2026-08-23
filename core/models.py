@@ -7,6 +7,8 @@ from django.urls import reverse
 from django.templatetags.static import static
 from django.utils import timezone
 from datetime import timedelta
+from datetime import time as datetime_time
+from django.core.validators import MaxValueValidator, MinValueValidator
 import hashlib
 import secrets
 
@@ -74,6 +76,29 @@ class PlatformOwnerInvitation(models.Model):
         if self.expires_at <= timezone.now():
             return "Expired"
         return "Active"
+
+
+class PlatformBackupSettings(models.Model):
+    class Weekday(models.IntegerChoices):
+        MONDAY = 0, "Monday"
+        TUESDAY = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY = 3, "Thursday"
+        FRIDAY = 4, "Friday"
+        SATURDAY = 5, "Saturday"
+        SUNDAY = 6, "Sunday"
+
+    enabled = models.BooleanField(default=True)
+    weekday = models.PositiveSmallIntegerField(choices=Weekday.choices, default=Weekday.MONDAY)
+    backup_time = models.TimeField(default=datetime_time(1, 0))
+    retention_count = models.PositiveSmallIntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    last_run_date = models.DateField(null=True, blank=True, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls):
+        settings_object, _ = cls.objects.get_or_create(pk=1)
+        return settings_object
 
 
 ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

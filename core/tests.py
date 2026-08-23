@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from .integrations.hardcover import HardcoverLinkError, lookup_edition, parse_hardcover_url, resolve_scoring_edition, search_books
 from .integrations.secrets import decrypt_token
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -903,6 +903,27 @@ class PlatformSettingsTests(TransactionTestCase):
             self.assertIn("media/profile-picture.txt", backup_zip.namelist())
             self.assertIn("northbound-backup.json", backup_zip.namelist())
         self.assertTrue(AuditEvent.objects.filter(action="platform.backup_downloaded", actor=self.owner).exists())
+
+    def test_automatic_backup_defaults_and_schedule_are_configurable(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-settings"))
+        self.assertEqual(response.status_code, 200)
+        backup_settings = PlatformBackupSettings.load()
+        self.assertTrue(backup_settings.enabled)
+        self.assertEqual(backup_settings.weekday, PlatformBackupSettings.Weekday.MONDAY)
+        self.assertEqual(backup_settings.backup_time.hour, 1)
+        self.assertEqual(backup_settings.retention_count, 5)
+        response = self.client.post(reverse("platform-settings"), {
+            "enabled": "on",
+            "weekday": PlatformBackupSettings.Weekday.FRIDAY,
+            "backup_time": "03:30",
+            "retention_count": 9,
+        })
+        self.assertRedirects(response, reverse("platform-settings"))
+        backup_settings.refresh_from_db()
+        self.assertEqual(backup_settings.weekday, PlatformBackupSettings.Weekday.FRIDAY)
+        self.assertEqual(backup_settings.backup_time.hour, 3)
+        self.assertEqual(backup_settings.retention_count, 9)
 
 
 class GroupEditingTests(TestCase):

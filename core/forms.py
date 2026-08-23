@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils.text import slugify
 from django.conf import settings
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -178,6 +178,25 @@ class PlatformOwnerAcceptanceForm(UserCreationForm):
         if commit:
             user.save()
         return user
+
+
+class PlatformBackupSettingsForm(forms.ModelForm):
+    class Meta:
+        model = PlatformBackupSettings
+        fields = ("enabled", "weekday", "backup_time", "retention_count")
+        labels = {
+            "enabled": "Enable Automatic Backups",
+            "weekday": "Backup Day",
+            "backup_time": "Backup Time",
+            "retention_count": "Backups to Keep",
+        }
+        widgets = {"backup_time": forms.TimeInput(attrs={"type": "time"})}
+
+    def clean_retention_count(self):
+        count = self.cleaned_data["retention_count"]
+        if not 1 <= count <= 100:
+            raise forms.ValidationError("Keep between 1 and 100 automatic backups.")
+        return count
 
 
 class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):

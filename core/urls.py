@@ -16,6 +16,7 @@ urlpatterns = [
     path("config/audit/", views.config_audit, name="config-audit"),
     path("config/settings/", views.platform_settings, name="platform-settings"),
     path("config/settings/backup/", views.platform_backup_download, name="platform-backup-download"),
+    path("config/settings/backups/<str:filename>/", views.automatic_backup_download, name="automatic-backup-download"),
     path("config/settings/restore/", views.platform_backup_restore, name="platform-backup-restore"),
     path("config/settings/restore/restart/", views.platform_restore_restart, name="platform-restore-restart"),
     path("setup/", views.setup, name="setup"),

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from django.conf import settings
+from django.db import connection
 
 
 def data_root():
@@ -16,6 +17,52 @@ def data_root():
 
 def pending_restore_path():
     return data_root() / "restore.pending.zip"
+
+
+def automatic_backup_directory():
+    return data_root() / "backups"
+
+
+def list_automatic_backups():
+    directory = automatic_backup_directory()
+    if not directory.exists():
+        return []
+    return sorted(directory.glob("northbound-automatic-*.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def create_automatic_backup(retention_count):
+    if connection.vendor != "sqlite":
+        raise ValueError("Automatic in-app backups require SQLite.")
+    directory = automatic_backup_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    created_at = datetime.now(timezone.utc)
+    final_path = directory / f"northbound-automatic-{created_at:%Y%m%d-%H%M%S}.zip"
+    temporary_archive = final_path.with_suffix(".creating")
+    with tempfile.TemporaryDirectory(dir=data_root(), prefix="backup-") as temporary_directory:
+        database_copy = Path(temporary_directory) / "northbound.sqlite3"
+        connection.ensure_connection()
+        destination = sqlite3.connect(database_copy)
+        try:
+            connection.connection.backup(destination)
+        finally:
+            destination.close()
+        with zipfile.ZipFile(temporary_archive, "w", compression=zipfile.ZIP_DEFLATED) as backup_zip:
+            backup_zip.write(database_copy, "northbound.sqlite3")
+            media_root = Path(settings.MEDIA_ROOT)
+            if media_root.exists():
+                for media_file in media_root.rglob("*"):
+                    if media_file.is_file():
+                        backup_zip.write(media_file, Path("media") / media_file.relative_to(media_root))
+            backup_zip.writestr("northbound-backup.json", json.dumps({
+                "created_at": created_at.isoformat(),
+                "database": "sqlite",
+                "contents": ["northbound.sqlite3", "media/"],
+                "automatic": True,
+            }, indent=2))
+    os.replace(temporary_archive, final_path)
+    for expired_backup in list_automatic_backups()[retention_count:]:
+        expired_backup.unlink(missing_ok=True)
+    return final_path
 
 
 def validate_backup(path):
