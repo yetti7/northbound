@@ -8,10 +8,10 @@
   <link rel="icon" type="image/png" sizes="32x32" href="{% static 'branding/favicon-32.png' %}?v=2">
   <link rel="apple-touch-icon" sizes="180x180" href="{% static 'branding/apple-touch-icon.png' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/app.css' %}?v=3">
-  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=7">
+  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=8">
   <link rel="stylesheet" href="{% static 'css/navigation.css' %}">
   <link rel="stylesheet" href="{% static 'css/profile.css' %}">
-  <script src="{% static 'js/app.js' %}?v=7" defer></script>
+  <script src="{% static 'js/app.js' %}?v=8" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -28,7 +28,7 @@
             {% if user.is_superuser %}
               <a href="{% url 'config-dashboard' %}">Platform Administration</a>
               <a href="{% url 'platform-owner-list' %}">Platform Owners</a>
-              <a href="{% url 'config-user-list' %}">User Management</a>
+              <a href="{% url 'config-user-list' %}">Accounts</a>
               <a href="{% url 'config-audit' %}">Audit Activity</a>
               <a href="{% url 'platform-settings' %}">Settings</a>
             {% else %}

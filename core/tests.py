@@ -121,11 +121,12 @@ class PermissionOverrideTests(TestCase):
         self.assertRedirects(self.client.get(url), reverse("participant-list", kwargs={"group_slug": self.group.slug}))
 
 
-class DeveloperUserManagementTests(TestCase):
+class PlatformAccountManagementTests(TestCase):
     def setUp(self):
         User = get_user_model()
         self.root = User.objects.create_superuser("developer-root", "root@example.com", "root-password")
         self.reader = User.objects.create_user("managed-reader", "reader@example.com", "old-reader-password")
+        self.deactivated_reader = User.objects.create_user("archived-reader", "archived@example.com", "old-reader-password", is_active=False)
         self.group = ReadingGroup.objects.create(name="Managed Group", slug="managed-group")
         self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Managed Reader")
 
@@ -137,6 +138,30 @@ class DeveloperUserManagementTests(TestCase):
         detail = self.client.get(reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
         self.assertContains(detail, "Managed Group")
         self.assertContains(detail, reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.membership.pk}))
+
+    def test_dashboard_account_summary_links_to_filtered_directory(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-dashboard"))
+        self.assertEqual(response.context["active_account_count"], 1)
+        self.assertEqual(response.context["deactivated_account_count"], 1)
+        self.assertContains(response, reverse("config-user-list"))
+        self.assertContains(response, "Active")
+        self.assertContains(response, "Deactivated")
+        self.assertNotContains(response, "Challenge Months")
+        self.assertNotContains(response, "User Management")
+
+    def test_account_directory_exposes_identity_only_live_filters_and_sorting(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-user-list"))
+        self.assertContains(response, 'data-account-search')
+        self.assertContains(response, 'value="active"')
+        self.assertContains(response, 'value="deactivated"')
+        self.assertContains(response, 'value="all"')
+        self.assertContains(response, 'data-account-sort="account"')
+        self.assertContains(response, 'data-account-sort="status"')
+        self.assertContains(response, 'data-search="managed-reader  reader@example.com"')
+        self.assertNotContains(response, 'data-search="managed-reader  reader@example.com active"')
+        self.assertContains(response, "Deactivated")
 
     def test_temporary_password_forces_replacement_and_is_audited(self):
         self.client.force_login(self.root)

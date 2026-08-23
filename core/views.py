@@ -141,10 +141,14 @@ def my_stats(request):
 def config_dashboard(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
+    account_counts = get_user_model().objects.filter(is_superuser=False).aggregate(
+        active=Count("id", filter=Q(is_active=True)),
+        deactivated=Count("id", filter=Q(is_active=False)),
+    )
     context = {
-        "user_count": get_user_model().objects.filter(is_superuser=False).count(),
+        "active_account_count": account_counts["active"],
+        "deactivated_account_count": account_counts["deactivated"],
         "group_count": ReadingGroup.objects.count(),
-        "month_count": ChallengeMonth.objects.count(),
         "recent_events": AuditEvent.objects.select_related("actor", "group")[:12],
     }
     return render(request, "core/config_dashboard.html", context)
