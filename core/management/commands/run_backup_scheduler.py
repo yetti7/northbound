@@ -33,7 +33,7 @@ class Command(BaseCommand):
             backup_settings = PlatformBackupSettings.objects.select_for_update().get_or_create(pk=1)[0]
             due = (
                 backup_settings.enabled
-                and local_now.weekday() == backup_settings.weekday
+                and local_now.weekday() in backup_settings.weekdays
                 and local_now.time().replace(tzinfo=None) >= backup_settings.backup_time
                 and backup_settings.last_run_date != local_now.date()
             )

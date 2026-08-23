@@ -906,22 +906,22 @@ class PlatformSettingsTests(TransactionTestCase):
 
     def test_automatic_backup_defaults_and_schedule_are_configurable(self):
         self.client.force_login(self.owner)
-        response = self.client.get(reverse("platform-settings"))
+        response = self.client.get(reverse("platform-backups"))
         self.assertEqual(response.status_code, 200)
         backup_settings = PlatformBackupSettings.load()
         self.assertTrue(backup_settings.enabled)
-        self.assertEqual(backup_settings.weekday, PlatformBackupSettings.Weekday.MONDAY)
+        self.assertEqual(backup_settings.weekdays, [PlatformBackupSettings.Weekday.MONDAY])
         self.assertEqual(backup_settings.backup_time.hour, 1)
         self.assertEqual(backup_settings.retention_count, 5)
-        response = self.client.post(reverse("platform-settings"), {
+        response = self.client.post(reverse("platform-backups"), {
             "enabled": "on",
-            "weekday": PlatformBackupSettings.Weekday.FRIDAY,
+            "weekdays": [PlatformBackupSettings.Weekday.MONDAY, PlatformBackupSettings.Weekday.FRIDAY],
             "backup_time": "03:30",
             "retention_count": 9,
         })
-        self.assertRedirects(response, reverse("platform-settings"))
+        self.assertRedirects(response, reverse("platform-backups"))
         backup_settings.refresh_from_db()
-        self.assertEqual(backup_settings.weekday, PlatformBackupSettings.Weekday.FRIDAY)
+        self.assertEqual(backup_settings.weekdays, [PlatformBackupSettings.Weekday.MONDAY, PlatformBackupSettings.Weekday.FRIDAY])
         self.assertEqual(backup_settings.backup_time.hour, 3)
         self.assertEqual(backup_settings.retention_count, 9)
 

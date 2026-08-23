@@ -2,6 +2,7 @@
 html[data-theme="light"]{--bg:#f5f3ff;--panel:#ffffff;--panel2:#f9f8ff;--text:#18172a;--muted:#65657a;--accent:#6251d8;--accent2:#087d67;--border:#dcd8eb;--danger:#ba2846;--shadow:0 18px 50px rgba(41,35,79,.10);color-scheme:light}html[data-theme="light"] body{background:radial-gradient(circle at top left,#e2deff 0,transparent 34rem),var(--bg)}html[data-theme="light"] .site-header{background:rgba(245,243,255,.86)}html[data-theme="light"] .stacked-form input,html[data-theme="light"] .stacked-form select,html[data-theme="light"] .stacked-form textarea{background:#fff;color:var(--text)}
 .page-heading h1{font-size:clamp(2rem,3.2vw,3.2rem);line-height:1.06;letter-spacing:-.035em}
 .form-card h1,.auth-card h1{font-size:clamp(1.9rem,2.7vw,2.35rem);line-height:1.08;letter-spacing:-.025em}
+#id_weekdays{display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:8px;list-style:none;padding:0}#id_weekdays li{margin:0}#id_weekdays label{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03);cursor:pointer}#id_weekdays input{width:auto;margin:0}
 .contextual-edit{min-height:38px;padding:0 14px;margin:0 0 10px}
 .contextual-edit+.lede{margin-top:6px}
 @media(max-width:760px){.page-heading h1{font-size:2.15rem}.form-card h1,.auth-card h1{font-size:2rem}}

@@ -327,6 +327,13 @@ def config_audit(request):
 def platform_settings(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/platform_settings.html")
+
+
+@login_required(login_url="config-login")
+def platform_backups(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
     is_sqlite = connection.vendor == "sqlite"
     backup_settings = PlatformBackupSettings.load()
     backup_settings_form = PlatformBackupSettingsForm(request.POST or None, instance=backup_settings)
@@ -334,11 +341,12 @@ def platform_settings(request):
         backup_settings_form.save()
         for expired_backup in list_automatic_backups()[backup_settings.retention_count:]:
             expired_backup.unlink(missing_ok=True)
-        AuditEvent.objects.create(actor=request.user, action="platform.backup_settings_updated", object_type="PlatformBackupSettings", object_id=str(backup_settings.pk), summary=f"Updated automatic backups to {backup_settings.get_weekday_display()} at {backup_settings.backup_time}; retaining {backup_settings.retention_count}.")
+        selected_days = ", ".join(dict(PlatformBackupSettings.Weekday.choices)[day] for day in backup_settings.weekdays)
+        AuditEvent.objects.create(actor=request.user, action="platform.backup_settings_updated", object_type="PlatformBackupSettings", object_id=str(backup_settings.pk), summary=f"Updated automatic backups to {selected_days} at {backup_settings.backup_time}; retaining {backup_settings.retention_count}.")
         messages.success(request, "Automatic backup settings were updated.")
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     automatic_backups = [{"name": path.name, "size": path.stat().st_size, "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.get_current_timezone())} for path in list_automatic_backups()]
-    return render(request, "core/platform_settings.html", {
+    return render(request, "core/platform_backups.html", {
         "is_sqlite": is_sqlite,
         "restore_pending": pending_restore_path().exists() if is_sqlite else False,
         "web_restart_enabled": settings.NORTHBOUND_WEB_RESTART,
@@ -353,10 +361,10 @@ def platform_backup_download(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     if request.method != "POST":
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     if connection.vendor != "sqlite":
         messages.error(request, "In-app backup downloads currently support the standard SQLite deployment. Back up PostgreSQL with its native tools.")
-        return redirect("platform-settings")
+        return redirect("platform-backups")
 
     created_at = timezone.now()
     temporary_directory = tempfile.TemporaryDirectory(prefix="northbound-backup-")
@@ -410,19 +418,19 @@ def platform_backup_restore(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     if request.method != "POST" or connection.vendor != "sqlite":
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     uploaded_backup = request.FILES.get("backup")
     if not uploaded_backup:
         messages.error(request, "Choose a Northbound backup ZIP to restore.")
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     try:
         stage_restore(uploaded_backup)
     except (ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         messages.error(request, f"The backup could not be staged: {exc}")
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     AuditEvent.objects.create(actor=request.user, action="platform.restore_staged", object_type="PlatformBackup", summary="Validated and staged a platform restore for the next application restart.")
     messages.success(request, "Backup validated and staged. Restart Northbound to apply it before the web server starts.")
-    return redirect("platform-settings")
+    return redirect("platform-backups")
 
 
 def health(request):
@@ -435,7 +443,7 @@ def platform_restore_restart(request):
         return HttpResponseForbidden("Platform owner access is required.")
     if not settings.NORTHBOUND_WEB_RESTART or connection.vendor != "sqlite" or not pending_restore_path().exists():
         messages.error(request, "A web-controlled restore restart is not available.")
-        return redirect("platform-settings")
+        return redirect("platform-backups")
     error = ""
     if request.method == "POST":
         if not request.user.check_password(request.POST.get("current_password", "")):

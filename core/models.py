@@ -78,6 +78,10 @@ class PlatformOwnerInvitation(models.Model):
         return "Active"
 
 
+def default_backup_weekdays():
+    return [0]
+
+
 class PlatformBackupSettings(models.Model):
     class Weekday(models.IntegerChoices):
         MONDAY = 0, "Monday"
@@ -89,7 +93,7 @@ class PlatformBackupSettings(models.Model):
         SUNDAY = 6, "Sunday"
 
     enabled = models.BooleanField(default=True)
-    weekday = models.PositiveSmallIntegerField(choices=Weekday.choices, default=Weekday.MONDAY)
+    weekdays = models.JSONField(default=default_backup_weekdays)
     backup_time = models.TimeField(default=datetime_time(1, 0))
     retention_count = models.PositiveSmallIntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(100)])
     last_run_date = models.DateField(null=True, blank=True, editable=False)

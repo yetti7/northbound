@@ -181,12 +181,17 @@ class PlatformOwnerAcceptanceForm(UserCreationForm):
 
 
 class PlatformBackupSettingsForm(forms.ModelForm):
+    weekdays = forms.MultipleChoiceField(
+        label="Backup Days",
+        choices=PlatformBackupSettings.Weekday.choices,
+        widget=forms.CheckboxSelectMultiple,
+    )
+
     class Meta:
         model = PlatformBackupSettings
-        fields = ("enabled", "weekday", "backup_time", "retention_count")
+        fields = ("enabled", "weekdays", "backup_time", "retention_count")
         labels = {
             "enabled": "Enable Automatic Backups",
-            "weekday": "Backup Day",
             "backup_time": "Backup Time",
             "retention_count": "Backups to Keep",
         }
@@ -197,6 +202,12 @@ class PlatformBackupSettingsForm(forms.ModelForm):
         if not 1 <= count <= 100:
             raise forms.ValidationError("Keep between 1 and 100 automatic backups.")
         return count
+
+    def clean_weekdays(self):
+        weekdays = self.cleaned_data["weekdays"]
+        if not weekdays:
+            raise forms.ValidationError("Select at least one backup day.")
+        return [int(day) for day in weekdays]
 
 
 class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):
