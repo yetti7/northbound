@@ -949,12 +949,13 @@ def month_participant_remove(request, group_slug, month_pk, pk):
     if reject_locked_month(request, enrollment.month, "remove a participant"):
         return redirect(enrollment.month)
     if request.method == "POST":
-        group = enrollment.month.group
-        month = enrollment.month
-        participant = enrollment.participant
-        TeamAssignment.objects.filter(month=month, participant=participant).delete()
-        enrollment.delete()
-        AuditEvent.objects.create(actor=request.user, group=group, action="month.participant_removed", object_type="MonthEnrollment", object_id=str(pk), summary=f"Removed {participant.display_name} from {month.name}; historical submissions were preserved.")
+        with transaction.atomic():
+            group = enrollment.month.group
+            month = enrollment.month
+            participant = enrollment.participant
+            TeamAssignment.objects.filter(month=month, participant=participant).delete()
+            enrollment.delete()
+            AuditEvent.objects.create(actor=request.user, group=group, action="month.participant_removed", object_type="MonthEnrollment", object_id=str(pk), summary=f"Removed {participant.display_name} from {month.name}; historical submissions were preserved.")
         messages.success(request, f"{participant.display_name} was removed from {month.name}.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
     return render(request, "core/confirm_remove.html", {"title": f"Remove {enrollment.participant.display_name} from {enrollment.month.name}?", "description": "They will no longer be able to submit to this month. Existing submissions and statistics will be preserved.", "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
@@ -976,18 +977,19 @@ def submission_create(request, group_slug, month_pk):
         return redirect(month)
     form = BookSubmissionForm(request.POST or None, month=month)
     if request.method == "POST" and form.is_valid():
-        submission = form.save(commit=False)
-        submission.month = month
-        submission.participant = participant
-        if submission.verification_method != BookSubmission.VerificationMethod.MANUAL:
-            submission.status = BookSubmission.Status.APPROVED
-            submission.approved_pages = submission.metadata_pages
-            submission.reviewed_at = timezone.now()
-        submission.full_clean()
-        submission.save()
-        form.save_theme_claims(submission)
-        submission.recalculate_score()
-        AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
+        with transaction.atomic():
+            submission = form.save(commit=False)
+            submission.month = month
+            submission.participant = participant
+            if submission.verification_method != BookSubmission.VerificationMethod.MANUAL:
+                submission.status = BookSubmission.Status.APPROVED
+                submission.approved_pages = submission.metadata_pages
+                submission.reviewed_at = timezone.now()
+            submission.full_clean()
+            submission.save()
+            form.save_theme_claims(submission)
+            submission.recalculate_score()
+            AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
         if submission.status == BookSubmission.Status.APPROVED:
             messages.success(request, "Book submitted and verified through Hardcover.")
         else:
@@ -1066,22 +1068,23 @@ def submission_review(request, group_slug, month_pk, pk):
     claim_formset = ClaimFormSet(request.POST or None, instance=submission, prefix="claims")
     claims_are_valid = claim_formset.is_valid() if submission.theme_claims.exists() else True
     if request.method == "POST" and form.is_valid() and claims_are_valid:
-        reviewed = form.save(commit=False)
-        reviewed.reviewed_by = request.user
-        reviewed.reviewed_at = timezone.now()
-        reviewed.full_clean()
-        reviewed.save()
-        claims = claim_formset.save(commit=False)
-        for claim in claims:
-            claim.reviewed_by = request.user
-            claim.reviewed_at = timezone.now()
-            claim.approved_bonus_pages = claim.theme.bonus_pages if claim.status == ThemeClaim.Status.APPROVED and reviewed.status == BookSubmission.Status.APPROVED else 0
-            claim.full_clean()
-            claim.save()
-        if reviewed.status != BookSubmission.Status.APPROVED:
-            reviewed.theme_claims.update(status=ThemeClaim.Status.REJECTED, approved_bonus_pages=0, reviewed_by=request.user, reviewed_at=timezone.now())
-        reviewed.recalculate_score()
-        AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
+        with transaction.atomic():
+            reviewed = form.save(commit=False)
+            reviewed.reviewed_by = request.user
+            reviewed.reviewed_at = timezone.now()
+            reviewed.full_clean()
+            reviewed.save()
+            claims = claim_formset.save(commit=False)
+            for claim in claims:
+                claim.reviewed_by = request.user
+                claim.reviewed_at = timezone.now()
+                claim.approved_bonus_pages = claim.theme.bonus_pages if claim.status == ThemeClaim.Status.APPROVED and reviewed.status == BookSubmission.Status.APPROVED else 0
+                claim.full_clean()
+                claim.save()
+            if reviewed.status != BookSubmission.Status.APPROVED:
+                reviewed.theme_claims.update(status=ThemeClaim.Status.REJECTED, approved_bonus_pages=0, reviewed_by=request.user, reviewed_at=timezone.now())
+            reviewed.recalculate_score()
+            AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
         messages.success(request, "Review saved.")
         return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
     return render(request, "core/submission_review.html", {"form": form, "claim_formset": claim_formset, "submission": submission})

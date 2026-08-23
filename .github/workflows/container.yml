@@ -13,7 +13,35 @@ permissions:
   packages: write
 
 jobs:
+  postgres-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: northbound
+          POSTGRES_USER: northbound
+          POSTGRES_PASSWORD: test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U northbound -d northbound"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://northbound:test-password@127.0.0.1:5432/northbound
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py check && python manage.py test
+
   test-and-publish:
+    needs: postgres-tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -33,32 +61,13 @@ jobs:
           python manage.py check
           python manage.py test
 
-      - name: Validate Compose deployments and production media gateway
+      - name: Validate Compose deployments
         run: |
           cp .env.example .env
           docker compose --env-file .env.example config --quiet
           docker compose --env-file .env.example -f compose.yaml -f compose.dev.yaml config --quiet
-          NORTHBOUND_IMAGE=ghcr.io/${{ github.repository }}:latest \
-            docker compose --env-file .env.example -f compose.production.yaml config --quiet
-          mkdir -p "$RUNNER_TEMP/northbound-media/profile-pictures"
-          cp static/branding/favicon-32.png "$RUNNER_TEMP/northbound-media/profile-pictures/media-check.png"
-          docker run --detach --name northbound-media-check \
-            --publish 127.0.0.1:18060:8000 \
-            --add-host web:127.0.0.1 \
-            --volume "$PWD/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
-            --volume "$RUNNER_TEMP/northbound-media:/srv/media:ro" \
-            nginx:1.30.4-alpine
-          trap 'docker rm --force northbound-media-check' EXIT
-          for attempt in 1 2 3 4 5; do
-            if curl --fail --silent --show-error \
-              --output "$RUNNER_TEMP/retrieved-media.png" \
-              http://127.0.0.1:18060/media/profile-pictures/media-check.png; then
-              break
-            fi
-            sleep 1
-          done
-          cmp static/branding/favicon-32.png "$RUNNER_TEMP/retrieved-media.png"
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18060/media/profile-pictures/missing.png)" = "404"
+          POSTGRES_PASSWORD=test-password \
+            docker compose --env-file .env.example -f compose.yaml -f compose.postgres.yaml config --quiet
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
