@@ -16,7 +16,7 @@ Northbound is a durable replacement for monthly Google Forms and formula-heavy t
 
 ## Source-of-truth rules
 
-- PostgreSQL is the long-term source of truth.
+- The configured production database is the source of truth: SQLite for the standard single-container installation or PostgreSQL for advanced and hosted deployments.
 - A submission's original values are retained after review.
 - Verified reading pages are not modified by bonuses, deductions, steals, or multipliers.
 - Monthly team membership never overwrites historical team membership.
