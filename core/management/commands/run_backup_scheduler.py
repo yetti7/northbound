@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from core.backups import create_automatic_backup
 from core.models import PlatformBackupSettings
+from core.platform_config import get_platform_timezone
 
 
 class Command(BaseCommand):
@@ -28,7 +29,7 @@ class Command(BaseCommand):
             time.sleep(30)
 
     def run_if_due(self):
-        local_now = timezone.localtime()
+        local_now = timezone.localtime(timezone=get_platform_timezone())
         with transaction.atomic():
             backup_settings = PlatformBackupSettings.objects.select_for_update().get_or_create(pk=1)[0]
             due = (

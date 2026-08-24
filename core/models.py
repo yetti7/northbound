@@ -83,6 +83,23 @@ def default_backup_weekdays():
     return [0]
 
 
+def default_platform_timezone():
+    return settings.TIME_ZONE
+
+
+class PlatformSettings(models.Model):
+    display_name = models.CharField(max_length=120, default="My Northbound")
+    timezone = models.CharField(max_length=64, default=default_platform_timezone)
+    allow_public_registration = models.BooleanField(default=True)
+    allow_user_group_creation = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls):
+        settings_object, _ = cls.objects.get_or_create(pk=1)
+        return settings_object
+
+
 class PlatformBackupSettings(models.Model):
     class Weekday(models.IntegerChoices):
         MONDAY = 0, "Monday"
@@ -532,6 +549,7 @@ AUDIT_ACTION_LABELS = {
     "platform.backup_deleted": "Backup Deleted",
     "platform.restore_staged": "Restore Staged",
     "platform.restore_restart_requested": "Restore Restart Requested",
+    "platform.general_settings_updated": "General Settings Updated",
 }
 AUDIT_SECRET_PATTERN = re.compile(
     r"(?i)\b((?:[a-z0-9]+[_-])*(?:password(?:[_-]?hash)?|secret(?:[_-]?key)?|"

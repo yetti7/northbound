@@ -23,14 +23,14 @@ import signal
 import threading
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PlatformSettingsForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
+from .platform_config import get_platform_settings, get_platform_timezone
 from .system_status import build_system_status
 
 
@@ -153,6 +153,7 @@ def config_dashboard(request):
         "deactivated_account_count": account_counts["deactivated"],
         "group_count": ReadingGroup.objects.count(),
         "recent_events": AuditEvent.objects.select_related("actor", "group")[:12],
+        "platform_timezone": get_platform_settings().timezone,
     }
     return render(request, "core/config_dashboard.html", context)
 
@@ -464,9 +465,9 @@ AUDIT_PAGE_SIZE = 50
 def _audit_date_bounds(value):
     try:
         selected_date = date.fromisoformat(value)
-        platform_timezone = ZoneInfo(settings.TIME_ZONE)
-    except (TypeError, ValueError, ZoneInfoNotFoundError):
+    except (TypeError, ValueError):
         return None
+    platform_timezone = get_platform_timezone()
     start = datetime.combine(selected_date, time.min, tzinfo=platform_timezone)
     end = datetime.combine(selected_date + timedelta(days=1), time.min, tzinfo=platform_timezone)
     return start, end
@@ -541,7 +542,7 @@ def config_audit(request):
         "action_options": actions,
         "actor_options": actors,
         "group_options": groups,
-        "platform_timezone": settings.TIME_ZONE,
+        "platform_timezone": get_platform_settings().timezone,
     })
 
 
@@ -556,12 +557,13 @@ def config_audit_export(request):
         return HttpResponseForbidden("Platform owner access is required.")
     events, _ = _filtered_audit_events(request)
     response = HttpResponse(content_type="text/csv; charset=utf-8")
-    export_date = timezone.localdate().isoformat()
+    platform_timezone = get_platform_timezone()
+    export_date = timezone.localdate(timezone=platform_timezone).isoformat()
     response["Content-Disposition"] = f'attachment; filename="northbound-audit-activity-{export_date}.csv"'
     writer = csv.writer(response)
     writer.writerow(["Timestamp", "Action", "Action Identifier", "Actor", "Group", "Summary"])
     for event in events.iterator():
-        local_timestamp = timezone.localtime(event.created_at).isoformat()
+        local_timestamp = timezone.localtime(event.created_at, platform_timezone).isoformat()
         writer.writerow([
             local_timestamp,
             _csv_safe(event.action_label),
@@ -578,6 +580,54 @@ def platform_settings(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     return render(request, "core/platform_settings.html")
+
+
+@login_required(login_url="config-login")
+def platform_general_settings(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    platform_settings = get_platform_settings()
+    original_values = {
+        field: getattr(platform_settings, field)
+        for field in (
+            "display_name",
+            "timezone",
+            "allow_public_registration",
+            "allow_user_group_creation",
+        )
+    }
+    form = PlatformSettingsForm(request.POST or None, instance=platform_settings)
+    if request.method == "POST" and form.is_valid():
+        changed_fields = list(form.changed_data)
+        form.save()
+        if changed_fields:
+            field_labels = {
+                "display_name": "Platform display name",
+                "timezone": "Platform timezone",
+                "allow_public_registration": "Public registration",
+                "allow_user_group_creation": "Normal account group creation",
+            }
+
+            def display_value(value):
+                return "Enabled" if value is True else "Disabled" if value is False else str(value)
+
+            changes = "; ".join(
+                f"{field_labels[field]} changed from {display_value(original_values[field])} to "
+                f"{display_value(form.cleaned_data[field])}"
+                for field in changed_fields
+            )
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="platform.general_settings_updated",
+                object_type="PlatformSettings",
+                object_id=str(platform_settings.pk),
+                summary=f"Updated General Settings: {changes}.",
+            )
+            messages.success(request, "General Settings were updated.")
+        else:
+            messages.info(request, "General Settings were already up to date.")
+        return redirect("platform-general-settings")
+    return render(request, "core/platform_general_settings.html", {"form": form})
 
 
 @login_required(login_url="config-login")
@@ -617,7 +667,7 @@ def platform_backups(request):
     stored_backups = [{
         "name": path.name,
         "size": path.stat().st_size,
-        "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.get_current_timezone()),
+        "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=get_platform_timezone()),
         "kind": "Automatic" if path.name.startswith("northbound-automatic-") else "Manual",
     } for path in stored_paths]
     return render(request, "core/platform_backups.html", {
@@ -629,7 +679,7 @@ def platform_backups(request):
         "backup_location": str(automatic_backup_directory()) if is_sqlite else None,
         "stored_backup_size": sum(backup["size"] for backup in stored_backups),
         "next_scheduled_run": next_scheduled_backup(backup_settings) if is_sqlite else None,
-        "platform_timezone": settings.TIME_ZONE,
+        "platform_timezone": get_platform_settings().timezone,
     })
 
 
@@ -832,11 +882,17 @@ def setup(request):
 def register(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
+    platform_settings = get_platform_settings()
+    if not platform_settings.allow_public_registration:
+        return render(request, "registration/registration_unavailable.html", status=403)
     form = PublicRegistrationForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         user = form.save()
         login(request, user)
-        messages.success(request, "Account created. You can create a reading group or join one with its access code.")
+        if platform_settings.allow_user_group_creation:
+            messages.success(request, "Account created. You can create a reading group or join one with its access code.")
+        else:
+            messages.success(request, "Account created. Join an existing reading group with its access code.")
         return redirect("dashboard")
     return render(request, "registration/register.html", {"form": form})
 
@@ -851,6 +907,8 @@ def dashboard(request):
 
 @login_required
 def group_create(request):
+    if not request.user.is_superuser and not get_platform_settings().allow_user_group_creation:
+        return render(request, "core/group_creation_unavailable.html", status=403)
     form = GroupCreateForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         token = form.cleaned_data.get("hardcover_api_token", "")

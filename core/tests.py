@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from .integrations.hardcover import HardcoverLinkError, lookup_edition, parse_hardcover_url, resolve_scoring_edition, search_books
 from .integrations.secrets import decrypt_token
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -1525,6 +1525,150 @@ class PlatformAuditActivityTests(TestCase):
         self.client.force_login(self.reader)
         self.assertEqual(self.client.get(reverse("config-audit")).status_code, 403)
         self.assertEqual(self.client.get(reverse("config-audit-export")).status_code, 403)
+
+
+class GeneralSettingsTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "settings-owner", "settings-owner@example.com", "settings-owner-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "settings-reader", "settings-reader@example.com", "settings-reader-password-482!"
+        )
+        self.group = ReadingGroup.objects.create(
+            name="Existing Group", slug="existing-settings-group", timezone="America/Chicago"
+        )
+
+    def test_owner_updates_all_runtime_safe_settings_with_audit_history(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-general-settings"), {
+            "display_name": "Deep North Readers",
+            "timezone": "America/Los_Angeles",
+        })
+
+        self.assertRedirects(response, reverse("platform-general-settings"))
+        platform_settings = PlatformSettings.load()
+        self.assertEqual(platform_settings.display_name, "Deep North Readers")
+        self.assertEqual(platform_settings.timezone, "America/Los_Angeles")
+        self.assertFalse(platform_settings.allow_public_registration)
+        self.assertFalse(platform_settings.allow_user_group_creation)
+        self.group.refresh_from_db()
+        self.assertEqual(self.group.timezone, "America/Chicago")
+
+        event = AuditEvent.objects.get(action="platform.general_settings_updated")
+        self.assertEqual(event.actor, self.owner)
+        self.assertIn("Platform display name changed from My Northbound to Deep North Readers", event.summary)
+        self.assertIn("Platform timezone changed from America/New_York to America/Los_Angeles", event.summary)
+        self.assertIn("Public registration changed from Enabled to Disabled", event.summary)
+        self.assertIn("Normal account group creation changed from Enabled to Disabled", event.summary)
+
+        response = self.client.get(reverse("config-dashboard"))
+        self.assertContains(response, "Deep North Readers")
+        self.client.logout()
+        self.assertContains(self.client.get(reverse("login")), "Deep North Readers")
+
+    def test_invalid_timezone_is_rejected_and_regular_accounts_cannot_manage_settings(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-general-settings"), {
+            "display_name": "Invalid Timezone Test",
+            "timezone": "Mars/Olympus_Mons",
+            "allow_public_registration": "on",
+            "allow_user_group_creation": "on",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Select a valid choice")
+        self.assertFalse(AuditEvent.objects.filter(action="platform.general_settings_updated").exists())
+
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-general-settings")).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-general-settings"), {}).status_code, 403)
+
+    def test_disabled_registration_blocks_direct_access_but_existing_accounts_still_sign_in(self):
+        platform_settings = PlatformSettings.load()
+        platform_settings.allow_public_registration = False
+        platform_settings.save(update_fields=["allow_public_registration"])
+
+        response = self.client.get(reverse("register"))
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, "Registration Unavailable", status_code=403)
+        response = self.client.post(reverse("register"), {
+            "username": "blocked-registration",
+            "email": "blocked@example.com",
+            "password1": "blocked-registration-password-482!",
+            "password2": "blocked-registration-password-482!",
+        })
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(get_user_model().objects.filter(username="blocked-registration").exists())
+        self.assertTrue(self.client.login(username=self.reader.username, password="settings-reader-password-482!"))
+
+    def test_group_creation_policy_blocks_normal_accounts_but_preserves_joining_and_owner_creation(self):
+        platform_settings = PlatformSettings.load()
+        platform_settings.allow_user_group_creation = False
+        platform_settings.save(update_fields=["allow_user_group_creation"])
+        self.group.regenerate_access_code()
+        self.group.save(update_fields=["join_code", "join_code_hash", "join_code_hint"])
+
+        self.client.force_login(self.reader)
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertNotContains(dashboard, reverse("group-create"))
+        self.assertContains(dashboard, reverse("group-join"))
+        self.assertEqual(self.client.get(reverse("group-create")).status_code, 403)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Blocked Group",
+            "timezone": "America/New_York",
+        })
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ReadingGroup.objects.filter(name="Blocked Group").exists())
+
+        response = self.client.post(reverse("group-join"), {"access_code": self.group.join_code})
+        self.assertRedirects(response, reverse("group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertTrue(Membership.objects.filter(group=self.group, user=self.reader, is_active=True).exists())
+
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Platform Created Group",
+            "timezone": "America/New_York",
+        })
+        platform_group = ReadingGroup.objects.get(name="Platform Created Group")
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": platform_group.slug}))
+        self.assertFalse(Membership.objects.filter(group=platform_group, user=self.owner).exists())
+
+    @override_settings(TIME_ZONE="UTC")
+    def test_runtime_timezone_drives_audit_backups_and_system_status(self):
+        from .backups import next_scheduled_backup
+
+        platform_settings = PlatformSettings.load()
+        platform_settings.timezone = "America/Los_Angeles"
+        platform_settings.save(update_fields=["timezone"])
+        event = AuditEvent.objects.create(
+            actor=self.owner,
+            action="platform.root_login",
+            object_type="User",
+            object_id=str(self.owner.pk),
+            summary="Timezone integration event",
+        )
+        AuditEvent.objects.filter(pk=event.pk).update(
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc)
+        )
+
+        self.client.force_login(self.owner)
+        audit_response = self.client.get(reverse("config-audit"), {"date": "2026-08-23"})
+        self.assertContains(audit_response, "Timezone integration event")
+        status_response = self.client.get(reverse("platform-system-status"))
+        self.assertContains(status_response, "America/Los_Angeles")
+        backup_response = self.client.get(reverse("platform-backups"))
+        self.assertEqual(backup_response.context["platform_timezone"], "America/Los_Angeles")
+
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.weekdays = [PlatformBackupSettings.Weekday.MONDAY]
+        backup_settings.backup_time = datetime(2026, 8, 24, 1, 0).time()
+        next_run = next_scheduled_backup(
+            backup_settings,
+            now=datetime(2026, 8, 24, 7, 30, tzinfo=datetime_timezone.utc),
+        )
+        self.assertEqual(getattr(next_run.tzinfo, "key", None), "America/Los_Angeles")
+        self.assertEqual(next_run.hour, 1)
 
 
 class GroupEditingTests(TestCase):

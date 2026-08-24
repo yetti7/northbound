@@ -20,6 +20,7 @@ urlpatterns = [
     path("config/audit/", views.config_audit, name="config-audit"),
     path("config/audit/export/", views.config_audit_export, name="config-audit-export"),
     path("config/settings/", views.platform_settings, name="platform-settings"),
+    path("config/settings/general/", views.platform_general_settings, name="platform-general-settings"),
     path("config/settings/status/", views.platform_system_status, name="platform-system-status"),
     path("config/settings/backups/", views.platform_backups, name="platform-backups"),
     path("config/settings/backups/create/", views.platform_backup_create, name="platform-backup-create"),

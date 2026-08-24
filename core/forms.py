@@ -5,8 +5,9 @@ from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import transaction
 from django.utils.text import slugify
 from django.conf import settings
+from zoneinfo import available_timezones
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -227,6 +228,39 @@ class PlatformBackupSettingsForm(forms.ModelForm):
         if not weekdays:
             raise forms.ValidationError("Select at least one backup day.")
         return [int(day) for day in weekdays]
+
+
+class PlatformSettingsForm(forms.ModelForm):
+    timezone = forms.ChoiceField(
+        label="Platform Timezone",
+        choices=[(name, name) for name in sorted(available_timezones())],
+        help_text="Used for backups, audit dates, System Status, and other installation-wide timestamps. Group timezones are unchanged.",
+    )
+
+    class Meta:
+        model = PlatformSettings
+        fields = (
+            "display_name",
+            "timezone",
+            "allow_public_registration",
+            "allow_user_group_creation",
+        )
+        labels = {
+            "display_name": "Platform Display Name",
+            "allow_public_registration": "Allow Public Registration",
+            "allow_user_group_creation": "Allow Normal Accounts to Create Groups",
+        }
+        help_texts = {
+            "display_name": "The human-readable name of this installation. Northbound remains the application name.",
+            "allow_public_registration": "When disabled, existing accounts continue working but new public account creation is unavailable.",
+            "allow_user_group_creation": "When disabled, normal accounts can still join existing groups. Platform Owners can still create groups.",
+        }
+
+    def clean_display_name(self):
+        display_name = self.cleaned_data["display_name"].strip()
+        if not display_name:
+            raise forms.ValidationError("Enter a platform display name.")
+        return display_name
 
 
 class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):

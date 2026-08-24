@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Create Account · Northbound{% endblock %}
 {% block content %}
-<section class="auth-card wide"><p class="eyebrow">Reader Registration</p><h1>Create Account</h1><p class="lede">After registering, create your own reading group or join an existing one with its private access code.</p>
+<section class="auth-card wide"><p class="eyebrow">{{ platform_display_name }}</p><h1>Create Account</h1><p class="lede">Create a Northbound account, then join an existing reading group{% if user_group_creation_enabled %} or create your own{% endif %}.</p>
 <form method="post" enctype="multipart/form-data" class="stacked-form">{% csrf_token %}
   {{ form.non_field_errors }}
   <p>{{ form.username.label_tag }}{{ form.username }}{{ form.username.errors }}<span class="helptext">{{ form.username.help_text }}</span></p>

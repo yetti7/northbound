@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load tz %}
 {% block title %}Audit Activity · Northbound{% endblock %}
 {% block content %}
 <div class="page-heading">
@@ -53,7 +54,7 @@
   {{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}{% if filters_active %} match the current filters{% endif %}.
 </p>
 
-<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Group</th><th>Action</th><th>Summary</th></tr></thead><tbody>
+{% timezone platform_timezone %}<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Group</th><th>Action</th><th>Summary</th></tr></thead><tbody>
 {% for event in events %}<tr>
   <td>{{ event.created_at|date:"M j, Y g:i a" }}</td>
   <td>{% if event.actor %}{{ event.actor.username }}{% if not event.actor.is_active %}<br><span class="muted">Deactivated</span>{% endif %}{% else %}System{% endif %}</td>
@@ -61,7 +62,7 @@
   <td><strong>{{ event.action_label }}</strong><br><code class="muted">{{ event.action }}</code></td>
   <td>{{ event.safe_summary }}</td>
 </tr>{% empty %}<tr><td colspan="5">No audit activity matches the current filters.</td></tr>{% endfor %}
-</tbody></table></div>
+</tbody></table></div>{% endtimezone %}
 
 {% if page_obj.paginator.num_pages > 1 %}
 <nav class="pagination" aria-label="Audit activity pages">

@@ -9,6 +9,7 @@ from django.db.migrations.exceptions import CircularDependencyError, Inconsisten
 
 from .backups import next_scheduled_backup, pending_restore_path
 from .models import PlatformBackupSettings
+from .platform_config import get_platform_settings
 
 
 LOW_STORAGE_BYTES = 1024 ** 3
@@ -163,6 +164,7 @@ def _backup_status(warnings):
 
 def build_system_status():
     warnings = []
+    platform_settings = get_platform_settings()
     version = settings.NORTHBOUND_VERSION
     if version.lower() in {"development", "unknown", "unversioned"}:
         warnings.append(_warning(
@@ -215,7 +217,7 @@ def build_system_status():
         "version": version,
         "database_backend": database_backend,
         "database_location": database_location,
-        "timezone": settings.TIME_ZONE,
+        "timezone": platform_settings.timezone,
         "public_url": public_url,
         "proxy_state": "Trusted proxy headers enabled" if proxy_enabled else "Trusted proxy headers disabled",
         "media_location": media_location,

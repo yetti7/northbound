@@ -11,6 +11,8 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone as django_timezone
 
+from .platform_config import get_platform_timezone
+
 
 def data_root():
     return Path(settings.DATABASES["default"]["NAME"]).resolve().parent
@@ -48,7 +50,8 @@ def stored_backup_path(filename):
 def next_scheduled_backup(backup_settings, now=None):
     if not backup_settings.enabled or not backup_settings.weekdays:
         return None
-    local_now = django_timezone.localtime(now or django_timezone.now())
+    platform_timezone = get_platform_timezone()
+    local_now = django_timezone.localtime(now or django_timezone.now(), platform_timezone)
     local_time = local_now.time().replace(tzinfo=None)
     for day_offset in range(8):
         candidate_date = local_now.date() + timedelta(days=day_offset)
@@ -58,10 +61,7 @@ def next_scheduled_backup(backup_settings, now=None):
             backup_settings.last_run_date == candidate_date or backup_settings.backup_time <= local_time
         ):
             continue
-        return django_timezone.make_aware(
-            datetime.combine(candidate_date, backup_settings.backup_time),
-            django_timezone.get_current_timezone(),
-        )
+        return datetime.combine(candidate_date, backup_settings.backup_time, tzinfo=platform_timezone)
     return None
 
 
