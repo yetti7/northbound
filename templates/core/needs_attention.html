@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Needs Attention · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Challenge Reviews</p><h1>Needs Attention</h1><p class="lede">Current pending review work within your active Challenge staffing scope.</p></div><a class="button" href="{% url 'dashboard' %}">Back to Home</a></div>
+{% if challenges %}<div class="card-grid">{% for item in challenges %}<a class="card interactive" href="{% url 'review-queue' item.month.group.slug item.month.pk %}"><span class="pill">{{ item.count }} pending</span><h2>{{ item.month.name }}</h2><p>{{ item.month.group.name }}</p><p class="muted">Review scope: {{ item.scope_label }}</p></a>{% endfor %}</div>{% else %}<div class="empty-state">Nothing currently needs your review.</div>{% endif %}
+{% endblock %}

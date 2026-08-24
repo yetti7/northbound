@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Hosts · {{ month.name }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Challenge Hosts</h1><p class="lede">Hosts are operational staff for this month. Host assignment does not enroll someone or add them to a team.</p></div>
+  <a class="button" href="{{ month.get_absolute_url }}">Back to Month</a>
+</div>
+{% if can_manage %}<section class="form-card"><h2>Assign Host</h2><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Assign Host</button></form></section>{% endif %}
+<section><div class="section-heading"><h2>Current Hosts</h2></div><div class="card-grid">{% for assignment in current_hosts %}<div class="card"><span class="pill">Host</span><h3>{{ assignment.membership.display_name }}</h3><p class="muted">Assigned {{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %} by {{ assignment.assigned_by.username }}{% endif %}</p>{% if can_manage %}<a class="danger-link" href="{% url 'challenge-host-end' month.group.slug month.pk assignment.pk %}">Remove Host</a>{% endif %}</div>{% empty %}<div class="empty-state">No Hosts are currently assigned.</div>{% endfor %}</div></section>
+{% if past_hosts %}<section><div class="section-heading"><h2>Host History</h2></div><div class="table-wrap"><table><thead><tr><th>Host</th><th>Assigned</th><th>Ended</th></tr></thead><tbody>{% for assignment in past_hosts %}<tr><td>{{ assignment.membership.display_name }}</td><td>{{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %}<br><span class="muted">by {{ assignment.assigned_by.username }}</span>{% endif %}</td><td>{{ assignment.ended_at|date:"M j, Y g:i a" }}{% if assignment.ended_by %}<br><span class="muted">by {{ assignment.ended_by.username }}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+{% endblock %}

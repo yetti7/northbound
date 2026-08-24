@@ -7,8 +7,8 @@ from django.utils.text import slugify
 from django.conf import settings
 from zoneinfo import available_timezones
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
-from .permissions import CAPABILITIES
+from .models import BookSubmission, CatalogEdition, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .permissions import DELEGABLE_CAPABILITIES
 
 
 def avatar_choices():
@@ -429,6 +429,104 @@ class TeamStatsVisibilityForm(forms.ModelForm):
         labels = {"team_stats_visibility": "Visibility"}
 
 
+class ChallengeHostAssignmentForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeStaffAssignment
+        fields = ("membership",)
+        labels = {"membership": "Group Member"}
+
+    def __init__(self, *args, month, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.month = month
+        active_host_ids = month.staff_assignments.filter(
+            role=ChallengeStaffAssignment.Role.HOST,
+            ended_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+        active_floater_ids = month.staff_assignments.filter(
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+        self.fields["membership"].queryset = month.group.memberships.filter(
+            is_active=True,
+            user__is_superuser=False,
+        ).exclude(pk__in=active_host_ids).exclude(pk__in=active_floater_ids)
+
+    def save(self, assigned_by, commit=True):
+        assignment = super().save(commit=False)
+        assignment.month = self.month
+        assignment.role = ChallengeStaffAssignment.Role.HOST
+        assignment.assigned_by = assigned_by
+        if commit:
+            assignment.save()
+        return assignment
+
+
+class ChallengeTeamLeaderAssignmentForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeStaffAssignment
+        fields = ("membership",)
+        labels = {"membership": "Team Member"}
+
+    def __init__(self, *args, team, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.team = team
+        active_leader_ids = team.staff_assignments.filter(
+            role=ChallengeStaffAssignment.Role.TEAM_LEADER,
+            ended_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+        active_floater_ids = team.month.staff_assignments.filter(
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+        assigned_ids = team.assignments.filter(
+            participant__is_active=True,
+            participant__user__is_superuser=False,
+        ).values_list("participant_id", flat=True)
+        self.fields["membership"].queryset = team.month.group.memberships.filter(
+            pk__in=assigned_ids,
+        ).exclude(pk__in=active_leader_ids).exclude(pk__in=active_floater_ids)
+
+    def save(self, assigned_by, commit=True):
+        assignment = super().save(commit=False)
+        assignment.month = self.team.month
+        assignment.team = self.team
+        assignment.role = ChallengeStaffAssignment.Role.TEAM_LEADER
+        assignment.assigned_by = assigned_by
+        if commit:
+            assignment.save()
+        return assignment
+
+
+class ChallengeFloaterAssignmentForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeStaffAssignment
+        fields = ("membership",)
+        labels = {"membership": "Group Member"}
+
+    def __init__(self, *args, month, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.month = month
+        excluded_ids = month.enrollments.values_list("participant_id", flat=True)
+        active_staff_ids = month.staff_assignments.filter(
+            role__in=(ChallengeStaffAssignment.Role.HOST, ChallengeStaffAssignment.Role.TEAM_LEADER, ChallengeStaffAssignment.Role.FLOATER),
+            ended_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+        self.fields["membership"].queryset = month.group.memberships.filter(
+            is_active=True,
+            user__is_superuser=False,
+        ).exclude(pk__in=excluded_ids).exclude(pk__in=active_staff_ids)
+
+    def save(self, assigned_by, commit=True):
+        assignment = super().save(commit=False)
+        assignment.month = self.month
+        assignment.team = None
+        assignment.role = ChallengeStaffAssignment.Role.FLOATER
+        assignment.assigned_by = assigned_by
+        if commit:
+            assignment.save()
+        return assignment
+
+
 class TeamForm(forms.ModelForm):
     class Meta:
         model = Team
@@ -440,7 +538,7 @@ class MemberCreateForm(forms.Form):
     username = forms.CharField(max_length=150)
     display_name = forms.CharField(label="Display Name", max_length=100)
     email = forms.EmailField(required=False)
-    role = forms.ChoiceField(choices=Membership.Role.choices, initial=Membership.Role.READER)
+    role = forms.ChoiceField(choices=Membership.Role.choices, initial=Membership.Role.MEMBER)
     temporary_password = forms.CharField(label="Temporary Password", widget=forms.PasswordInput, min_length=12)
 
     def clean_username(self):
@@ -477,7 +575,7 @@ class MembershipPermissionsForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.membership = membership
         self.fields["role"].initial = membership.role
-        for capability, label in CAPABILITIES.items():
+        for capability, label in DELEGABLE_CAPABILITIES.items():
             current = membership.permission_overrides.get(capability)
             initial = "inherit" if current is None else ("allow" if current else "deny")
             self.fields[capability] = forms.ChoiceField(
@@ -488,10 +586,15 @@ class MembershipPermissionsForm(forms.Form):
 
     def save(self):
         self.membership.role = self.cleaned_data["role"]
-        overrides = {}
-        for capability in CAPABILITIES:
+        # Only mutate capability keys represented by this form. Legacy,
+        # deferred, or backup-restored keys require an explicit data migration
+        # before they may be discarded.
+        overrides = dict(self.membership.permission_overrides or {})
+        for capability in DELEGABLE_CAPABILITIES:
             value = self.cleaned_data[capability]
-            if value != "inherit":
+            if value == "inherit":
+                overrides.pop(capability, None)
+            else:
                 overrides[capability] = value == "allow"
         self.membership.permission_overrides = overrides
         self.membership.save(update_fields=["role", "permission_overrides"])
@@ -509,6 +612,17 @@ class TeamAssignmentForm(forms.ModelForm):
         assigned_ids = month.team_assignments.values_list("participant_id", flat=True)
         self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).exclude(pk__in=assigned_ids)
         self.fields["team"].queryset = month.teams.filter(is_archived=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        participant = cleaned.get("participant")
+        if participant and self.month.staff_assignments.filter(
+            membership=participant,
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).exists():
+            self.add_error("participant", "End this member's active Floater assignment before assigning them to a team.")
+        return cleaned
 
     def save(self, commit=True):
         assignment = super().save(commit=False)
@@ -533,6 +647,17 @@ class MonthEnrollmentForm(forms.ModelForm):
         self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).exclude(pk__in=enrolled_ids)
         self.fields["team"].queryset = month.teams.all()
 
+    def clean(self):
+        cleaned = super().clean()
+        participant = cleaned.get("participant")
+        if participant and self.month.staff_assignments.filter(
+            membership=participant,
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).exists():
+            self.add_error("participant", "End this member's active Floater assignment before enrolling them as a Reader.")
+        return cleaned
+
     def save(self, enrolled_by=None, commit=True):
         enrollment = super().save(commit=False)
         enrollment.month = self.month
@@ -556,17 +681,19 @@ class MonthParticipantEditForm(forms.Form):
         assignment = TeamAssignment.objects.filter(month=enrollment.month, participant=enrollment.participant).first()
         self.fields["team"].initial = assignment.team_id if assignment else None
 
-    def save(self):
+    def save(self, actor=None):
         team = self.cleaned_data.get("team")
         assignment = TeamAssignment.objects.filter(month=self.enrollment.month, participant=self.enrollment.participant).first()
         previous_team = assignment.team if assignment else None
         if team:
             if assignment:
                 assignment.team = team
+                assignment._staffing_change_actor = actor
                 assignment.save()
             else:
                 TeamAssignment.objects.create(month=self.enrollment.month, participant=self.enrollment.participant, team=team)
         elif assignment:
+            assignment._staffing_change_actor = actor
             assignment.delete()
         return previous_team, team
 

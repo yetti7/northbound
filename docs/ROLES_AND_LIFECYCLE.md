@@ -4,14 +4,15 @@
 
 | Role | Scope | Main capabilities |
 |---|---|---|
-| Platform owner | Entire installation | Manage equal platform owners, users, groups, audit history, integrations, and recovery |
-| Group owner | One group | Full group control, administrator management, exports, retention decisions |
-| Group administrator | One group | Months, participants, teams, themes, challenges, reports |
-| Moderator | One group | Review submissions, approve claims, resolve duplicates, record adjustments |
-| Game manager | One group | Upload game artwork and update permitted visual tracker state |
-| Reader | One group | Submit books and view personal/team progress |
+| Platform owner | Entire installation | Unrestricted installation administration, including Challenge operations and review when needed, without implicit Group membership, staffing, participation, or scoring |
+| Group owner | One group | Full group control, permission management, exports, retention decisions |
+| Moderator | One group | Delegated group authority; current defaults cover Group announcements and restricted team statistics, with per-member capability overrides; Challenge review requires staffing |
+| Member | One group | Persistent group membership; Reader participation is determined separately for each challenge month |
+| Host | One challenge month | Operates existing Challenge teams, rosters, enrollment administration, themes, Challenge announcements, submission soft-removal, and Challenge-wide submission/theme-claim review; assignment itself does not create participation |
+| Team Leader | One challenge month and team | Competing Reader who is already enrolled and assigned to that team; reviews submissions and theme claims only for Readers on that team |
+| Floater | One challenge month | Non-competing, no-team staffing support with Challenge-wide submission and theme-claim review; no Host, team-management, scoring, visibility, or book-entry authority |
 
-An account can belong to multiple groups with a different role in each. Creating a group makes a normal user its owner. Joining with an access code creates a reader membership; a group owner or platform owner can then adjust that role.
+An account can belong to multiple groups with a different role in each. Creating a group makes a normal user its owner. Joining with an access code creates a member record; a group owner or Platform Owner can then adjust that role.
 
 Platform owners have equal installation-wide authority and remain separate from group roles. Code deployment and schema migrations remain deployment operations.
 

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Team Leaders · {{ team.name }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow"><a href="{% url 'team-list' month.group.slug month.pk %}">{{ month.name }} Teams</a></p><h1>{{ team.name }} Team Leaders</h1><p class="lede">Team Leaders remain competing Readers on this team. Staffing does not change enrollment, team membership, scoring, visibility, or review authority.</p></div>
+  <a class="button" href="{% url 'team-list' month.group.slug month.pk %}">Back to Teams</a>
+</div>
+{% if can_manage %}<section class="form-card"><h2>Assign Team Leader</h2><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Assign Team Leader</button></form></section>{% endif %}
+<section><div class="section-heading"><h2>Current Team Leaders</h2></div><div class="card-grid">{% for assignment in current_leaders %}<div class="card"><span class="pill">Team Leader</span><h3>{{ assignment.membership.display_name }}</h3><p class="muted">Assigned {{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %} by {{ assignment.assigned_by.username }}{% endif %}</p>{% if can_manage %}<a class="danger-link" href="{% url 'team-leader-end' month.group.slug month.pk team.pk assignment.pk %}">Remove Team Leader</a>{% endif %}</div>{% empty %}<div class="empty-state">No Team Leaders are currently assigned.</div>{% endfor %}</div></section>
+{% if past_leaders %}<section><div class="section-heading"><h2>Team Leader History</h2></div><div class="table-wrap"><table><thead><tr><th>Team Leader</th><th>Assigned</th><th>Ended</th></tr></thead><tbody>{% for assignment in past_leaders %}<tr><td>{{ assignment.membership.display_name }}</td><td>{{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %}<br><span class="muted">by {{ assignment.assigned_by.username }}</span>{% endif %}</td><td>{{ assignment.ended_at|date:"M j, Y g:i a" }}{% if assignment.ended_by %}<br><span class="muted">by {{ assignment.ended_by.username }}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+{% endblock %}

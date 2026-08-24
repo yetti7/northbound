@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q, Sum
 from django.urls import reverse
 from django.templatetags.static import static
@@ -139,7 +139,7 @@ def generate_group_access_code():
 class ReadingGroup(models.Model):
     class AccessCodeVisibility(models.TextChoices):
         OWNER = "owner", "Group owners only"
-        STAFF = "staff", "Owners, administrators, and moderators"
+        STAFF = "staff", "Owners and moderators"
         MEMBERS = "members", "All group members"
 
     name = models.CharField(max_length=120)
@@ -186,14 +186,12 @@ class HardcoverConnection(models.Model):
 class Membership(models.Model):
     class Role(models.TextChoices):
         OWNER = "owner", "Group owner"
-        ADMIN = "admin", "Group administrator"
         MODERATOR = "moderator", "Moderator"
-        GAME_MANAGER = "game_manager", "Game manager"
-        READER = "reader", "Reader"
+        MEMBER = "member", "Member"
 
     group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE, related_name="memberships")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reading_memberships")
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.READER)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.MEMBER)
     display_name = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)
     joined_at = models.DateTimeField(auto_now_add=True)
@@ -217,7 +215,7 @@ class ChallengeMonth(models.Model):
 
     class TeamStatsVisibility(models.TextChoices):
         EVERYONE = "everyone", "Everyone in the group"
-        STAFF = "staff", "Owners, administrators, and moderators"
+        STAFF = "staff", "Owners and moderators"
         OWNER = "owner", "Group owners only"
 
     class AnnouncementMode(models.TextChoices):
@@ -258,6 +256,93 @@ class ChallengeMonth(models.Model):
         if self.announcement_mode == self.AnnouncementMode.INHERIT:
             return self.group.announcement.strip() if self.group.announcement_enabled else ""
         return ""
+
+
+class ChallengeStaffAssignment(models.Model):
+    class Role(models.TextChoices):
+        HOST = "host", "Host"
+        TEAM_LEADER = "team_leader", "Team Leader"
+        FLOATER = "floater", "Floater"
+
+    month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="staff_assignments")
+    membership = models.ForeignKey(Membership, on_delete=models.PROTECT, related_name="challenge_staff_assignments")
+    team = models.ForeignKey("Team", null=True, blank=True, on_delete=models.PROTECT, related_name="staff_assignments")
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.HOST)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_challenge_staff",
+    )
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ended_challenge_staff",
+    )
+
+    class Meta:
+        ordering = ["membership__display_name", "assigned_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["month", "membership", "role"],
+                condition=Q(ended_at__isnull=True),
+                name="unique_active_challenge_staff_role",
+            )
+        ]
+
+    def clean(self):
+        if not self.membership_id or not self.month_id:
+            return
+        if self.membership.group_id != self.month.group_id:
+            raise ValidationError("Challenge staff must belong to the same reading group.")
+        if self.role in {self.Role.HOST, self.Role.FLOATER} and self.team_id:
+            raise ValidationError(f"{self.get_role_display()} assignments cannot be tied to a team.")
+        if self.role == self.Role.TEAM_LEADER:
+            if not self.team_id:
+                raise ValidationError("Team Leader assignments require a team.")
+            if self.team.month_id != self.month_id:
+                raise ValidationError("The Team Leader team must belong to the selected challenge month.")
+        if self.ended_at is None and (not self.membership.is_active or self.membership.user.is_superuser):
+            raise ValidationError("Challenge staff must have an active normal group membership.")
+        active_other_roles = ChallengeStaffAssignment.objects.filter(
+            month=self.month,
+            membership=self.membership,
+            ended_at__isnull=True,
+        ).exclude(pk=self.pk)
+        if self.ended_at is None and self.role == self.Role.HOST and active_other_roles.filter(role=self.Role.FLOATER).exists():
+            raise ValidationError("End the active Floater assignment before assigning this member as a Host.")
+        if self.ended_at is None and self.role == self.Role.FLOATER:
+            if MonthEnrollment.objects.filter(month=self.month, participant=self.membership).exists():
+                raise ValidationError("Enrolled Readers cannot be assigned as Floaters.")
+            if active_other_roles.filter(role__in=(self.Role.HOST, self.Role.TEAM_LEADER)).exists():
+                raise ValidationError("A current Host or Team Leader cannot be assigned as a Floater.")
+        if self.ended_at is None and self.role == self.Role.TEAM_LEADER:
+            if active_other_roles.filter(role=self.Role.FLOATER).exists():
+                raise ValidationError("End the active Floater assignment before assigning this member as a Team Leader.")
+            if not MonthEnrollment.objects.filter(month=self.month, participant=self.membership).exists():
+                raise ValidationError("Team Leaders must already be enrolled in the challenge month.")
+            if not TeamAssignment.objects.filter(
+                month=self.month,
+                participant=self.membership,
+                team=self.team,
+            ).exists():
+                raise ValidationError("Team Leaders can only lead their assigned team.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def is_active(self):
+        return self.ended_at is None
+
+    def __str__(self):
+        return f"{self.month.name} — {self.get_role_display()}: {self.membership.display_name}"
 
 
 class MonthTheme(models.Model):
@@ -322,6 +407,17 @@ class MonthEnrollment(models.Model):
     def clean(self):
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the same reading group.")
+        if self.participant_id and self.month_id and ChallengeStaffAssignment.objects.filter(
+            month=self.month,
+            membership=self.participant,
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).exists():
+            raise ValidationError("End this member's active Floater assignment before enrolling them as a Reader.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.month.name} — {self.participant.display_name}"
@@ -340,11 +436,71 @@ class TeamAssignment(models.Model):
             raise ValidationError("The team must belong to the selected challenge month.")
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the same reading group.")
+        if self.participant_id and self.month_id and ChallengeStaffAssignment.objects.filter(
+            month=self.month,
+            membership=self.participant,
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).exists():
+            raise ValidationError("End this member's active Floater assignment before assigning them to a team.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-        MonthEnrollment.objects.get_or_create(month=self.month, participant=self.participant)
+        previous = None
+        if self.pk:
+            previous = TeamAssignment.objects.filter(pk=self.pk).first()
+        with transaction.atomic():
+            if previous and (
+                previous.month_id != self.month_id
+                or previous.participant_id != self.participant_id
+                or previous.team_id != self.team_id
+            ):
+                end_active_team_leader_assignments(
+                    month=previous.month,
+                    participant=previous.participant,
+                    team=previous.team,
+                    actor=getattr(self, "_staffing_change_actor", None),
+                    reason="the underlying team assignment changed",
+                )
+            self.full_clean()
+            super().save(*args, **kwargs)
+            MonthEnrollment.objects.get_or_create(month=self.month, participant=self.participant)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            end_active_team_leader_assignments(
+                month=self.month,
+                participant=self.participant,
+                team=self.team,
+                actor=getattr(self, "_staffing_change_actor", None),
+                reason="the underlying team assignment was removed",
+            )
+            return super().delete(*args, **kwargs)
+
+
+def end_active_team_leader_assignments(*, month, participant, team, actor=None, reason):
+    active_assignments = ChallengeStaffAssignment.objects.filter(
+        month=month,
+        membership=participant,
+        team=team,
+        role=ChallengeStaffAssignment.Role.TEAM_LEADER,
+        ended_at__isnull=True,
+    )
+    ended_at = timezone.now()
+    for staffing in active_assignments:
+        staffing.ended_at = ended_at
+        staffing.ended_by = actor
+        staffing.save(update_fields=["ended_at", "ended_by"])
+        AuditEvent.objects.create(
+            actor=actor,
+            group=month.group,
+            action="challenge.team_leader_ended",
+            object_type="ChallengeStaffAssignment",
+            object_id=str(staffing.pk),
+            summary=(
+                f"Ended {participant.display_name}'s Team Leader assignment for {team.name} "
+                f"in {month.name} because {reason}."
+            ),
+        )
 
 
 class CatalogBook(models.Model):

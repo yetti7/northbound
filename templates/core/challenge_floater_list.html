@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Floaters · {{ month.name }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Challenge Floaters</h1><p class="lede">Floaters are non-competing, cross-team support. They are not enrolled Readers, do not belong to a team, and receive no operational permissions yet.</p></div>
+  <a class="button" href="{{ month.get_absolute_url }}">Back to Month</a>
+</div>
+{% if can_manage %}<section class="form-card"><h2>Assign Floater</h2><p class="muted">Only active Group members who are not enrolled or currently staffing this Challenge are eligible.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Assign Floater</button></form></section>{% endif %}
+<section><div class="section-heading"><h2>Current Floaters</h2></div><div class="card-grid">{% for assignment in current_floaters %}<div class="card"><span class="pill">Floater · Non-competing</span><h3>{{ assignment.membership.display_name }}</h3><p class="muted">Assigned {{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %} by {{ assignment.assigned_by.username }}{% endif %}</p>{% if can_manage %}<a class="danger-link" href="{% url 'challenge-floater-end' month.group.slug month.pk assignment.pk %}">Remove Floater</a>{% endif %}</div>{% empty %}<div class="empty-state">No Floaters are currently assigned.</div>{% endfor %}</div></section>
+{% if past_floaters %}<section><div class="section-heading"><h2>Floater History</h2></div><div class="table-wrap"><table><thead><tr><th>Floater</th><th>Assigned</th><th>Ended</th></tr></thead><tbody>{% for assignment in past_floaters %}<tr><td>{{ assignment.membership.display_name }}</td><td>{{ assignment.assigned_at|date:"M j, Y g:i a" }}{% if assignment.assigned_by %}<br><span class="muted">by {{ assignment.assigned_by.username }}</span>{% endif %}</td><td>{{ assignment.ended_at|date:"M j, Y g:i a" }}{% if assignment.ended_by %}<br><span class="muted">by {{ assignment.ended_by.username }}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+{% endblock %}
