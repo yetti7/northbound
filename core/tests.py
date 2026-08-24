@@ -1671,6 +1671,196 @@ class GeneralSettingsTests(TestCase):
         self.assertEqual(next_run.hour, 1)
 
 
+class StorageMaintenanceTests(TransactionTestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.data_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_directory.cleanup)
+        self.addCleanup(self.data_directory.cleanup)
+        self.settings_override = override_settings(MEDIA_ROOT=Path(self.media_directory.name))
+        self.settings_override.enable()
+        self.addCleanup(self.settings_override.disable)
+        self.data_root_patch = patch("core.backups.data_root", return_value=Path(self.data_directory.name))
+        self.data_root_patch.start()
+        self.addCleanup(self.data_root_patch.stop)
+        self.lock_root_patch = patch(
+            "core.maintenance_lock.maintenance_root", return_value=Path(self.data_directory.name)
+        )
+        self.lock_root_patch.start()
+        self.addCleanup(self.lock_root_patch.stop)
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "maintenance-owner", "maintenance@example.com", "maintenance-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "maintenance-reader", "reader@example.com", "reader-password-482!"
+        )
+
+    def make_file(self, path, content=b"data"):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return path
+
+    def make_event(self, *, created_at, summary, actor=None, group=None):
+        event = AuditEvent.objects.create(
+            actor=actor or self.owner,
+            group=group,
+            action="group.updated",
+            object_type="ReadingGroup",
+            summary=summary,
+        )
+        AuditEvent.objects.filter(pk=event.pk).update(created_at=created_at)
+        event.refresh_from_db()
+        return event
+
+    def test_storage_overview_reports_managed_categories(self):
+        media_file = self.make_file(Path(self.media_directory.name, "profile-pictures", "avatar.png"), b"avatar")
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "thumb.bin"), b"thumb")
+        backup_file = self.make_file(Path(self.data_directory.name, "backups", "northbound-manual-test.zip"), b"backup")
+        oldest = AuditEvent.objects.create(
+            actor=self.owner,
+            action="platform.root_login",
+            object_type="User",
+            summary="Oldest overview event",
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-storage-maintenance"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_sqlite"])
+        self.assertEqual(response.context["media_usage"], {"count": 2, "size": media_file.stat().st_size + cache_file.stat().st_size})
+        self.assertEqual(response.context["cache_usage"], {"count": 1, "size": cache_file.stat().st_size})
+        self.assertEqual(response.context["stored_backup_count"], 1)
+        self.assertEqual(response.context["stored_backup_size"], backup_file.stat().st_size)
+        self.assertEqual(response.context["audit_event_count"], 1)
+        self.assertEqual(response.context["oldest_audit_event"], oldest)
+        self.assertContains(response, "Storage Overview")
+        self.assertContains(response, "Audit History Pruning")
+        self.assertContains(response, "Optimize Database")
+
+    def test_cache_cleanup_removes_only_reserved_disposable_files(self):
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "generated", "thumb.bin"), b"cache")
+        avatar = self.make_file(Path(self.media_directory.name, "profile-pictures", "avatar.png"), b"avatar")
+        unknown_media = self.make_file(Path(self.media_directory.name, "unknown-source.bin"), b"source")
+        environment_file = self.make_file(Path(self.media_directory.name, ".env"), b"secret")
+        stored_backup = self.make_file(Path(self.data_directory.name, "backups", "northbound-manual-test.zip"), b"backup")
+        rollback_file = self.make_file(Path(self.data_directory.name, "pre-restore-test", "northbound.sqlite3"), b"rollback")
+        self.client.force_login(self.owner)
+        url = reverse("platform-cache-cleanup")
+
+        response = self.client.post(url, {"confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(cache_file.exists())
+        response = self.client.post(url, {"confirmation": "CLEANUP"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertFalse(cache_file.exists())
+        self.assertTrue(avatar.exists())
+        self.assertTrue(unknown_media.exists())
+        self.assertTrue(environment_file.exists())
+        self.assertTrue(stored_backup.exists())
+        self.assertTrue(rollback_file.exists())
+        event = AuditEvent.objects.get(action="platform.disposable_cache_cleaned")
+        self.assertIn("Removed 1 disposable cache file", event.summary)
+
+    @patch("core.maintenance.timezone.now")
+    def test_audit_pruning_respects_cutoff_and_preserves_accounts_groups_and_newer_events(self, mocked_now):
+        fixed_now = datetime(2026, 8, 23, 18, 0, tzinfo=datetime_timezone.utc)
+        mocked_now.return_value = fixed_now
+        cutoff = fixed_now.replace(year=2025)
+        group = ReadingGroup.objects.create(name="Retained Group", slug="retained-maintenance-group", is_active=False)
+        deactivated_actor = get_user_model().objects.create_user(
+            "retained-deactivated-user", password="test-password", is_active=False
+        )
+        old_event = self.make_event(
+            created_at=cutoff - timedelta(seconds=1),
+            summary="Deleted historical content must not survive",
+            actor=deactivated_actor,
+            group=group,
+        )
+        boundary_event = self.make_event(created_at=cutoff, summary="Boundary event remains")
+        newer_event = self.make_event(created_at=cutoff + timedelta(seconds=1), summary="Newer event remains")
+        self.client.force_login(self.owner)
+        url = reverse("platform-audit-prune")
+
+        response = self.client.post(url, {"years": "1", "confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        response = self.client.post(url, {"years": "1", "confirmation": "PRUNE"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertFalse(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=boundary_event.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=newer_event.pk).exists())
+        self.assertTrue(get_user_model().objects.filter(pk=deactivated_actor.pk, is_active=False).exists())
+        self.assertTrue(ReadingGroup.objects.filter(pk=group.pk, is_active=False).exists())
+        prune_event = AuditEvent.objects.get(action="platform.audit_history_pruned")
+        self.assertIn("Pruned 1 audit event", prune_event.summary)
+        self.assertNotIn("Deleted historical content", prune_event.summary)
+
+    def test_pending_restore_and_concurrent_lock_block_incompatible_operations(self):
+        from .backups import create_stored_backup, pending_restore_path
+        from .maintenance_lock import MaintenanceBusyError, maintenance_lock
+
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "cache.bin"), b"cache")
+        old_event = self.make_event(
+            created_at=timezone.now() - timedelta(days=370),
+            summary="Pending restore protected event",
+        )
+        pending = self.make_file(pending_restore_path(), b"staged restore")
+        self.client.force_login(self.owner)
+
+        cache_response = self.client.post(reverse("platform-cache-cleanup"), {"confirmation": "CLEANUP"})
+        prune_response = self.client.post(reverse("platform-audit-prune"), {"years": "1", "confirmation": "PRUNE"})
+        optimize_response = self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"})
+        self.assertContains(cache_response, "A restore is staged")
+        self.assertContains(prune_response, "A restore is staged")
+        self.assertContains(optimize_response, "A restore is staged")
+        self.assertTrue(cache_file.exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        self.assertTrue(pending.exists())
+
+        pending.unlink()
+        with maintenance_lock():
+            with self.assertRaises(MaintenanceBusyError):
+                create_stored_backup()
+
+    def test_sqlite_optimization_requires_confirmation_preserves_data_and_is_audited(self):
+        ReadingGroup.objects.create(name="Optimization Survivor", slug="optimization-survivor")
+        self.client.force_login(self.owner)
+        url = reverse("platform-sqlite-optimize")
+
+        response = self.client.post(url, {"confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(AuditEvent.objects.filter(action="platform.sqlite_optimized").exists())
+        response = self.client.post(url, {"confirmation": "OPTIMIZE"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertTrue(ReadingGroup.objects.filter(slug="optimization-survivor").exists())
+        event = AuditEvent.objects.get(action="platform.sqlite_optimized")
+        self.assertIn("size before", event.summary)
+        self.assertIn("reclaimed", event.summary)
+
+    def test_page_and_all_actions_are_platform_owner_only_and_postgresql_is_native_only(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-storage-maintenance")).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-cache-cleanup"), {"confirmation": "CLEANUP"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-audit-prune"), {"years": "1", "confirmation": "PRUNE"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"}).status_code, 403)
+
+        self.client.force_login(self.owner)
+        with patch("core.maintenance.connection") as maintenance_connection, patch("core.views.connection") as view_connection:
+            maintenance_connection.vendor = "postgresql"
+            view_connection.vendor = "postgresql"
+            response = self.client.get(reverse("platform-storage-maintenance"))
+            self.assertContains(response, "PostgreSQL-native tooling")
+            self.assertNotContains(response, reverse("platform-sqlite-optimize"))
+            response = self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"})
+            self.assertRedirects(response, reverse("platform-storage-maintenance"))
+        self.assertFalse(AuditEvent.objects.filter(action="platform.sqlite_optimized").exists())
+
+
 class GroupEditingTests(TestCase):
     def setUp(self):
         User = get_user_model()

@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone as django_timezone
 
+from .maintenance_lock import with_maintenance_lock
 from .platform_config import get_platform_timezone
 
 
@@ -65,6 +66,7 @@ def next_scheduled_backup(backup_settings, now=None):
     return None
 
 
+@with_maintenance_lock
 def create_stored_backup(*, automatic=False):
     if connection.vendor != "sqlite":
         raise ValueError("In-app backups require SQLite.")
@@ -147,6 +149,7 @@ def validate_backup(path):
     return metadata
 
 
+@with_maintenance_lock
 def stage_restore(uploaded_file):
     target = pending_restore_path()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +166,7 @@ def stage_restore(uploaded_file):
     return target
 
 
+@with_maintenance_lock
 def stage_stored_restore(source):
     source = Path(source)
     validate_backup(source)
@@ -178,6 +182,7 @@ def stage_stored_restore(source):
     return target
 
 
+@with_maintenance_lock
 def apply_pending_restore():
     pending = pending_restore_path()
     if not pending.exists():

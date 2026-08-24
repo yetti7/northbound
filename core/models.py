@@ -550,6 +550,9 @@ AUDIT_ACTION_LABELS = {
     "platform.restore_staged": "Restore Staged",
     "platform.restore_restart_requested": "Restore Restart Requested",
     "platform.general_settings_updated": "General Settings Updated",
+    "platform.disposable_cache_cleaned": "Disposable Cache Cleaned",
+    "platform.audit_history_pruned": "Audit History Pruned",
+    "platform.sqlite_optimized": "SQLite Database Optimized",
 }
 AUDIT_SECRET_PATTERN = re.compile(
     r"(?i)\b((?:[a-z0-9]+[_-])*(?:password(?:[_-]?hash)?|secret(?:[_-]?key)?|"

@@ -11,6 +11,7 @@ from django.db.models import Count, OuterRef, Prefetch, Q, Subquery, Sum
 from django.forms import inlineformset_factory
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from django.utils import timezone
 import secrets
@@ -31,6 +32,8 @@ from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, 
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 from .platform_config import get_platform_settings, get_platform_timezone
+from .maintenance import AUDIT_RETENTION_YEARS, audit_prune_preview, cleanup_disposable_cache, disposable_cache_usage, optimize_sqlite_database, prune_audit_history, storage_overview
+from .maintenance_lock import MaintenanceBusyError
 from .system_status import build_system_status
 
 
@@ -635,6 +638,142 @@ def platform_system_status(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
     return render(request, "core/platform_system_status.html", build_system_status())
+
+
+@login_required(login_url="config-login")
+def platform_storage_maintenance(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    context = storage_overview()
+    context.update({
+        "audit_retention_years": AUDIT_RETENTION_YEARS,
+        "platform_timezone": get_platform_settings().timezone,
+    })
+    return render(request, "core/platform_storage_maintenance.html", context)
+
+
+def _maintenance_confirmation(request, **context):
+    context.setdefault("error", "")
+    context.setdefault("cancel_url", reverse("platform-storage-maintenance"))
+    return render(request, "core/platform_maintenance_confirm.html", context)
+
+
+@login_required(login_url="config-login")
+def platform_cache_cleanup(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    usage = disposable_cache_usage()
+    if not usage["count"]:
+        messages.info(request, "There are currently no disposable cache files eligible for cleanup.")
+        return redirect("platform-storage-maintenance")
+    context = {
+        "eyebrow": "Disposable Cache Cleanup",
+        "title": "Remove Disposable Cache Files?",
+        "description": (
+            f"This permanently removes {usage['count']} explicitly reproducible cache file(s) "
+            f"using approximately {filesizeformat(usage['size'])}. Persistent media and Stored Backups are not affected."
+        ),
+        "confirmation_word": "CLEANUP",
+        "action_label": "Clean Disposable Cache",
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "CLEANUP":
+            context["error"] = "Enter CLEANUP exactly to confirm."
+        else:
+            try:
+                result = cleanup_disposable_cache(actor=request.user)
+            except (MaintenanceBusyError, RuntimeError) as exc:
+                context["error"] = str(exc)
+            else:
+                message = (
+                    f"Removed {result['count']} disposable cache file(s) and reclaimed "
+                    f"{filesizeformat(result['size'])}."
+                )
+                if result["failed_count"]:
+                    messages.warning(
+                        request,
+                        f"{message} {result['failed_count']} file(s) could not be removed.",
+                    )
+                else:
+                    messages.success(request, message)
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
+
+
+@login_required(login_url="config-login")
+def platform_audit_prune(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    try:
+        years = int(request.POST.get("years") or request.GET.get("years") or "")
+        preview = audit_prune_preview(years)
+    except (TypeError, ValueError):
+        messages.error(request, "Choose one, two, or three years of audit history to retain.")
+        return redirect("platform-storage-maintenance")
+    context = {
+        "eyebrow": "Audit History Pruning",
+        "title": "Permanently Prune Audit History?",
+        "description": (
+            f"This permanently deletes {preview['affected_count']} audit event(s) older than "
+            f"{years} year(s). Deleted history can be recovered only by restoring an appropriate backup."
+        ),
+        "confirmation_word": "PRUNE",
+        "action_label": "Prune Audit History",
+        "hidden_fields": {"years": years},
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "PRUNE":
+            context["error"] = "Enter PRUNE exactly to confirm."
+        else:
+            try:
+                result = prune_audit_history(years=years, actor=request.user)
+            except (MaintenanceBusyError, RuntimeError) as exc:
+                context["error"] = str(exc)
+            else:
+                messages.success(
+                    request,
+                    f"Pruned {result['count']} audit event(s) older than {years} year(s).",
+                )
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
+
+
+@login_required(login_url="config-login")
+def platform_sqlite_optimize(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if connection.vendor != "sqlite":
+        messages.info(request, "Northbound database optimization is available only for SQLite deployments.")
+        return redirect("platform-storage-maintenance")
+    overview = storage_overview()
+    context = {
+        "eyebrow": "SQLite Database Optimization",
+        "title": "Optimize the SQLite Database?",
+        "description": (
+            f"The database currently uses approximately {filesizeformat(overview['database_size'] or 0)}. "
+            "Optimization compacts unused pages and may briefly require exclusive database access. "
+            "It does not delete live records."
+        ),
+        "confirmation_word": "OPTIMIZE",
+        "action_label": "Optimize Database",
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "OPTIMIZE":
+            context["error"] = "Enter OPTIMIZE exactly to confirm."
+        else:
+            try:
+                result = optimize_sqlite_database(actor=request.user)
+            except (MaintenanceBusyError, RuntimeError, OSError) as exc:
+                context["error"] = str(exc)
+            else:
+                messages.success(
+                    request,
+                    f"SQLite optimization completed. Database size changed from "
+                    f"{filesizeformat(result['before_size'])} to {filesizeformat(result['after_size'])}; "
+                    f"{filesizeformat(result['reclaimed'])} reclaimed.",
+                )
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
 
 
 def _stored_backup_or_404(filename):
