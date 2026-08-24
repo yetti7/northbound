@@ -9,6 +9,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -1095,6 +1096,8 @@ class AccountAndConfigurationAccessTests(TestCase):
 
 class PlatformSettingsTests(TransactionTestCase):
     def setUp(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Northbound's in-app backup lifecycle is SQLite-only.")
         self.media_root = tempfile.mkdtemp()
         self.data_root = tempfile.mkdtemp()
         self.data_root_patch = patch("core.backups.data_root", return_value=Path(self.data_root))
@@ -1306,7 +1309,8 @@ class PlatformSystemStatusTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "2026.8-test")
-        self.assertContains(response, "SQLite")
+        expected_backend = "SQLite" if connection.vendor == "sqlite" else "PostgreSQL"
+        self.assertContains(response, expected_backend)
         self.assertContains(response, "America/New_York")
         self.assertContains(response, "https://northbound.example.com")
         self.assertContains(response, "Trusted proxy headers enabled")
@@ -1314,7 +1318,11 @@ class PlatformSystemStatusTests(TestCase):
         self.assertContains(response, "Migration State")
         self.assertContains(response, "Up to date")
         self.assertContains(response, "Backup Scheduler")
-        self.assertContains(response, "Successful")
+        if connection.vendor == "sqlite":
+            self.assertContains(response, "Successful")
+        else:
+            self.assertContains(response, "Not applicable for PostgreSQL")
+            self.assertContains(response, "Managed outside Northbound")
         self.assertContains(response, "Storage Availability")
         self.assertNotContains(response, "system-status-secret-key")
         self.assertNotContains(response, "system-status-token-key")
@@ -1350,8 +1358,12 @@ class PlatformSystemStatusTests(TestCase):
         self.assertContains(response, "Development build")
         self.assertContains(response, "HTTPS proxy headers are not trusted")
         self.assertContains(response, "Debug mode is enabled")
-        self.assertContains(response, "The latest automatic backup failed")
-        self.assertContains(response, "Failed — review Settings → Backups")
+        if connection.vendor == "sqlite":
+            self.assertContains(response, "The latest automatic backup failed")
+            self.assertContains(response, "Failed — review Settings → Backups")
+        else:
+            self.assertNotContains(response, "The latest automatic backup failed")
+            self.assertContains(response, "Not applicable for PostgreSQL")
         self.assertNotContains(response, "sensitive implementation detail")
 
     @patch("core.system_status.MigrationExecutor")
@@ -1715,6 +1727,8 @@ class StorageMaintenanceTests(TransactionTestCase):
         return event
 
     def test_storage_overview_reports_managed_categories(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("SQLite database and Stored Backup sizing is SQLite-only.")
         media_file = self.make_file(Path(self.media_directory.name, "profile-pictures", "avatar.png"), b"avatar")
         cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "thumb.bin"), b"thumb")
         backup_file = self.make_file(Path(self.data_directory.name, "backups", "northbound-manual-test.zip"), b"backup")
@@ -1800,6 +1814,8 @@ class StorageMaintenanceTests(TransactionTestCase):
         self.assertNotIn("Deleted historical content", prune_event.summary)
 
     def test_pending_restore_and_concurrent_lock_block_incompatible_operations(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Staged in-app restore and SQLite backup locking are SQLite-only.")
         from .backups import create_stored_backup, pending_restore_path
         from .maintenance_lock import MaintenanceBusyError, maintenance_lock
 
@@ -1827,6 +1843,8 @@ class StorageMaintenanceTests(TransactionTestCase):
                 create_stored_backup()
 
     def test_sqlite_optimization_requires_confirmation_preserves_data_and_is_audited(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Northbound database optimization is SQLite-only.")
         ReadingGroup.objects.create(name="Optimization Survivor", slug="optimization-survivor")
         self.client.force_login(self.owner)
         url = reverse("platform-sqlite-optimize")
