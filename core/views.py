@@ -4,15 +4,17 @@ from django.core import signing
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db import connection
 from django.db.models import Count, OuterRef, Prefetch, Q, Subquery, Sum
 from django.forms import inlineformset_factory
-from django.http import FileResponse, Http404, HttpResponseForbidden, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 import secrets
+import csv
 import json
 import sqlite3
 import zipfile
@@ -20,12 +22,13 @@ import os
 import signal
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
-from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, hash_platform_owner_invitation_token
+from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 from .system_status import build_system_status
@@ -455,12 +458,119 @@ def config_user_status_toggle(request, pk):
     })
 
 
+AUDIT_PAGE_SIZE = 50
+
+
+def _audit_date_bounds(value):
+    try:
+        selected_date = date.fromisoformat(value)
+        platform_timezone = ZoneInfo(settings.TIME_ZONE)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return None
+    start = datetime.combine(selected_date, time.min, tzinfo=platform_timezone)
+    end = datetime.combine(selected_date + timedelta(days=1), time.min, tzinfo=platform_timezone)
+    return start, end
+
+
+def _filtered_audit_events(request):
+    events = AuditEvent.objects.select_related("actor", "group")
+    filters = {
+        "search": request.GET.get("search", "").strip(),
+        "action": request.GET.get("action", "").strip(),
+        "actor": request.GET.get("actor", "").strip(),
+        "group": request.GET.get("group", "").strip(),
+        "date": request.GET.get("date", "").strip(),
+    }
+    if filters["search"]:
+        events = events.filter(summary__icontains=filters["search"])
+    if filters["action"]:
+        events = events.filter(action=filters["action"])
+    if filters["actor"] == "system":
+        events = events.filter(actor__isnull=True)
+    elif filters["actor"].isdigit():
+        events = events.filter(actor_id=int(filters["actor"]))
+    if filters["group"].isdigit():
+        events = events.filter(group_id=int(filters["group"]))
+    date_bounds = _audit_date_bounds(filters["date"])
+    if date_bounds:
+        events = events.filter(created_at__gte=date_bounds[0], created_at__lt=date_bounds[1])
+    return events, filters
+
+
+def _audit_filter_options():
+    actions = sorted(
+        (
+            {"value": action, "label": audit_action_label(action)}
+            for action in AuditEvent.objects.values_list("action", flat=True).distinct()
+        ),
+        key=lambda item: (item["label"], item["value"]),
+    )
+    actors = [
+        {"id": actor_id, "username": username, "is_active": is_active}
+        for actor_id, username, is_active in AuditEvent.objects.exclude(actor__isnull=True)
+        .values_list("actor_id", "actor__username", "actor__is_active")
+        .distinct()
+        .order_by("actor__username")
+    ]
+    groups = [
+        {"id": group_id, "name": name}
+        for group_id, name in AuditEvent.objects.exclude(group__isnull=True)
+        .values_list("group_id", "group__name")
+        .distinct()
+        .order_by("group__name")
+    ]
+    return actions, actors, groups
+
+
 @login_required(login_url="config-login")
 def config_audit(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
-    events = AuditEvent.objects.select_related("actor", "group")[:200]
-    return render(request, "core/config_audit.html", {"events": events})
+    events, filters = _filtered_audit_events(request)
+    paginator = Paginator(events, AUDIT_PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
+    actions, actors, groups = _audit_filter_options()
+    return render(request, "core/config_audit.html", {
+        "events": page_obj.object_list,
+        "page_obj": page_obj,
+        "filters": filters,
+        "filters_active": any(filters.values()),
+        "filter_query": query.urlencode(),
+        "action_options": actions,
+        "actor_options": actors,
+        "group_options": groups,
+        "platform_timezone": settings.TIME_ZONE,
+    })
+
+
+def _csv_safe(value):
+    text = str(value or "")
+    return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+
+@login_required(login_url="config-login")
+def config_audit_export(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    events, _ = _filtered_audit_events(request)
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    export_date = timezone.localdate().isoformat()
+    response["Content-Disposition"] = f'attachment; filename="northbound-audit-activity-{export_date}.csv"'
+    writer = csv.writer(response)
+    writer.writerow(["Timestamp", "Action", "Action Identifier", "Actor", "Group", "Summary"])
+    for event in events.iterator():
+        local_timestamp = timezone.localtime(event.created_at).isoformat()
+        writer.writerow([
+            local_timestamp,
+            _csv_safe(event.action_label),
+            _csv_safe(event.action),
+            _csv_safe(event.actor.username if event.actor else "System"),
+            _csv_safe(event.group.name if event.group else "Platform"),
+            _csv_safe(safe_audit_summary(event.summary)),
+        ])
+    return response
 
 
 @login_required(login_url="config-login")

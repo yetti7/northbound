@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as datetime_timezone
 import shutil
 import tempfile
 import os
@@ -1399,6 +1399,132 @@ class PlatformSystemStatusTests(TestCase):
         rendered_values = repr(status)
         self.assertNotIn("private-database-user", rendered_values)
         self.assertNotIn("private-database-password", rendered_values)
+
+
+class PlatformAuditActivityTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "audit-owner", "audit-owner@example.com", "audit-owner-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "audit-reader", "audit-reader@example.com", "audit-reader-password-482!"
+        )
+        self.deactivated_actor = User.objects.create_user(
+            "former-operator", "former@example.com", "former-password-482!", is_active=False
+        )
+        self.group = ReadingGroup.objects.create(name="Audit Group", slug="audit-group")
+        self.other_group = ReadingGroup.objects.create(name="Other Group", slug="other-audit-group")
+
+    def create_event(self, *, actor=None, group=None, action="group.updated", summary="Audit event", created_at=None):
+        event = AuditEvent.objects.create(
+            actor=actor,
+            group=group,
+            action=action,
+            object_type="ReadingGroup",
+            object_id=str(group.pk) if group else "",
+            summary=summary,
+        )
+        if created_at:
+            AuditEvent.objects.filter(pk=event.pk).update(created_at=created_at)
+            event.refresh_from_db()
+        return event
+
+    @override_settings(TIME_ZONE="America/New_York")
+    def test_filters_combine_and_use_platform_local_date(self):
+        target = self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="group.updated",
+            summary="Resolved support case Alpha",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.other_group,
+            action="group.updated",
+            summary="Resolved support case Alpha in another group",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="group.created",
+            summary="Resolved support case Alpha with another action",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"), {
+            "search": "support case Alpha",
+            "action": "group.updated",
+            "actor": str(self.deactivated_actor.pk),
+            "group": str(self.group.pk),
+            "date": "2026-08-23",
+        })
+
+        self.assertEqual(list(response.context["page_obj"].object_list), [target])
+        self.assertContains(response, "former-operator")
+        self.assertContains(response, "Deactivated")
+        self.assertContains(response, "Group Updated")
+        self.assertContains(response, "group.updated")
+        self.assertContains(response, "Clear Filters")
+
+    def test_summary_is_sanitized_without_mutating_historical_record(self):
+        event = self.create_event(
+            actor=self.owner,
+            summary="Investigated API_TOKEN=do-not-display and DJANGO_SECRET_KEY=also-private for support.",
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"))
+
+        self.assertContains(response, "API_TOKEN=[REDACTED]")
+        self.assertNotContains(response, "do-not-display")
+        self.assertContains(response, "DJANGO_SECRET_KEY=[REDACTED]")
+        self.assertNotContains(response, "also-private")
+        event.refresh_from_db()
+        self.assertIn("do-not-display", event.summary)
+
+    def test_server_side_pagination_preserves_search(self):
+        for number in range(51):
+            self.create_event(actor=self.owner, summary=f"Paged support record {number}")
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"), {"search": "Paged support record"})
+
+        self.assertEqual(response.context["page_obj"].paginator.count, 51)
+        self.assertEqual(len(response.context["events"]), 50)
+        self.assertContains(response, "Page 1 of 2")
+        self.assertContains(response, "search=Paged+support+record&amp;page=2")
+
+    def test_filtered_csv_export_contains_safe_friendly_and_stable_fields(self):
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="platform.root_login",
+            summary="Support archive API_TOKEN=never-export-this",
+        )
+        self.create_event(actor=self.owner, action="group.created", summary="Unrelated event")
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit-export"), {
+            "search": "Support archive",
+            "action": "platform.root_login",
+        })
+        content = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("northbound-audit-activity-", response["Content-Disposition"])
+        self.assertIn("Platform Owner Signed In", content)
+        self.assertIn("platform.root_login", content)
+        self.assertIn("former-operator", content)
+        self.assertIn("Audit Group", content)
+        self.assertIn("API_TOKEN=[REDACTED]", content)
+        self.assertNotIn("never-export-this", content)
+        self.assertNotIn("Unrelated event", content)
+
+    def test_audit_page_and_export_are_platform_owner_only(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("config-audit")).status_code, 403)
+        self.assertEqual(self.client.get(reverse("config-audit-export")).status_code, 403)
 
 
 class GroupEditingTests(TestCase):

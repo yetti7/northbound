@@ -10,6 +10,7 @@ from datetime import timedelta
 from datetime import time as datetime_time
 from django.core.validators import MaxValueValidator, MinValueValidator
 import hashlib
+import re
 import secrets
 
 
@@ -517,6 +518,37 @@ class ThemeClaim(models.Model):
         return f"{self.submission.title} — {self.theme.name}"
 
 
+AUDIT_ACTION_LABELS = {
+    "platform.root_login": "Platform Owner Signed In",
+    "platform.initial_owner_created": "Initial Platform Owner Created",
+    "platform.owner_invitation_created": "Platform Owner Invitation Created",
+    "platform.owner_invitation_redeemed": "Platform Owner Invitation Accepted",
+    "platform.owner_invitation_revoked": "Platform Owner Invitation Revoked",
+    "platform.owner_deactivated": "Platform Owner Deactivated",
+    "platform.owner_reactivated": "Platform Owner Reactivated",
+    "platform.backup_settings_updated": "Backup Schedule Updated",
+    "platform.backup_created": "Backup Created",
+    "platform.backup_downloaded": "Backup Downloaded",
+    "platform.backup_deleted": "Backup Deleted",
+    "platform.restore_staged": "Restore Staged",
+    "platform.restore_restart_requested": "Restore Restart Requested",
+}
+AUDIT_SECRET_PATTERN = re.compile(
+    r"(?i)\b((?:[a-z0-9]+[_-])*(?:password(?:[_-]?hash)?|secret(?:[_-]?key)?|"
+    r"api[_-]?token|access[_-]?token|invitation[_-]?token|session[_-]?secret|"
+    r"token[_-]?encryption[_-]?key))"
+    r"(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
+
+
+def audit_action_label(action):
+    return AUDIT_ACTION_LABELS.get(action, action.replace(".", " ").replace("_", " ").title())
+
+
+def safe_audit_summary(summary):
+    return AUDIT_SECRET_PATTERN.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", summary)
+
+
 class AuditEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     group = models.ForeignKey(ReadingGroup, null=True, blank=True, on_delete=models.SET_NULL)
@@ -528,3 +560,11 @@ class AuditEvent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def action_label(self):
+        return audit_action_label(self.action)
+
+    @property
+    def safe_summary(self):
+        return safe_audit_summary(self.summary)
