@@ -5,8 +5,9 @@ from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import transaction
 from django.utils.text import slugify
 from django.conf import settings
+from zoneinfo import available_timezones
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import BookSubmission, CatalogEdition, ChallengeMonth, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -71,7 +72,7 @@ class AvatarFieldsMixin(forms.Form):
 class RootAuthenticationForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
-        "not_root": "The credentials entered are not authorized for developer configuration access.",
+        "not_root": "The credentials entered are not authorized for platform owner access.",
     }
 
     def confirm_login_allowed(self, user):
@@ -83,7 +84,7 @@ class RootAuthenticationForm(AuthenticationForm):
 class RegularAuthenticationForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
-        "root_account": "Developer root accounts must use the separate configuration sign-in.",
+        "root_account": "Platform owner accounts must use the separate owner sign-in.",
     }
 
     def confirm_login_allowed(self, user):
@@ -122,6 +123,12 @@ class FirstRunSetupForm(UserCreationForm):
         model = get_user_model()
         fields = ("username", "email")
 
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
+
     def save(self, commit=True):
         user = super().save(commit=False)
         user.email = self.cleaned_data["email"]
@@ -130,6 +137,130 @@ class FirstRunSetupForm(UserCreationForm):
         if commit:
             user.save()
         return user
+
+
+class PlatformOwnerInvitationForm(forms.Form):
+    current_password = forms.CharField(
+        label="Your Current Password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+        help_text="Confirm your identity before generating a full-access invitation.",
+    )
+
+    def __init__(self, *args, owner, **kwargs):
+        self.owner = owner
+        super().__init__(*args, **kwargs)
+
+    def clean_current_password(self):
+        password = self.cleaned_data["current_password"]
+        if not self.owner.check_password(password):
+            raise forms.ValidationError("Your current password is incorrect.")
+        return password
+
+
+class PlatformOwnerStatusForm(forms.Form):
+    current_password = forms.CharField(
+        label="Your Current Password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+        help_text="Confirm your identity before changing another Platform Owner's access.",
+    )
+
+    def __init__(self, *args, owner, **kwargs):
+        self.owner = owner
+        super().__init__(*args, **kwargs)
+
+    def clean_current_password(self):
+        password = self.cleaned_data["current_password"]
+        if not self.owner.check_password(password):
+            raise forms.ValidationError("Your current password is incorrect.")
+        return password
+
+
+class PlatformOwnerAcceptanceForm(UserCreationForm):
+    email = forms.EmailField()
+
+    class Meta(UserCreationForm.Meta):
+        model = get_user_model()
+        fields = ("username", "email")
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"]
+        user.is_staff = True
+        user.is_superuser = True
+        if commit:
+            user.save()
+        return user
+
+
+class PlatformBackupSettingsForm(forms.ModelForm):
+    weekdays = forms.MultipleChoiceField(
+        label="Backup Days",
+        choices=PlatformBackupSettings.Weekday.choices,
+        widget=forms.CheckboxSelectMultiple,
+    )
+
+    class Meta:
+        model = PlatformBackupSettings
+        fields = ("enabled", "weekdays", "backup_time", "retention_count")
+        labels = {
+            "enabled": "Enable Automatic Backups",
+            "backup_time": "Backup Time",
+            "retention_count": "Backups to Keep",
+        }
+        widgets = {"backup_time": forms.TimeInput(attrs={"type": "time"})}
+
+    def clean_retention_count(self):
+        count = self.cleaned_data["retention_count"]
+        if not 1 <= count <= 100:
+            raise forms.ValidationError("Keep between 1 and 100 automatic backups.")
+        return count
+
+    def clean_weekdays(self):
+        weekdays = self.cleaned_data["weekdays"]
+        if not weekdays:
+            raise forms.ValidationError("Select at least one backup day.")
+        return [int(day) for day in weekdays]
+
+
+class PlatformSettingsForm(forms.ModelForm):
+    timezone = forms.ChoiceField(
+        label="Platform Timezone",
+        choices=[(name, name) for name in sorted(available_timezones())],
+        help_text="Used for backups, audit dates, System Status, and other installation-wide timestamps. Group timezones are unchanged.",
+    )
+
+    class Meta:
+        model = PlatformSettings
+        fields = (
+            "display_name",
+            "timezone",
+            "allow_public_registration",
+            "allow_user_group_creation",
+        )
+        labels = {
+            "display_name": "Platform Display Name",
+            "allow_public_registration": "Allow Public Registration",
+            "allow_user_group_creation": "Allow Normal Accounts to Create Groups",
+        }
+        help_texts = {
+            "display_name": "The human-readable name of this installation. Northbound remains the application name.",
+            "allow_public_registration": "When disabled, existing accounts continue working but new public account creation is unavailable.",
+            "allow_user_group_creation": "When disabled, normal accounts can still join existing groups. Platform Owners can still create groups.",
+        }
+
+    def clean_display_name(self):
+        display_name = self.cleaned_data["display_name"].strip()
+        if not display_name:
+            raise forms.ValidationError("Enter a platform display name.")
+        return display_name
 
 
 class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):

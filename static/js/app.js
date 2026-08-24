@@ -102,6 +102,80 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-close-details]").forEach((button) => {
     button.addEventListener("click", () => button.closest("details")?.removeAttribute("open"));
   });
+
+  const directory = document.querySelector("[data-account-directory]");
+  const accountTable = document.querySelector("[data-account-table]");
+  if (directory && accountTable) {
+    const search = directory.querySelector("[data-account-search]");
+    const statusControls = [...directory.querySelectorAll("[data-account-status]")];
+    const rows = [...accountTable.querySelectorAll("[data-account-row]")];
+    const resultSummary = document.querySelector("[data-account-results]");
+    const filterEmpty = accountTable.querySelector("[data-filter-empty]");
+    const body = accountTable.tBodies[0];
+    let sortKey = "account";
+    let sortDirection = "asc";
+
+    const applyAccountDirectory = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      const selectedStatus = statusControls.find((control) => control.checked)?.value || "all";
+      rows.sort((left, right) => {
+        const comparison = left.dataset[sortKey].localeCompare(right.dataset[sortKey], undefined, {sensitivity: "base"});
+        return sortDirection === "asc" ? comparison : -comparison;
+      }).forEach((row) => body.insertBefore(row, filterEmpty));
+
+      let visibleCount = 0;
+      rows.forEach((row) => {
+        const identityMatches = !query || row.dataset.search.includes(query);
+        const statusMatches = selectedStatus === "all" || row.dataset.status === selectedStatus;
+        row.hidden = !(identityMatches && statusMatches);
+        if (!row.hidden) visibleCount += 1;
+      });
+      filterEmpty.hidden = visibleCount !== 0 || rows.length === 0;
+      resultSummary.textContent = `${visibleCount} of ${rows.length} accounts shown`;
+    };
+
+    search.addEventListener("input", applyAccountDirectory);
+    statusControls.forEach((control) => control.addEventListener("change", applyAccountDirectory));
+    accountTable.querySelectorAll("[data-account-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextKey = button.dataset.accountSort;
+        sortDirection = sortKey === nextKey && sortDirection === "asc" ? "desc" : "asc";
+        sortKey = nextKey;
+        accountTable.querySelectorAll("th[aria-sort]").forEach((heading) => heading.setAttribute("aria-sort", "none"));
+        button.closest("th").setAttribute("aria-sort", sortDirection === "asc" ? "ascending" : "descending");
+        applyAccountDirectory();
+      });
+    });
+    applyAccountDirectory();
+  }
+
+  const groupDirectory = document.querySelector("[data-group-directory]");
+  const groupTable = document.querySelector("[data-group-table]");
+  if (groupDirectory && groupTable) {
+    const search = groupDirectory.querySelector("[data-group-search]");
+    const statusControls = [...groupDirectory.querySelectorAll("[data-group-status]")];
+    const rows = [...groupTable.querySelectorAll("[data-group-row]")];
+    const resultSummary = document.querySelector("[data-group-results]");
+    const filterEmpty = groupTable.querySelector("[data-group-filter-empty]");
+
+    const applyGroupDirectory = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      const selectedStatus = statusControls.find((control) => control.checked)?.value || "all";
+      let visibleCount = 0;
+      rows.forEach((row) => {
+        const identityMatches = !query || row.dataset.search.includes(query);
+        const statusMatches = selectedStatus === "all" || row.dataset.status === selectedStatus;
+        row.hidden = !(identityMatches && statusMatches);
+        if (!row.hidden) visibleCount += 1;
+      });
+      filterEmpty.hidden = visibleCount !== 0 || rows.length === 0;
+      resultSummary.textContent = `${visibleCount} of ${rows.length} groups shown`;
+    };
+
+    search.addEventListener("input", applyGroupDirectory);
+    statusControls.forEach((control) => control.addEventListener("change", applyGroupDirectory));
+    applyGroupDirectory();
+  }
 });
 
 document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {

@@ -38,7 +38,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. Open `/setup/` at the configured URL to create the first administrator account. The SQLite database and uploaded media persist across image pulls and container recreation.
+Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. On a fresh installation, Northbound automatically opens the setup wizard to create the first Platform Owner. The SQLite database and uploaded media persist across image pulls and container recreation.
 
 This same container can run locally, on a LAN, on a VPS, or behind Nginx Proxy Manager, Cloudflare Tunnel, Caddy, Traefik, or another external proxy. Platform services such as Railway or Render can use the image with an externally managed PostgreSQL database and persistent media storage.
 

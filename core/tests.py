@@ -1,17 +1,22 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone as datetime_timezone
 import shutil
 import tempfile
+import os
+import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.db import connection
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from .integrations.hardcover import HardcoverLinkError, lookup_edition, parse_hardcover_url, resolve_scoring_edition, search_books
 from .integrations.secrets import decrypt_token
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -118,11 +123,12 @@ class PermissionOverrideTests(TestCase):
         self.assertRedirects(self.client.get(url), reverse("participant-list", kwargs={"group_slug": self.group.slug}))
 
 
-class DeveloperUserManagementTests(TestCase):
+class PlatformAccountManagementTests(TestCase):
     def setUp(self):
         User = get_user_model()
         self.root = User.objects.create_superuser("developer-root", "root@example.com", "root-password")
         self.reader = User.objects.create_user("managed-reader", "reader@example.com", "old-reader-password")
+        self.deactivated_reader = User.objects.create_user("archived-reader", "archived@example.com", "old-reader-password", is_active=False)
         self.group = ReadingGroup.objects.create(name="Managed Group", slug="managed-group")
         self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Managed Reader")
 
@@ -134,6 +140,30 @@ class DeveloperUserManagementTests(TestCase):
         detail = self.client.get(reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
         self.assertContains(detail, "Managed Group")
         self.assertContains(detail, reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.membership.pk}))
+
+    def test_dashboard_account_summary_links_to_filtered_directory(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-dashboard"))
+        self.assertEqual(response.context["active_account_count"], 1)
+        self.assertEqual(response.context["deactivated_account_count"], 1)
+        self.assertContains(response, reverse("config-user-list"))
+        self.assertContains(response, "Active")
+        self.assertContains(response, "Deactivated")
+        self.assertNotContains(response, "Challenge Months")
+        self.assertNotContains(response, "User Management")
+
+    def test_account_directory_exposes_identity_only_live_filters_and_sorting(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-user-list"))
+        self.assertContains(response, 'data-account-search')
+        self.assertContains(response, 'value="active"')
+        self.assertContains(response, 'value="deactivated"')
+        self.assertContains(response, 'value="all"')
+        self.assertContains(response, 'data-account-sort="account"')
+        self.assertContains(response, 'data-account-sort="status"')
+        self.assertContains(response, 'data-search="managed-reader  reader@example.com"')
+        self.assertNotContains(response, 'data-search="managed-reader  reader@example.com active"')
+        self.assertContains(response, "Deactivated")
 
     def test_temporary_password_forces_replacement_and_is_audited(self):
         self.client.force_login(self.root)
@@ -169,6 +199,122 @@ class DeveloperUserManagementTests(TestCase):
         self.client.post(url)
         self.reader.refresh_from_db()
         self.assertTrue(self.reader.is_active)
+
+
+class PlatformGroupManagementTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.root = User.objects.create_superuser("group-platform-owner", "root@example.com", "root-password")
+        self.owner = User.objects.create_user("central-owner", "owner@example.com", "owner-password")
+        self.reader = User.objects.create_user("central-reader", "reader@example.com", "reader-password")
+        self.group = ReadingGroup.objects.create(name="Central Reading Group", slug="central-reading-group")
+        self.inactive_group = ReadingGroup.objects.create(name="Inactive Archive", slug="inactive-archive", is_active=False)
+        self.owner_membership = Membership.objects.create(
+            group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Central Owner"
+        )
+        self.reader_membership = Membership.objects.create(
+            group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Central Reader"
+        )
+        self.month = ChallengeMonth.objects.create(
+            group=self.group,
+            name="August Challenge",
+            starts_on=date(2026, 8, 1),
+            ends_on=date(2026, 8, 31),
+            status=ChallengeMonth.Status.OPEN,
+        )
+        AuditEvent.objects.create(
+            actor=self.owner,
+            group=self.group,
+            action="group.test_activity",
+            object_type="ReadingGroup",
+            object_id=str(self.group.pk),
+            summary="Updated the group for directory testing.",
+        )
+
+    def test_group_directory_lists_all_groups_with_identity_only_filters_and_summaries(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse("config-group-list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Central Reading Group")
+        self.assertContains(response, "Inactive Archive")
+        self.assertContains(response, "Central Owner")
+        self.assertContains(response, "August Challenge")
+        self.assertContains(response, "Updated the group for directory testing.")
+        self.assertContains(response, 'data-search="central reading group central-reading-group"')
+        self.assertNotContains(response, 'data-search="central reading group central-reading-group active"')
+        self.assertContains(response, 'value="active"')
+        self.assertContains(response, 'value="inactive"')
+        self.assertContains(response, 'value="all"')
+
+        groups = {group.slug: group for group in response.context["groups"]}
+        self.assertEqual(groups[self.group.slug].participant_count, 2)
+        self.assertEqual(groups[self.group.slug].current_challenge, self.month)
+        self.assertEqual(groups[self.group.slug].directory_owners, [self.owner_membership])
+
+    def test_dashboard_and_overview_link_to_central_group_management_without_membership(self):
+        self.client.force_login(self.root)
+        dashboard = self.client.get(reverse("config-dashboard"))
+        self.assertContains(dashboard, reverse("config-group-list"))
+        overview = self.client.get(reverse("config-group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertContains(overview, reverse("group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertContains(overview, "Central Owner")
+        self.assertFalse(Membership.objects.filter(group=self.group, user=self.root).exists())
+
+        inactive_overview = self.client.get(
+            reverse("config-group-detail", kwargs={"group_slug": self.inactive_group.slug})
+        )
+        self.assertEqual(inactive_overview.status_code, 200)
+        self.assertContains(inactive_overview, "Reactivate")
+
+    def test_platform_owner_creation_uses_normal_group_rules_without_hidden_membership(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Platform Created Group",
+            "timezone": "America/New_York",
+            "announcement": "",
+            "hardcover_api_token": "",
+        })
+        group = ReadingGroup.objects.get(name="Platform Created Group")
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": group.slug}))
+        self.assertEqual(group.slug, "platform-created-group")
+        self.assertEqual(len(group.join_code), 6)
+        self.assertFalse(Membership.objects.filter(group=group, user=self.root).exists())
+        self.assertFalse(group.memberships.exists())
+        self.assertTrue(AuditEvent.objects.filter(action="group.created", group=group, actor=self.root).exists())
+
+    def test_deactivation_and_reactivation_preserve_group_url_and_history_and_are_audited(self):
+        self.client.force_login(self.root)
+        url = reverse("config-group-status-toggle", kwargs={"group_slug": self.group.slug})
+        confirmation = self.client.get(url)
+        self.assertContains(confirmation, "Deactivate Central Reading Group?")
+        self.assertTrue(ReadingGroup.objects.get(pk=self.group.pk).is_active)
+
+        response = self.client.post(url, {"reason": "Season complete"})
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": self.group.slug}))
+        self.group.refresh_from_db()
+        self.assertFalse(self.group.is_active)
+        self.assertEqual(self.group.slug, "central-reading-group")
+        self.assertTrue(Membership.objects.filter(pk=self.owner_membership.pk).exists())
+        self.assertTrue(Membership.objects.filter(pk=self.reader_membership.pk).exists())
+        self.assertTrue(ChallengeMonth.objects.filter(pk=self.month.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(action="group.deactivated", group=self.group).exists())
+
+        self.client.post(url)
+        self.group.refresh_from_db()
+        self.assertTrue(self.group.is_active)
+        self.assertTrue(AuditEvent.objects.filter(action="group.reactivated", group=self.group).exists())
+
+    def test_regular_accounts_cannot_use_central_group_management(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("config-group-list")).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse("config-group-detail", kwargs={"group_slug": self.group.slug})).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(reverse("config-group-status-toggle", kwargs={"group_slug": self.group.slug})).status_code,
+            403,
+        )
 
 
 class HardcoverCatalogServiceTests(TestCase):
@@ -304,7 +450,12 @@ class HardcoverConnectionTests(TestCase):
 
 
 class FirstRunSetupTests(TestCase):
-    def test_setup_creates_only_hidden_superuser(self):
+    def test_fresh_install_redirects_to_setup_wizard(self):
+        response = self.client.get(reverse("dashboard"))
+        self.assertRedirects(response, reverse("setup"), fetch_redirect_response=False)
+        self.assertEqual(self.client.get(reverse("setup")).status_code, 200)
+
+    def test_setup_creates_initial_platform_owner(self):
         response = self.client.post(reverse("setup"), {
             "username": "taylor",
             "email": "taylor@example.com",
@@ -314,8 +465,19 @@ class FirstRunSetupTests(TestCase):
         self.assertRedirects(response, reverse("config-dashboard"))
         user = get_user_model().objects.get(username="taylor")
         self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
         self.assertFalse(ReadingGroup.objects.exists())
         self.assertFalse(Membership.objects.filter(user=user).exists())
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=user,
+            action="platform.initial_owner_created",
+            object_id=str(user.pk),
+        ).exists())
+
+    def test_setup_is_unavailable_after_an_owner_exists(self):
+        get_user_model().objects.create_superuser("existing-owner", "owner@example.com", "test-password-482!")
+        response = self.client.get(reverse("setup"))
+        self.assertRedirects(response, reverse("config-login"))
 
 
 class MyStatsTests(TestCase):
@@ -725,13 +887,13 @@ class AccountAndConfigurationAccessTests(TestCase):
         self.root = User.objects.create_superuser("platform-root", "root@example.com", "root-test-password-482!")
         self.reader = User.objects.create_user("account-reader", "reader@example.com", "reader-test-password-482!")
 
-    def test_regular_user_cannot_use_developer_login(self):
+    def test_regular_user_cannot_use_platform_owner_login(self):
         response = self.client.post(reverse("config-login"), {
             "username": "account-reader",
             "password": "reader-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "not authorized for developer configuration access")
+        self.assertContains(response, "not authorized for platform owner access")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_root_cannot_use_regular_login(self):
@@ -740,7 +902,7 @@ class AccountAndConfigurationAccessTests(TestCase):
             "password": "root-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "must use the separate configuration sign-in")
+        self.assertContains(response, "must use the separate owner sign-in")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_regular_authenticated_user_cannot_open_configuration_center(self):
@@ -755,9 +917,159 @@ class AccountAndConfigurationAccessTests(TestCase):
         })
         self.assertRedirects(response, reverse("config-dashboard"))
         response = self.client.get(reverse("config-dashboard"))
-        self.assertContains(response, "Configuration Center")
+        self.assertContains(response, "Platform Administration")
         from .models import AuditEvent
         self.assertTrue(AuditEvent.objects.filter(actor=self.root, action="platform.root_login").exists())
+
+    def test_owner_can_generate_and_redeem_one_time_invitation(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-create"), {
+            "current_password": "root-test-password-482!",
+        })
+        self.assertEqual(response.status_code, 200)
+        invitation = PlatformOwnerInvitation.objects.get()
+        invitation_url = response.context["invitation_url"]
+        token = invitation_url.rstrip("/").rsplit("/", 1)[-1]
+        self.assertNotEqual(invitation.token_hash, token)
+        self.assertAlmostEqual(
+            invitation.expires_at,
+            timezone.now() + timedelta(days=7),
+            delta=timedelta(seconds=5),
+        )
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_invitation_created",
+            object_id=str(invitation.pk),
+        ).exists())
+
+        self.client.logout()
+        accept_url = reverse("platform-owner-accept", kwargs={"token": token})
+        response = self.client.post(accept_url, {
+            "username": "second-owner",
+            "email": "second-owner@example.com",
+            "password1": "second-owner-test-password-739!",
+            "password2": "second-owner-test-password-739!",
+        })
+        self.assertRedirects(response, reverse("config-dashboard"))
+        second_owner = get_user_model().objects.get(username="second-owner")
+        self.assertTrue(second_owner.is_superuser)
+        self.assertTrue(second_owner.is_staff)
+        self.assertFalse(Membership.objects.filter(user=second_owner).exists())
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.redeemed_by, second_owner)
+        self.assertIsNotNone(invitation.redeemed_at)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=second_owner,
+            action="platform.owner_invitation_redeemed",
+            object_id=str(invitation.pk),
+        ).exists())
+        self.client.logout()
+        self.assertEqual(self.client.get(accept_url).status_code, 410)
+
+    def test_generating_invitation_requires_current_owner_password(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-create"), {
+            "current_password": "wrong-password",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your current password is incorrect")
+        self.assertFalse(PlatformOwnerInvitation.objects.exists())
+
+    def test_owner_can_revoke_unused_invitation(self):
+        invitation, token = PlatformOwnerInvitation.issue(self.root)
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("platform-owner-invitation-revoke", kwargs={"pk": invitation.pk}))
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.revoked_by, self.root)
+        self.assertIsNotNone(invitation.revoked_at)
+        self.client.logout()
+        self.assertEqual(self.client.get(reverse("platform-owner-accept", kwargs={"token": token})).status_code, 410)
+
+    def test_expired_invitation_cannot_be_redeemed(self):
+        invitation, token = PlatformOwnerInvitation.issue(self.root)
+        invitation.expires_at = timezone.now() - timedelta(seconds=1)
+        invitation.save(update_fields=["expires_at"])
+        response = self.client.get(reverse("platform-owner-accept", kwargs={"token": token}))
+        self.assertEqual(response.status_code, 410)
+
+    def test_owner_can_deactivate_and_reactivate_another_owner_with_password_confirmation(self):
+        second_owner = get_user_model().objects.create_superuser(
+            "lifecycle-owner", "lifecycle@example.com", "lifecycle-owner-password-739!"
+        )
+        historical_event = AuditEvent.objects.create(
+            actor=second_owner,
+            action="platform.lifecycle_history",
+            object_type="User",
+            object_id=str(second_owner.pk),
+            summary="Historical owner activity.",
+        )
+        self.client.force_login(self.root)
+        status_url = reverse("platform-owner-status-toggle", kwargs={"pk": second_owner.pk})
+        listing = self.client.get(reverse("platform-owner-list"))
+        self.assertContains(listing, status_url)
+
+        response = self.client.post(status_url, {"current_password": "root-test-password-482!"})
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        second_owner.refresh_from_db()
+        self.assertFalse(second_owner.is_active)
+        self.assertTrue(get_user_model().objects.filter(pk=second_owner.pk, is_superuser=True).exists())
+        historical_event.refresh_from_db()
+        self.assertEqual(historical_event.actor, second_owner)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_deactivated",
+            object_id=str(second_owner.pk),
+        ).exists())
+
+        response = self.client.post(status_url, {"current_password": "root-test-password-482!"})
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        second_owner.refresh_from_db()
+        self.assertTrue(second_owner.is_active)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.root,
+            action="platform.owner_reactivated",
+            object_id=str(second_owner.pk),
+        ).exists())
+
+    def test_owner_status_change_rejects_wrong_current_password(self):
+        second_owner = get_user_model().objects.create_superuser(
+            "protected-owner", "protected@example.com", "protected-owner-password-739!"
+        )
+        self.client.force_login(self.root)
+        response = self.client.post(
+            reverse("platform-owner-status-toggle", kwargs={"pk": second_owner.pk}),
+            {"current_password": "wrong-password"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your current password is incorrect")
+        second_owner.refresh_from_db()
+        self.assertTrue(second_owner.is_active)
+        self.assertFalse(AuditEvent.objects.filter(action="platform.owner_deactivated").exists())
+
+    def test_owner_cannot_deactivate_self_or_leave_no_active_owner(self):
+        self.client.force_login(self.root)
+        response = self.client.post(
+            reverse("platform-owner-status-toggle", kwargs={"pk": self.root.pk}),
+            {"current_password": "root-test-password-482!"},
+        )
+        self.assertRedirects(response, reverse("platform-owner-list"))
+        self.root.refresh_from_db()
+        self.assertTrue(self.root.is_active)
+        self.assertEqual(
+            get_user_model().objects.filter(is_superuser=True, is_active=True).count(),
+            1,
+        )
+        self.assertFalse(AuditEvent.objects.filter(action="platform.owner_deactivated").exists())
+
+    def test_regular_user_cannot_manage_platform_owners(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-owner-list")).status_code, 403)
+        self.assertEqual(self.client.get(reverse("platform-owner-create")).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse("platform-owner-status-toggle", kwargs={"pk": self.root.pk})).status_code,
+            403,
+        )
 
     def test_user_can_update_account_and_change_password(self):
         self.client.force_login(self.reader)
@@ -780,6 +1092,791 @@ class AccountAndConfigurationAccessTests(TestCase):
         self.reader.refresh_from_db()
         self.assertTrue(self.reader.check_password("new-reader-test-password-739!"))
         self.assertIn("_auth_user_id", self.client.session)
+
+
+class PlatformSettingsTests(TransactionTestCase):
+    def setUp(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Northbound's in-app backup lifecycle is SQLite-only.")
+        self.media_root = tempfile.mkdtemp()
+        self.data_root = tempfile.mkdtemp()
+        self.data_root_patch = patch("core.backups.data_root", return_value=Path(self.data_root))
+        self.data_root_patch.start()
+        self.override = override_settings(MEDIA_ROOT=self.media_root)
+        self.override.enable()
+        self.owner = get_user_model().objects.create_superuser(
+            "backup-owner", "backup@example.com", "backup-test-password-482!"
+        )
+
+    def tearDown(self):
+        self.override.disable()
+        self.data_root_patch.stop()
+        shutil.rmtree(self.media_root, ignore_errors=True)
+        shutil.rmtree(self.data_root, ignore_errors=True)
+
+    def test_owner_can_create_and_then_download_stored_manual_backup(self):
+        with open(f"{self.media_root}/profile-picture.txt", "wb") as media_file:
+            media_file.write(b"profile-picture")
+        Path(self.data_root, ".env").write_text("DJANGO_SECRET_KEY=must-not-be-backed-up")
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-backup-create"))
+        self.assertRedirects(response, reverse("platform-backups"))
+        backup_path = next(Path(self.data_root, "backups").glob("northbound-manual-*.zip"))
+        with zipfile.ZipFile(backup_path) as backup_zip:
+            self.assertIn("northbound.sqlite3", backup_zip.namelist())
+            self.assertIn("media/profile-picture.txt", backup_zip.namelist())
+            self.assertIn("northbound-backup.json", backup_zip.namelist())
+            self.assertNotIn(".env", backup_zip.namelist())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_created", actor=self.owner).exists())
+
+        listing = self.client.get(reverse("platform-backups"))
+        self.assertContains(listing, "Stored Backups")
+        self.assertContains(listing, "Manual")
+        self.assertContains(listing, reverse("stored-backup-restore", kwargs={"filename": backup_path.name}))
+        self.assertContains(listing, reverse("stored-backup-download", kwargs={"filename": backup_path.name}))
+        self.assertContains(listing, reverse("stored-backup-delete", kwargs={"filename": backup_path.name}))
+
+        download = self.client.get(reverse("stored-backup-download", kwargs={"filename": backup_path.name}))
+        self.assertEqual(download.status_code, 200)
+        self.assertGreater(len(b"".join(download.streaming_content)), 0)
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_downloaded", actor=self.owner).exists())
+
+    def test_stored_backup_delete_requires_confirmation(self):
+        from .backups import create_stored_backup
+
+        backup_path = create_stored_backup()
+        self.client.force_login(self.owner)
+        url = reverse("stored-backup-delete", kwargs={"filename": backup_path.name})
+        confirmation = self.client.get(url)
+        self.assertContains(confirmation, "Delete This Backup?")
+        self.assertTrue(backup_path.exists())
+        response = self.client.post(url)
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertFalse(backup_path.exists())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.backup_deleted", actor=self.owner).exists())
+
+    @override_settings(NORTHBOUND_WEB_RESTART=False)
+    def test_stored_backup_restore_requires_password_and_restore_confirmation(self):
+        from .backups import create_stored_backup, pending_restore_path
+
+        backup_path = create_stored_backup()
+        self.client.force_login(self.owner)
+        url = reverse("stored-backup-restore", kwargs={"filename": backup_path.name})
+        response = self.client.post(url, {
+            "current_password": "wrong-password",
+            "confirmation": "RESTORE",
+        })
+        self.assertContains(response, "Your current password is incorrect")
+        self.assertFalse(pending_restore_path().exists())
+        response = self.client.post(url, {
+            "current_password": "backup-test-password-482!",
+            "confirmation": "not-restore",
+        })
+        self.assertContains(response, "Enter RESTORE exactly")
+        self.assertFalse(pending_restore_path().exists())
+        response = self.client.post(url, {
+            "current_password": "backup-test-password-482!",
+            "confirmation": "RESTORE",
+        })
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertTrue(pending_restore_path().exists())
+        self.assertTrue(AuditEvent.objects.filter(action="platform.restore_staged", actor=self.owner).exists())
+
+    def test_automatic_backup_defaults_and_schedule_are_configurable(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-backups"))
+        self.assertEqual(response.status_code, 200)
+        backup_settings = PlatformBackupSettings.load()
+        self.assertTrue(backup_settings.enabled)
+        self.assertEqual(backup_settings.weekdays, [PlatformBackupSettings.Weekday.MONDAY])
+        self.assertEqual(backup_settings.backup_time.hour, 1)
+        self.assertEqual(backup_settings.retention_count, 5)
+        response = self.client.post(reverse("platform-backups"), {
+            "enabled": "on",
+            "weekdays": [PlatformBackupSettings.Weekday.MONDAY, PlatformBackupSettings.Weekday.FRIDAY],
+            "backup_time": "03:30",
+            "retention_count": 9,
+        })
+        self.assertRedirects(response, reverse("platform-backups"))
+        backup_settings.refresh_from_db()
+        self.assertEqual(backup_settings.weekdays, [PlatformBackupSettings.Weekday.MONDAY, PlatformBackupSettings.Weekday.FRIDAY])
+        self.assertEqual(backup_settings.backup_time.hour, 3)
+        self.assertEqual(backup_settings.retention_count, 9)
+
+    def test_retention_removes_only_oldest_automatic_backups(self):
+        backup_directory = Path(self.data_root, "backups")
+        backup_directory.mkdir()
+        manual = backup_directory / "northbound-manual-20260823-010000-000000.zip"
+        automatic_old = backup_directory / "northbound-automatic-20260821-010000-000000.zip"
+        automatic_new = backup_directory / "northbound-automatic-20260822-010000-000000.zip"
+        for index, path in enumerate((automatic_old, automatic_new, manual), start=1):
+            path.write_bytes(b"backup")
+            os.utime(path, (index, index))
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-backups"), {
+            "enabled": "on",
+            "weekdays": [PlatformBackupSettings.Weekday.MONDAY],
+            "backup_time": "01:00",
+            "retention_count": 1,
+        })
+        self.assertRedirects(response, reverse("platform-backups"))
+        self.assertFalse(automatic_old.exists())
+        self.assertTrue(automatic_new.exists())
+        self.assertTrue(manual.exists())
+
+    def test_scheduler_records_success_and_latest_failure(self):
+        from django.core.management import call_command
+
+        backup_settings = PlatformBackupSettings.load()
+        local_now = timezone.localtime()
+        backup_settings.weekdays = [local_now.weekday()]
+        backup_settings.backup_time = (local_now - timedelta(minutes=1)).time().replace(tzinfo=None)
+        backup_settings.last_run_date = None
+        backup_settings.save()
+        with patch("core.management.commands.run_backup_scheduler.create_automatic_backup", return_value=Path("backup.zip")):
+            call_command("run_backup_scheduler", "--once")
+        backup_settings.refresh_from_db()
+        self.assertIsNotNone(backup_settings.last_success_at)
+
+        backup_settings.last_run_date = None
+        backup_settings.save(update_fields=["last_run_date"])
+        with patch("core.management.commands.run_backup_scheduler.create_automatic_backup", side_effect=OSError("disk full")):
+            call_command("run_backup_scheduler", "--once")
+        backup_settings.refresh_from_db()
+        self.assertIsNotNone(backup_settings.last_failure_at)
+        self.assertEqual(backup_settings.last_error, "disk full")
+        self.assertIsNone(backup_settings.last_run_date)
+
+    def test_all_weekdays_produce_a_daily_next_run_and_status_is_exposed(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.weekdays = list(range(7))
+        backup_settings.backup_time = (timezone.localtime() + timedelta(minutes=1)).time().replace(tzinfo=None)
+        backup_settings.last_success_at = timezone.now() - timedelta(hours=2)
+        backup_settings.last_failure_at = timezone.now() - timedelta(hours=1)
+        backup_settings.last_error = "Example failure"
+        backup_settings.save()
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-backups"))
+        self.assertIsNotNone(response.context["next_scheduled_run"])
+        self.assertContains(response, str(Path(self.data_root, "backups")))
+        self.assertContains(response, "Example failure")
+
+    def test_backup_validation_rejects_invalid_metadata_and_unexpected_files(self):
+        from .backups import create_stored_backup, validate_backup
+
+        valid_backup = create_stored_backup()
+        with zipfile.ZipFile(valid_backup, "a") as backup_zip:
+            backup_zip.writestr(".env", "DJANGO_SECRET_KEY=unexpected")
+        with self.assertRaisesMessage(ValueError, "unexpected file"):
+            validate_backup(valid_backup)
+
+        invalid_metadata = Path(self.data_root, "invalid-metadata.zip")
+        with zipfile.ZipFile(invalid_metadata, "w") as backup_zip:
+            backup_zip.writestr("northbound.sqlite3", b"not-reached")
+            backup_zip.writestr("northbound-backup.json", '{"database": "sqlite"}')
+        with self.assertRaisesMessage(ValueError, "invalid creation time"):
+            validate_backup(invalid_metadata)
+
+
+class PlatformSystemStatusTests(TestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_directory.cleanup)
+        self.owner = get_user_model().objects.create_superuser(
+            "status-owner", "status@example.com", "status-owner-password-482!"
+        )
+        self.reader = get_user_model().objects.create_user(
+            "status-reader", "reader@example.com", "reader-password-482!"
+        )
+
+    def test_platform_owner_sees_read_only_status_without_secrets(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.last_success_at = timezone.now() - timedelta(hours=1)
+        backup_settings.save(update_fields=["last_success_at"])
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="https://northbound.example.com",
+            NORTHBOUND_TRUST_PROXY_HEADERS=True,
+            TIME_ZONE="America/New_York",
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+            SECRET_KEY="system-status-secret-key",
+            TOKEN_ENCRYPTION_KEY="system-status-token-key",
+        ):
+            self.client.force_login(self.owner)
+            response = self.client.get(reverse("platform-system-status"))
+            settings_page = self.client.get(reverse("platform-settings"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "2026.8-test")
+        expected_backend = "SQLite" if connection.vendor == "sqlite" else "PostgreSQL"
+        self.assertContains(response, expected_backend)
+        self.assertContains(response, "America/New_York")
+        self.assertContains(response, "https://northbound.example.com")
+        self.assertContains(response, "Trusted proxy headers enabled")
+        self.assertContains(response, str(Path(self.media_directory.name).resolve()))
+        self.assertContains(response, "Migration State")
+        self.assertContains(response, "Up to date")
+        self.assertContains(response, "Backup Scheduler")
+        if connection.vendor == "sqlite":
+            self.assertContains(response, "Successful")
+        else:
+            self.assertContains(response, "Not applicable for PostgreSQL")
+            self.assertContains(response, "Managed outside Northbound")
+        self.assertContains(response, "Storage Availability")
+        self.assertNotContains(response, "system-status-secret-key")
+        self.assertNotContains(response, "system-status-token-key")
+        self.assertNotContains(response, "Restart Northbound")
+        self.assertNotContains(response, "Run Migrations")
+        self.assertNotContains(response, "Repair Database")
+
+        self.assertContains(settings_page, reverse("platform-system-status"))
+
+    def test_regular_account_cannot_access_system_status(self):
+        self.client.force_login(self.reader)
+        response = self.client.get(reverse("platform-system-status"))
+        self.assertEqual(response.status_code, 403)
+        self.assertNotContains(response, "Database Location", status_code=403)
+
+    def test_actionable_warnings_cover_proxy_debug_scheduler_and_backup_failure(self):
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.enabled = True
+        backup_settings.last_success_at = timezone.now() - timedelta(days=1)
+        backup_settings.last_failure_at = timezone.now()
+        backup_settings.last_error = "sensitive implementation detail remains on Backups only"
+        backup_settings.save()
+        self.client.force_login(self.owner)
+        with override_settings(
+            NORTHBOUND_VERSION="development",
+            NORTHBOUND_URL="https://northbound.example.com",
+            NORTHBOUND_TRUST_PROXY_HEADERS=False,
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=True,
+        ):
+            response = self.client.get(reverse("platform-system-status"))
+
+        self.assertContains(response, "Development build")
+        self.assertContains(response, "HTTPS proxy headers are not trusted")
+        self.assertContains(response, "Debug mode is enabled")
+        if connection.vendor == "sqlite":
+            self.assertContains(response, "The latest automatic backup failed")
+            self.assertContains(response, "Failed — review Settings → Backups")
+        else:
+            self.assertNotContains(response, "The latest automatic backup failed")
+            self.assertContains(response, "Not applicable for PostgreSQL")
+        self.assertNotContains(response, "sensitive implementation detail")
+
+    @patch("core.system_status.MigrationExecutor")
+    def test_pending_migrations_are_reported_without_running_them(self, executor_class):
+        executor = executor_class.return_value
+        executor.loader.graph.leaf_nodes.return_value = [("core", "0025_backup_operational_status")]
+        executor.migration_plan.return_value = [object(), object()]
+        self.client.force_login(self.owner)
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="http://localhost:8000",
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+        ):
+            response = self.client.get(reverse("platform-system-status"))
+
+        self.assertContains(response, "2 pending")
+        self.assertContains(response, "Database migrations are pending")
+        executor.migration_plan.assert_called_once()
+
+    @patch("core.system_status._migration_status", return_value={"label": "Up to date", "pending_count": 0})
+    @patch("core.system_status.connection")
+    def test_postgresql_status_never_displays_database_credentials(self, status_connection, _migration_status):
+        from .system_status import build_system_status
+
+        status_connection.vendor = "postgresql"
+        status_connection.settings_dict = {
+            "HOST": "database.internal",
+            "PORT": "5432",
+            "NAME": "northbound",
+            "USER": "private-database-user",
+            "PASSWORD": "private-database-password",
+        }
+        with override_settings(
+            NORTHBOUND_VERSION="2026.8-test",
+            NORTHBOUND_URL="http://localhost:8000",
+            NORTHBOUND_TRUST_PROXY_HEADERS=False,
+            MEDIA_ROOT=Path(self.media_directory.name),
+            DEBUG=False,
+        ):
+            status = build_system_status()
+
+        self.assertEqual(status["database_backend"], "PostgreSQL")
+        self.assertEqual(status["database_location"], "database.internal:5432 / northbound")
+        rendered_values = repr(status)
+        self.assertNotIn("private-database-user", rendered_values)
+        self.assertNotIn("private-database-password", rendered_values)
+
+
+class PlatformAuditActivityTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "audit-owner", "audit-owner@example.com", "audit-owner-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "audit-reader", "audit-reader@example.com", "audit-reader-password-482!"
+        )
+        self.deactivated_actor = User.objects.create_user(
+            "former-operator", "former@example.com", "former-password-482!", is_active=False
+        )
+        self.group = ReadingGroup.objects.create(name="Audit Group", slug="audit-group")
+        self.other_group = ReadingGroup.objects.create(name="Other Group", slug="other-audit-group")
+
+    def create_event(self, *, actor=None, group=None, action="group.updated", summary="Audit event", created_at=None):
+        event = AuditEvent.objects.create(
+            actor=actor,
+            group=group,
+            action=action,
+            object_type="ReadingGroup",
+            object_id=str(group.pk) if group else "",
+            summary=summary,
+        )
+        if created_at:
+            AuditEvent.objects.filter(pk=event.pk).update(created_at=created_at)
+            event.refresh_from_db()
+        return event
+
+    @override_settings(TIME_ZONE="America/New_York")
+    def test_filters_combine_and_use_platform_local_date(self):
+        target = self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="group.updated",
+            summary="Resolved support case Alpha",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.other_group,
+            action="group.updated",
+            summary="Resolved support case Alpha in another group",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="group.created",
+            summary="Resolved support case Alpha with another action",
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc),
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"), {
+            "search": "support case Alpha",
+            "action": "group.updated",
+            "actor": str(self.deactivated_actor.pk),
+            "group": str(self.group.pk),
+            "date": "2026-08-23",
+        })
+
+        self.assertEqual(list(response.context["page_obj"].object_list), [target])
+        self.assertContains(response, "former-operator")
+        self.assertContains(response, "Deactivated")
+        self.assertContains(response, "Group Updated")
+        self.assertContains(response, "group.updated")
+        self.assertContains(response, "Clear Filters")
+
+    def test_summary_is_sanitized_without_mutating_historical_record(self):
+        event = self.create_event(
+            actor=self.owner,
+            summary="Investigated API_TOKEN=do-not-display and DJANGO_SECRET_KEY=also-private for support.",
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"))
+
+        self.assertContains(response, "API_TOKEN=[REDACTED]")
+        self.assertNotContains(response, "do-not-display")
+        self.assertContains(response, "DJANGO_SECRET_KEY=[REDACTED]")
+        self.assertNotContains(response, "also-private")
+        event.refresh_from_db()
+        self.assertIn("do-not-display", event.summary)
+
+    def test_server_side_pagination_preserves_search(self):
+        for number in range(51):
+            self.create_event(actor=self.owner, summary=f"Paged support record {number}")
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit"), {"search": "Paged support record"})
+
+        self.assertEqual(response.context["page_obj"].paginator.count, 51)
+        self.assertEqual(len(response.context["events"]), 50)
+        self.assertContains(response, "Page 1 of 2")
+        self.assertContains(response, "search=Paged+support+record&amp;page=2")
+
+    def test_filtered_csv_export_contains_safe_friendly_and_stable_fields(self):
+        self.create_event(
+            actor=self.deactivated_actor,
+            group=self.group,
+            action="platform.root_login",
+            summary="Support archive API_TOKEN=never-export-this",
+        )
+        self.create_event(actor=self.owner, action="group.created", summary="Unrelated event")
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("config-audit-export"), {
+            "search": "Support archive",
+            "action": "platform.root_login",
+        })
+        content = response.content.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("northbound-audit-activity-", response["Content-Disposition"])
+        self.assertIn("Platform Owner Signed In", content)
+        self.assertIn("platform.root_login", content)
+        self.assertIn("former-operator", content)
+        self.assertIn("Audit Group", content)
+        self.assertIn("API_TOKEN=[REDACTED]", content)
+        self.assertNotIn("never-export-this", content)
+        self.assertNotIn("Unrelated event", content)
+
+    def test_audit_page_and_export_are_platform_owner_only(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("config-audit")).status_code, 403)
+        self.assertEqual(self.client.get(reverse("config-audit-export")).status_code, 403)
+
+
+class GeneralSettingsTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "settings-owner", "settings-owner@example.com", "settings-owner-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "settings-reader", "settings-reader@example.com", "settings-reader-password-482!"
+        )
+        self.group = ReadingGroup.objects.create(
+            name="Existing Group", slug="existing-settings-group", timezone="America/Chicago"
+        )
+
+    def test_owner_updates_all_runtime_safe_settings_with_audit_history(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-general-settings"), {
+            "display_name": "Deep North Readers",
+            "timezone": "America/Los_Angeles",
+        })
+
+        self.assertRedirects(response, reverse("platform-general-settings"))
+        platform_settings = PlatformSettings.load()
+        self.assertEqual(platform_settings.display_name, "Deep North Readers")
+        self.assertEqual(platform_settings.timezone, "America/Los_Angeles")
+        self.assertFalse(platform_settings.allow_public_registration)
+        self.assertFalse(platform_settings.allow_user_group_creation)
+        self.group.refresh_from_db()
+        self.assertEqual(self.group.timezone, "America/Chicago")
+
+        event = AuditEvent.objects.get(action="platform.general_settings_updated")
+        self.assertEqual(event.actor, self.owner)
+        self.assertIn("Platform display name changed from My Northbound to Deep North Readers", event.summary)
+        self.assertIn("Platform timezone changed from America/New_York to America/Los_Angeles", event.summary)
+        self.assertIn("Public registration changed from Enabled to Disabled", event.summary)
+        self.assertIn("Normal account group creation changed from Enabled to Disabled", event.summary)
+
+        response = self.client.get(reverse("config-dashboard"))
+        self.assertContains(response, "Deep North Readers")
+        self.client.logout()
+        self.assertContains(self.client.get(reverse("login")), "Deep North Readers")
+
+    def test_invalid_timezone_is_rejected_and_regular_accounts_cannot_manage_settings(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("platform-general-settings"), {
+            "display_name": "Invalid Timezone Test",
+            "timezone": "Mars/Olympus_Mons",
+            "allow_public_registration": "on",
+            "allow_user_group_creation": "on",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Select a valid choice")
+        self.assertFalse(AuditEvent.objects.filter(action="platform.general_settings_updated").exists())
+
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-general-settings")).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-general-settings"), {}).status_code, 403)
+
+    def test_disabled_registration_blocks_direct_access_but_existing_accounts_still_sign_in(self):
+        platform_settings = PlatformSettings.load()
+        platform_settings.allow_public_registration = False
+        platform_settings.save(update_fields=["allow_public_registration"])
+
+        response = self.client.get(reverse("register"))
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, "Registration Unavailable", status_code=403)
+        response = self.client.post(reverse("register"), {
+            "username": "blocked-registration",
+            "email": "blocked@example.com",
+            "password1": "blocked-registration-password-482!",
+            "password2": "blocked-registration-password-482!",
+        })
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(get_user_model().objects.filter(username="blocked-registration").exists())
+        self.assertTrue(self.client.login(username=self.reader.username, password="settings-reader-password-482!"))
+
+    def test_group_creation_policy_blocks_normal_accounts_but_preserves_joining_and_owner_creation(self):
+        platform_settings = PlatformSettings.load()
+        platform_settings.allow_user_group_creation = False
+        platform_settings.save(update_fields=["allow_user_group_creation"])
+        self.group.regenerate_access_code()
+        self.group.save(update_fields=["join_code", "join_code_hash", "join_code_hint"])
+
+        self.client.force_login(self.reader)
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertNotContains(dashboard, reverse("group-create"))
+        self.assertContains(dashboard, reverse("group-join"))
+        self.assertEqual(self.client.get(reverse("group-create")).status_code, 403)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Blocked Group",
+            "timezone": "America/New_York",
+        })
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ReadingGroup.objects.filter(name="Blocked Group").exists())
+
+        response = self.client.post(reverse("group-join"), {"access_code": self.group.join_code})
+        self.assertRedirects(response, reverse("group-detail", kwargs={"group_slug": self.group.slug}))
+        self.assertTrue(Membership.objects.filter(group=self.group, user=self.reader, is_active=True).exists())
+
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse("group-create"), {
+            "name": "Platform Created Group",
+            "timezone": "America/New_York",
+        })
+        platform_group = ReadingGroup.objects.get(name="Platform Created Group")
+        self.assertRedirects(response, reverse("config-group-detail", kwargs={"group_slug": platform_group.slug}))
+        self.assertFalse(Membership.objects.filter(group=platform_group, user=self.owner).exists())
+
+    @override_settings(TIME_ZONE="UTC")
+    def test_runtime_timezone_drives_audit_backups_and_system_status(self):
+        from .backups import next_scheduled_backup
+
+        platform_settings = PlatformSettings.load()
+        platform_settings.timezone = "America/Los_Angeles"
+        platform_settings.save(update_fields=["timezone"])
+        event = AuditEvent.objects.create(
+            actor=self.owner,
+            action="platform.root_login",
+            object_type="User",
+            object_id=str(self.owner.pk),
+            summary="Timezone integration event",
+        )
+        AuditEvent.objects.filter(pk=event.pk).update(
+            created_at=datetime(2026, 8, 24, 2, 0, tzinfo=datetime_timezone.utc)
+        )
+
+        self.client.force_login(self.owner)
+        audit_response = self.client.get(reverse("config-audit"), {"date": "2026-08-23"})
+        self.assertContains(audit_response, "Timezone integration event")
+        status_response = self.client.get(reverse("platform-system-status"))
+        self.assertContains(status_response, "America/Los_Angeles")
+        backup_response = self.client.get(reverse("platform-backups"))
+        self.assertEqual(backup_response.context["platform_timezone"], "America/Los_Angeles")
+
+        backup_settings = PlatformBackupSettings.load()
+        backup_settings.weekdays = [PlatformBackupSettings.Weekday.MONDAY]
+        backup_settings.backup_time = datetime(2026, 8, 24, 1, 0).time()
+        next_run = next_scheduled_backup(
+            backup_settings,
+            now=datetime(2026, 8, 24, 7, 30, tzinfo=datetime_timezone.utc),
+        )
+        self.assertEqual(getattr(next_run.tzinfo, "key", None), "America/Los_Angeles")
+        self.assertEqual(next_run.hour, 1)
+
+
+class StorageMaintenanceTests(TransactionTestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.data_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media_directory.cleanup)
+        self.addCleanup(self.data_directory.cleanup)
+        self.settings_override = override_settings(MEDIA_ROOT=Path(self.media_directory.name))
+        self.settings_override.enable()
+        self.addCleanup(self.settings_override.disable)
+        self.data_root_patch = patch("core.backups.data_root", return_value=Path(self.data_directory.name))
+        self.data_root_patch.start()
+        self.addCleanup(self.data_root_patch.stop)
+        self.lock_root_patch = patch(
+            "core.maintenance_lock.maintenance_root", return_value=Path(self.data_directory.name)
+        )
+        self.lock_root_patch.start()
+        self.addCleanup(self.lock_root_patch.stop)
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            "maintenance-owner", "maintenance@example.com", "maintenance-password-482!"
+        )
+        self.reader = User.objects.create_user(
+            "maintenance-reader", "reader@example.com", "reader-password-482!"
+        )
+
+    def make_file(self, path, content=b"data"):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return path
+
+    def make_event(self, *, created_at, summary, actor=None, group=None):
+        event = AuditEvent.objects.create(
+            actor=actor or self.owner,
+            group=group,
+            action="group.updated",
+            object_type="ReadingGroup",
+            summary=summary,
+        )
+        AuditEvent.objects.filter(pk=event.pk).update(created_at=created_at)
+        event.refresh_from_db()
+        return event
+
+    def test_storage_overview_reports_managed_categories(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("SQLite database and Stored Backup sizing is SQLite-only.")
+        media_file = self.make_file(Path(self.media_directory.name, "profile-pictures", "avatar.png"), b"avatar")
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "thumb.bin"), b"thumb")
+        backup_file = self.make_file(Path(self.data_directory.name, "backups", "northbound-manual-test.zip"), b"backup")
+        oldest = AuditEvent.objects.create(
+            actor=self.owner,
+            action="platform.root_login",
+            object_type="User",
+            summary="Oldest overview event",
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("platform-storage-maintenance"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_sqlite"])
+        self.assertEqual(response.context["media_usage"], {"count": 2, "size": media_file.stat().st_size + cache_file.stat().st_size})
+        self.assertEqual(response.context["cache_usage"], {"count": 1, "size": cache_file.stat().st_size})
+        self.assertEqual(response.context["stored_backup_count"], 1)
+        self.assertEqual(response.context["stored_backup_size"], backup_file.stat().st_size)
+        self.assertEqual(response.context["audit_event_count"], 1)
+        self.assertEqual(response.context["oldest_audit_event"], oldest)
+        self.assertContains(response, "Storage Overview")
+        self.assertContains(response, "Audit History Pruning")
+        self.assertContains(response, "Optimize Database")
+
+    def test_cache_cleanup_removes_only_reserved_disposable_files(self):
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "generated", "thumb.bin"), b"cache")
+        avatar = self.make_file(Path(self.media_directory.name, "profile-pictures", "avatar.png"), b"avatar")
+        unknown_media = self.make_file(Path(self.media_directory.name, "unknown-source.bin"), b"source")
+        environment_file = self.make_file(Path(self.media_directory.name, ".env"), b"secret")
+        stored_backup = self.make_file(Path(self.data_directory.name, "backups", "northbound-manual-test.zip"), b"backup")
+        rollback_file = self.make_file(Path(self.data_directory.name, "pre-restore-test", "northbound.sqlite3"), b"rollback")
+        self.client.force_login(self.owner)
+        url = reverse("platform-cache-cleanup")
+
+        response = self.client.post(url, {"confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(cache_file.exists())
+        response = self.client.post(url, {"confirmation": "CLEANUP"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertFalse(cache_file.exists())
+        self.assertTrue(avatar.exists())
+        self.assertTrue(unknown_media.exists())
+        self.assertTrue(environment_file.exists())
+        self.assertTrue(stored_backup.exists())
+        self.assertTrue(rollback_file.exists())
+        event = AuditEvent.objects.get(action="platform.disposable_cache_cleaned")
+        self.assertIn("Removed 1 disposable cache file", event.summary)
+
+    @patch("core.maintenance.timezone.now")
+    def test_audit_pruning_respects_cutoff_and_preserves_accounts_groups_and_newer_events(self, mocked_now):
+        fixed_now = datetime(2026, 8, 23, 18, 0, tzinfo=datetime_timezone.utc)
+        mocked_now.return_value = fixed_now
+        cutoff = fixed_now.replace(year=2025)
+        group = ReadingGroup.objects.create(name="Retained Group", slug="retained-maintenance-group", is_active=False)
+        deactivated_actor = get_user_model().objects.create_user(
+            "retained-deactivated-user", password="test-password", is_active=False
+        )
+        old_event = self.make_event(
+            created_at=cutoff - timedelta(seconds=1),
+            summary="Deleted historical content must not survive",
+            actor=deactivated_actor,
+            group=group,
+        )
+        boundary_event = self.make_event(created_at=cutoff, summary="Boundary event remains")
+        newer_event = self.make_event(created_at=cutoff + timedelta(seconds=1), summary="Newer event remains")
+        self.client.force_login(self.owner)
+        url = reverse("platform-audit-prune")
+
+        response = self.client.post(url, {"years": "1", "confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        response = self.client.post(url, {"years": "1", "confirmation": "PRUNE"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertFalse(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=boundary_event.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=newer_event.pk).exists())
+        self.assertTrue(get_user_model().objects.filter(pk=deactivated_actor.pk, is_active=False).exists())
+        self.assertTrue(ReadingGroup.objects.filter(pk=group.pk, is_active=False).exists())
+        prune_event = AuditEvent.objects.get(action="platform.audit_history_pruned")
+        self.assertIn("Pruned 1 audit event", prune_event.summary)
+        self.assertNotIn("Deleted historical content", prune_event.summary)
+
+    def test_pending_restore_and_concurrent_lock_block_incompatible_operations(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Staged in-app restore and SQLite backup locking are SQLite-only.")
+        from .backups import create_stored_backup, pending_restore_path
+        from .maintenance_lock import MaintenanceBusyError, maintenance_lock
+
+        cache_file = self.make_file(Path(self.media_directory.name, ".northbound-cache", "cache.bin"), b"cache")
+        old_event = self.make_event(
+            created_at=timezone.now() - timedelta(days=370),
+            summary="Pending restore protected event",
+        )
+        pending = self.make_file(pending_restore_path(), b"staged restore")
+        self.client.force_login(self.owner)
+
+        cache_response = self.client.post(reverse("platform-cache-cleanup"), {"confirmation": "CLEANUP"})
+        prune_response = self.client.post(reverse("platform-audit-prune"), {"years": "1", "confirmation": "PRUNE"})
+        optimize_response = self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"})
+        self.assertContains(cache_response, "A restore is staged")
+        self.assertContains(prune_response, "A restore is staged")
+        self.assertContains(optimize_response, "A restore is staged")
+        self.assertTrue(cache_file.exists())
+        self.assertTrue(AuditEvent.objects.filter(pk=old_event.pk).exists())
+        self.assertTrue(pending.exists())
+
+        pending.unlink()
+        with maintenance_lock():
+            with self.assertRaises(MaintenanceBusyError):
+                create_stored_backup()
+
+    def test_sqlite_optimization_requires_confirmation_preserves_data_and_is_audited(self):
+        if connection.vendor != "sqlite":
+            self.skipTest("Northbound database optimization is SQLite-only.")
+        ReadingGroup.objects.create(name="Optimization Survivor", slug="optimization-survivor")
+        self.client.force_login(self.owner)
+        url = reverse("platform-sqlite-optimize")
+
+        response = self.client.post(url, {"confirmation": "wrong"})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(AuditEvent.objects.filter(action="platform.sqlite_optimized").exists())
+        response = self.client.post(url, {"confirmation": "OPTIMIZE"})
+        self.assertRedirects(response, reverse("platform-storage-maintenance"))
+
+        self.assertTrue(ReadingGroup.objects.filter(slug="optimization-survivor").exists())
+        event = AuditEvent.objects.get(action="platform.sqlite_optimized")
+        self.assertIn("size before", event.summary)
+        self.assertIn("reclaimed", event.summary)
+
+    def test_page_and_all_actions_are_platform_owner_only_and_postgresql_is_native_only(self):
+        self.client.force_login(self.reader)
+        self.assertEqual(self.client.get(reverse("platform-storage-maintenance")).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-cache-cleanup"), {"confirmation": "CLEANUP"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-audit-prune"), {"years": "1", "confirmation": "PRUNE"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"}).status_code, 403)
+
+        self.client.force_login(self.owner)
+        with patch("core.maintenance.connection") as maintenance_connection, patch("core.views.connection") as view_connection:
+            maintenance_connection.vendor = "postgresql"
+            view_connection.vendor = "postgresql"
+            response = self.client.get(reverse("platform-storage-maintenance"))
+            self.assertContains(response, "PostgreSQL-native tooling")
+            self.assertNotContains(response, reverse("platform-sqlite-optimize"))
+            response = self.client.post(reverse("platform-sqlite-optimize"), {"confirmation": "OPTIMIZE"})
+            self.assertRedirects(response, reverse("platform-storage-maintenance"))
+        self.assertFalse(AuditEvent.objects.filter(action="platform.sqlite_optimized").exists())
 
 
 class GroupEditingTests(TestCase):
@@ -832,6 +1929,13 @@ class OwnerRemovalTests(TestCase):
 
 
 class RegistrationAndGroupAccessTests(TestCase):
+    def setUp(self):
+        get_user_model().objects.create_superuser(
+            "registration-platform-owner",
+            "platform-owner@example.com",
+            "platform-owner-test-password-482!",
+        )
+
     def test_registration_can_choose_built_in_avatar(self):
         response = self.client.post(reverse("register"), {
             "username": "avatar-signup",

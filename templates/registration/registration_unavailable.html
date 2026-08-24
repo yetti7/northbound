@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Registration Unavailable · Northbound{% endblock %}
+{% block content %}
+<section class="auth-card"><p class="eyebrow">{{ platform_display_name }}</p><h1>Registration Unavailable</h1><p class="lede">Public account registration is currently disabled for this Northbound installation.</p><a class="button" href="{% url 'login' %}">Return to Sign In</a></section>
+{% endblock %}

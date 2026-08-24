@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Group Creation Unavailable · Northbound{% endblock %}
+{% block content %}
+<section class="auth-card"><p class="eyebrow">{{ platform_display_name }}</p><h1>Group Creation Unavailable</h1><p class="lede">Normal accounts cannot create new groups on this installation. You can still join an existing group with a valid access code.</p><a class="button" href="{% url 'dashboard' %}">Return to Dashboard</a></section>
+{% endblock %}

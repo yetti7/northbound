@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Northbound{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ eyebrow }}</p><h1 class="confirm-title">{{ title }}</h1><p class="lede">{{ description }}</p>{% if error %}<div class="notice error">{{ error }}</div>{% endif %}<form method="post" class="stacked-form">{% csrf_token %}{% for name, value in hidden_fields.items %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}<p><label for="id_confirmation">Type {{ confirmation_word }} to confirm</label><input id="id_confirmation" name="confirmation" autocomplete="off" required></p><div class="action-row"><button class="button danger-button">{{ action_label }}</button><a class="button" href="{{ cancel_url }}">Cancel</a></div></form></section>
+{% endblock %}

@@ -1,6 +1,74 @@
 {% extends "base.html" %}
+{% load tz %}
 {% block title %}Audit Activity · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Configuration Center</a></p><h1>Audit Activity</h1><p class="lede">The 200 most recent platform and group administration events.</p></div></div>
-<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Group</th><th>Action</th><th>Summary</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ event.created_at|date:"M j, Y g:i a" }}</td><td>{{ event.actor.username|default:"System" }}</td><td>{{ event.group.name|default:"Platform" }}</td><td>{{ event.action }}</td><td>{{ event.summary }}</td></tr>{% empty %}<tr><td colspan="5">No audit activity has been recorded.</td></tr>{% endfor %}</tbody></table></div>
+<div class="page-heading">
+  <div>
+    <p class="eyebrow"><a href="{% url 'config-dashboard' %}">Platform Administration</a></p>
+    <h1>Audit Activity</h1>
+    <p class="lede">Review platform and group administration events. Dates use {{ platform_timezone }}.</p>
+  </div>
+  <div class="action-row">
+    <a class="button" href="{% url 'config-audit-export' %}{% if filter_query %}?{{ filter_query }}{% endif %}">Export CSV</a>
+  </div>
+</div>
+
+<form method="get" class="audit-filter-form">
+  <p class="audit-search-field">
+    <label for="audit-search">Search Summary</label>
+    <input id="audit-search" type="search" name="search" value="{{ filters.search }}" placeholder="Search event summaries">
+  </p>
+  <p>
+    <label for="audit-action">Action</label>
+    <select id="audit-action" name="action">
+      <option value="">All Actions</option>
+      {% for option in action_options %}<option value="{{ option.value }}"{% if filters.action == option.value %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="audit-actor">Actor</label>
+    <select id="audit-actor" name="actor">
+      <option value="">All Actors</option>
+      <option value="system"{% if filters.actor == "system" %} selected{% endif %}>System</option>
+      {% for actor in actor_options %}<option value="{{ actor.id }}"{% if filters.actor == actor.id|stringformat:"s" %} selected{% endif %}>{{ actor.username }}{% if not actor.is_active %} (Deactivated){% endif %}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="audit-group">Group</label>
+    <select id="audit-group" name="group">
+      <option value="">All Groups</option>
+      {% for group in group_options %}<option value="{{ group.id }}"{% if filters.group == group.id|stringformat:"s" %} selected{% endif %}>{{ group.name }}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="audit-date">Date</label>
+    <input id="audit-date" type="date" name="date" value="{{ filters.date }}">
+  </p>
+  <div class="audit-filter-actions">
+    <button class="button primary">Apply Filters</button>
+    {% if filters_active %}<a class="button" href="{% url 'config-audit' %}">Clear Filters</a>{% endif %}
+  </div>
+</form>
+
+<p class="muted audit-results-summary">
+  {{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}{% if filters_active %} match the current filters{% endif %}.
+</p>
+
+{% timezone platform_timezone %}<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Group</th><th>Action</th><th>Summary</th></tr></thead><tbody>
+{% for event in events %}<tr>
+  <td>{{ event.created_at|date:"M j, Y g:i a" }}</td>
+  <td>{% if event.actor %}{{ event.actor.username }}{% if not event.actor.is_active %}<br><span class="muted">Deactivated</span>{% endif %}{% else %}System{% endif %}</td>
+  <td>{{ event.group.name|default:"Platform" }}</td>
+  <td><strong>{{ event.action_label }}</strong><br><code class="muted">{{ event.action }}</code></td>
+  <td>{{ event.safe_summary }}</td>
+</tr>{% empty %}<tr><td colspan="5">No audit activity matches the current filters.</td></tr>{% endfor %}
+</tbody></table></div>{% endtimezone %}
+
+{% if page_obj.paginator.num_pages > 1 %}
+<nav class="pagination" aria-label="Audit activity pages">
+  {% if page_obj.has_previous %}<a class="button" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>{% endif %}
+  <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a class="button" href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>{% endif %}
+</nav>
+{% endif %}
 {% endblock %}

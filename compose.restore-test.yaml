@@ -1,0 +1,17 @@
+services:
+  web:
+    image: northbound:restore-e2e
+    build: .
+    environment:
+      DATABASE_URL: ""
+      POSTGRES_HOST: ""
+      DJANGO_SECRET_KEY: isolated-restore-e2e-secret-not-for-production
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
+      NORTHBOUND_URL: http://127.0.0.1:${NORTHBOUND_PORT:-18060}
+      NORTHBOUND_SQLITE_PATH: /data/northbound.sqlite3
+      NORTHBOUND_MEDIA_ROOT: /data/media
+      NORTHBOUND_SERVE_MEDIA: "1"
+      NORTHBOUND_WEB_RESTART: "1"
+      TIME_ZONE: America/New_York
+      PORT: "8000"

@@ -5,6 +5,12 @@ from django.db import models
 from django.db.models import Q, Sum
 from django.urls import reverse
 from django.templatetags.static import static
+from django.utils import timezone
+from datetime import timedelta
+from datetime import time as datetime_time
+from django.core.validators import MaxValueValidator, MinValueValidator
+import hashlib
+import re
 import secrets
 
 
@@ -29,6 +35,95 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile for {self.user.username}"
+
+
+def hash_platform_owner_invitation_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class PlatformOwnerInvitation(models.Model):
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="platform_owner_invitations_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    redeemed_at = models.DateTimeField(null=True, blank=True)
+    redeemed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="platform_owner_invitation_redeemed")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="platform_owner_invitations_revoked")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @classmethod
+    def issue(cls, created_by):
+        token = secrets.token_urlsafe(32)
+        invitation = cls.objects.create(
+            token_hash=hash_platform_owner_invitation_token(token),
+            created_by=created_by,
+            expires_at=timezone.now() + timedelta(days=7),
+        )
+        return invitation, token
+
+    @property
+    def is_valid(self):
+        return not self.redeemed_at and not self.revoked_at and self.expires_at > timezone.now()
+
+    @property
+    def status(self):
+        if self.redeemed_at:
+            return "Redeemed"
+        if self.revoked_at:
+            return "Revoked"
+        if self.expires_at <= timezone.now():
+            return "Expired"
+        return "Active"
+
+
+def default_backup_weekdays():
+    return [0]
+
+
+def default_platform_timezone():
+    return settings.TIME_ZONE
+
+
+class PlatformSettings(models.Model):
+    display_name = models.CharField(max_length=120, default="My Northbound")
+    timezone = models.CharField(max_length=64, default=default_platform_timezone)
+    allow_public_registration = models.BooleanField(default=True)
+    allow_user_group_creation = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls):
+        settings_object, _ = cls.objects.get_or_create(pk=1)
+        return settings_object
+
+
+class PlatformBackupSettings(models.Model):
+    class Weekday(models.IntegerChoices):
+        MONDAY = 0, "Monday"
+        TUESDAY = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY = 3, "Thursday"
+        FRIDAY = 4, "Friday"
+        SATURDAY = 5, "Saturday"
+        SUNDAY = 6, "Sunday"
+
+    enabled = models.BooleanField(default=True)
+    weekdays = models.JSONField(default=default_backup_weekdays)
+    backup_time = models.TimeField(default=datetime_time(1, 0))
+    retention_count = models.PositiveSmallIntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    last_run_date = models.DateField(null=True, blank=True, editable=False)
+    last_success_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_failure_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_error = models.TextField(blank=True, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls):
+        settings_object, _ = cls.objects.get_or_create(pk=1)
+        return settings_object
 
 
 ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -440,6 +535,41 @@ class ThemeClaim(models.Model):
         return f"{self.submission.title} — {self.theme.name}"
 
 
+AUDIT_ACTION_LABELS = {
+    "platform.root_login": "Platform Owner Signed In",
+    "platform.initial_owner_created": "Initial Platform Owner Created",
+    "platform.owner_invitation_created": "Platform Owner Invitation Created",
+    "platform.owner_invitation_redeemed": "Platform Owner Invitation Accepted",
+    "platform.owner_invitation_revoked": "Platform Owner Invitation Revoked",
+    "platform.owner_deactivated": "Platform Owner Deactivated",
+    "platform.owner_reactivated": "Platform Owner Reactivated",
+    "platform.backup_settings_updated": "Backup Schedule Updated",
+    "platform.backup_created": "Backup Created",
+    "platform.backup_downloaded": "Backup Downloaded",
+    "platform.backup_deleted": "Backup Deleted",
+    "platform.restore_staged": "Restore Staged",
+    "platform.restore_restart_requested": "Restore Restart Requested",
+    "platform.general_settings_updated": "General Settings Updated",
+    "platform.disposable_cache_cleaned": "Disposable Cache Cleaned",
+    "platform.audit_history_pruned": "Audit History Pruned",
+    "platform.sqlite_optimized": "SQLite Database Optimized",
+}
+AUDIT_SECRET_PATTERN = re.compile(
+    r"(?i)\b((?:[a-z0-9]+[_-])*(?:password(?:[_-]?hash)?|secret(?:[_-]?key)?|"
+    r"api[_-]?token|access[_-]?token|invitation[_-]?token|session[_-]?secret|"
+    r"token[_-]?encryption[_-]?key))"
+    r"(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
+
+
+def audit_action_label(action):
+    return AUDIT_ACTION_LABELS.get(action, action.replace(".", " ").replace("_", " ").title())
+
+
+def safe_audit_summary(summary):
+    return AUDIT_SECRET_PATTERN.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", summary)
+
+
 class AuditEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     group = models.ForeignKey(ReadingGroup, null=True, blank=True, on_delete=models.SET_NULL)
@@ -451,3 +581,11 @@ class AuditEvent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def action_label(self):
+        return audit_action_label(self.action)
+
+    @property
+    def safe_summary(self):
+        return safe_audit_summary(self.summary)

@@ -1,22 +1,40 @@
 from django.contrib import messages
+from django.conf import settings
 from django.core import signing
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db import connection
+from django.db.models import Count, OuterRef, Prefetch, Q, Subquery, Sum
 from django.forms import inlineformset_factory
-from django.http import Http404, HttpResponseForbidden, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from django.utils import timezone
 import secrets
+import csv
+import json
+import sqlite3
+import zipfile
+import os
+import signal
+import threading
+from pathlib import Path
+from datetime import date, datetime, time, timedelta
 
-from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
+from .forms import AccountProfileForm, BookSubmissionForm, ChallengeMonthForm, FirstRunSetupForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformOwnerStatusForm, PlatformSettingsForm, PublicRegistrationForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, TeamStatsVisibilityForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
-from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogEdition, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
 from .permissions import can_manage_announcements, can_manage_group, can_manage_months, can_manage_participants, can_manage_permissions, can_manage_teams, can_remove, can_review, can_view_access_code, can_view_team_stats, membership_for
+from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
+from .platform_config import get_platform_settings, get_platform_timezone
+from .maintenance import AUDIT_RETENTION_YEARS, audit_prune_preview, cleanup_disposable_cache, disposable_cache_usage, optimize_sqlite_database, prune_audit_history, storage_overview
+from .maintenance_lock import MaintenanceBusyError
+from .system_status import build_system_status
 
 
 CONFIGURABLE_MONTH_STATUSES = {ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN}
@@ -48,7 +66,7 @@ class RootLoginView(LoginView):
             action="platform.root_login",
             object_type="User",
             object_id=str(self.request.user.pk),
-            summary="Developer root signed into the configuration center.",
+            summary="Platform owner signed into platform administration.",
         )
         return response
 
@@ -68,7 +86,7 @@ class NorthboundPasswordChangeView(PasswordChangeView):
                 action="account.temporary_password_replaced",
                 object_type="User",
                 object_id=str(self.request.user.pk),
-                summary="User replaced a developer-issued temporary password.",
+                summary="User replaced a platform-owner-issued temporary password.",
             )
         messages.success(self.request, "Your password was changed.")
         return response
@@ -128,20 +146,244 @@ def my_stats(request):
 @login_required(login_url="config-login")
 def config_dashboard(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
+    account_counts = get_user_model().objects.filter(is_superuser=False).aggregate(
+        active=Count("id", filter=Q(is_active=True)),
+        deactivated=Count("id", filter=Q(is_active=False)),
+    )
     context = {
-        "user_count": get_user_model().objects.filter(is_superuser=False).count(),
+        "active_account_count": account_counts["active"],
+        "deactivated_account_count": account_counts["deactivated"],
         "group_count": ReadingGroup.objects.count(),
-        "month_count": ChallengeMonth.objects.count(),
         "recent_events": AuditEvent.objects.select_related("actor", "group")[:12],
+        "platform_timezone": get_platform_settings().timezone,
     }
     return render(request, "core/config_dashboard.html", context)
+
+
+def _platform_group_directory(group_slug=None):
+    owner_memberships = Membership.objects.filter(
+        is_active=True,
+        role=Membership.Role.OWNER,
+        user__is_superuser=False,
+    ).select_related("user")
+    current_months = ChallengeMonth.objects.exclude(
+        status=ChallengeMonth.Status.ARCHIVED
+    ).order_by("-starts_on")
+    latest_event = AuditEvent.objects.filter(group=OuterRef("pk")).order_by("-created_at")
+    group_query = ReadingGroup.objects.annotate(
+        participant_count=Count(
+            "memberships",
+            filter=Q(memberships__is_active=True, memberships__user__is_superuser=False),
+            distinct=True,
+        ),
+        recent_activity_summary=Subquery(latest_event.values("summary")[:1]),
+        recent_activity_at=Subquery(latest_event.values("created_at")[:1]),
+        recent_activity_actor=Subquery(latest_event.values("actor__username")[:1]),
+    )
+    if group_slug is not None:
+        group_query = group_query.filter(slug=group_slug)
+    groups = list(
+        group_query
+        .prefetch_related(
+            Prefetch("memberships", queryset=owner_memberships, to_attr="directory_owners"),
+            Prefetch("challenge_months", queryset=current_months, to_attr="directory_months"),
+        )
+        .order_by("name", "pk")
+    )
+    for group in groups:
+        group.current_challenge = next(
+            (month for month in group.directory_months if month.status == ChallengeMonth.Status.OPEN),
+            group.directory_months[0] if group.directory_months else None,
+        )
+    return groups
+
+
+@login_required(login_url="config-login")
+def config_group_list(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/config_group_list.html", {"groups": _platform_group_directory()})
+
+
+@login_required(login_url="config-login")
+def config_group_detail(request, group_slug):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    group = next(iter(_platform_group_directory(group_slug)), None)
+    if group is None:
+        raise Http404
+    return render(request, "core/config_group_detail.html", {"group": group})
+
+
+@login_required(login_url="config-login")
+def config_group_status_toggle(request, group_slug):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    group = get_object_or_404(ReadingGroup, slug=group_slug)
+    action = "Deactivate" if group.is_active else "Reactivate"
+    if request.method == "POST":
+        group.is_active = not group.is_active
+        group.save(update_fields=["is_active"])
+        new_state = "reactivated" if group.is_active else "deactivated"
+        reason = request.POST.get("reason", "").strip()
+        summary = f"{new_state.capitalize()} reading group {group.name}."
+        if reason:
+            summary += f" Reason: {reason}"
+        AuditEvent.objects.create(
+            actor=request.user,
+            group=group,
+            action=f"group.{new_state}",
+            object_type="ReadingGroup",
+            object_id=str(group.pk),
+            summary=summary,
+        )
+        messages.success(request, f"{group.name} was {new_state}. Its URL and history were preserved.")
+        return redirect("config-group-detail", group_slug=group.slug)
+    return render(request, "core/confirm_remove.html", {
+        "eyebrow": "Group Lifecycle",
+        "title": f"{action} {group.name}?",
+        "description": (
+            "The group will be hidden from normal account access, while its stable URL, memberships, "
+            "challenge months, submissions, teams, scoring, and audit history remain stored."
+            if group.is_active else
+            "The group will return to normal account access with its stable URL, memberships, and history unchanged."
+        ),
+        "cancel_url": reverse("config-group-detail", kwargs={"group_slug": group.slug}),
+        "action_label": action,
+    })
+
+
+@login_required(login_url="config-login")
+def platform_owner_list(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    owners = get_user_model().objects.filter(is_superuser=True).order_by("username")
+    invitations = PlatformOwnerInvitation.objects.select_related("created_by", "redeemed_by", "revoked_by")
+    return render(request, "core/platform_owner_list.html", {"owners": owners, "invitations": invitations})
+
+
+@login_required(login_url="config-login")
+def platform_owner_create(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    form = PlatformOwnerInvitationForm(request.POST or None, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            invitation, token = PlatformOwnerInvitation.issue(request.user)
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="platform.owner_invitation_created",
+                object_type="PlatformOwnerInvitation",
+                object_id=str(invitation.pk),
+                summary="Created a seven-day platform owner invitation.",
+            )
+        base_url = settings.NORTHBOUND_URL or request.build_absolute_uri("/").rstrip("/")
+        invitation_url = f"{base_url}{reverse('platform-owner-accept', kwargs={'token': token})}"
+        return render(request, "core/platform_owner_invitation_created.html", {
+            "invitation": invitation,
+            "invitation_url": invitation_url,
+        })
+    return render(request, "core/platform_owner_create.html", {"form": form})
+
+
+def platform_owner_accept(request, token):
+    invitation = PlatformOwnerInvitation.objects.filter(
+        token_hash=hash_platform_owner_invitation_token(token)
+    ).first()
+    if not invitation or not invitation.is_valid:
+        return render(request, "core/platform_owner_invitation_invalid.html", status=410)
+
+    form = PlatformOwnerAcceptanceForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            invitation = PlatformOwnerInvitation.objects.select_for_update().get(pk=invitation.pk)
+            if not invitation.is_valid:
+                return render(request, "core/platform_owner_invitation_invalid.html", status=410)
+            owner = form.save()
+            invitation.redeemed_at = timezone.now()
+            invitation.redeemed_by = owner
+            invitation.save(update_fields=["redeemed_at", "redeemed_by"])
+            AuditEvent.objects.create(
+                actor=owner,
+                action="platform.owner_invitation_redeemed",
+                object_type="PlatformOwnerInvitation",
+                object_id=str(invitation.pk),
+                summary=f"Redeemed a platform owner invitation as {owner.username}.",
+            )
+        login(request, owner)
+        messages.success(request, "Your Platform Owner account is ready.")
+        return redirect("config-dashboard")
+    return render(request, "core/platform_owner_accept.html", {"form": form, "invitation": invitation})
+
+
+@login_required(login_url="config-login")
+def platform_owner_invitation_revoke(request, pk):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    invitation = get_object_or_404(PlatformOwnerInvitation, pk=pk)
+    if request.method == "POST" and invitation.is_valid:
+        invitation.revoked_at = timezone.now()
+        invitation.revoked_by = request.user
+        invitation.save(update_fields=["revoked_at", "revoked_by"])
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="platform.owner_invitation_revoked",
+            object_type="PlatformOwnerInvitation",
+            object_id=str(invitation.pk),
+            summary="Revoked an unused platform owner invitation.",
+        )
+        messages.success(request, "The platform owner invitation was revoked.")
+    return redirect("platform-owner-list")
+
+
+@login_required(login_url="config-login")
+def platform_owner_status_toggle(request, pk):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    owner = get_object_or_404(get_user_model(), pk=pk, is_superuser=True)
+    if owner.pk == request.user.pk:
+        messages.error(request, "You cannot deactivate or reactivate your own Platform Owner account.")
+        return redirect("platform-owner-list")
+
+    action = "Deactivate" if owner.is_active else "Reactivate"
+    form = PlatformOwnerStatusForm(request.POST or None, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            locked_owners = list(
+                get_user_model().objects.select_for_update().filter(is_superuser=True).only("pk", "is_active")
+            )
+            owner = next((locked_owner for locked_owner in locked_owners if locked_owner.pk == pk), None)
+            if owner is None:
+                raise Http404
+            if owner.is_active:
+                active_owner_count = sum(locked_owner.is_active for locked_owner in locked_owners)
+                if active_owner_count <= 1:
+                    messages.error(request, "Northbound must retain at least one active Platform Owner.")
+                    return redirect("platform-owner-list")
+            owner.is_active = not owner.is_active
+            owner.save(update_fields=["is_active"])
+            new_state = "reactivated" if owner.is_active else "deactivated"
+            AuditEvent.objects.create(
+                actor=request.user,
+                action=f"platform.owner_{new_state}",
+                object_type="User",
+                object_id=str(owner.pk),
+                summary=f"{new_state.capitalize()} Platform Owner {owner.username}.",
+            )
+        messages.success(request, f"{owner.username} was {new_state} as a Platform Owner.")
+        return redirect("platform-owner-list")
+    return render(request, "core/platform_owner_status.html", {
+        "owner": owner,
+        "form": form,
+        "action": action,
+    })
 
 
 @login_required(login_url="config-login")
 def config_user_list(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     users = get_user_model().objects.filter(is_superuser=False).annotate(
         membership_count=Count("reading_memberships", distinct=True)
     ).order_by("username")
@@ -151,7 +393,7 @@ def config_user_list(request):
 @login_required(login_url="config-login")
 def config_user_detail(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     profile, _ = UserProfile.objects.get_or_create(user=account_user)
     memberships = account_user.reading_memberships.select_related("group").order_by("group__name")
@@ -165,7 +407,7 @@ def config_user_detail(request, pk):
 @login_required(login_url="config-login")
 def config_user_password_reset(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     if request.method == "POST":
         temporary_password = secrets.token_urlsafe(12)
@@ -183,7 +425,7 @@ def config_user_password_reset(request, pk):
         )
         return render(request, "core/config_temporary_password.html", {"account_user": account_user, "temporary_password": temporary_password})
     return render(request, "core/confirm_remove.html", {
-        "eyebrow": "Developer User Management",
+        "eyebrow": "Platform User Management",
         "title": f"Reset {account_user.username}'s password?",
         "description": "Northbound will generate a temporary password and require the user to replace it after signing in. Their existing password cannot be viewed or recovered.",
         "cancel_url": reverse("config-user-detail", kwargs={"pk": account_user.pk}),
@@ -195,7 +437,7 @@ def config_user_password_reset(request, pk):
 @login_required(login_url="config-login")
 def config_user_status_toggle(request, pk):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
+        return HttpResponseForbidden("Platform owner access is required.")
     account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
     action = "deactivate" if account_user.is_active else "reactivate"
     if request.method == "POST":
@@ -211,7 +453,7 @@ def config_user_status_toggle(request, pk):
         messages.success(request, f"{account_user.username} was {action}d.")
         return redirect("config-user-detail", pk=account_user.pk)
     return render(request, "core/confirm_remove.html", {
-        "eyebrow": "Developer User Management",
+        "eyebrow": "Platform User Management",
         "title": f"{action.title()} {account_user.username}?",
         "description": "The account's groups, submissions, and history will be preserved.",
         "cancel_url": reverse("config-user-detail", kwargs={"pk": account_user.pk}),
@@ -220,20 +462,556 @@ def config_user_status_toggle(request, pk):
     })
 
 
+AUDIT_PAGE_SIZE = 50
+
+
+def _audit_date_bounds(value):
+    try:
+        selected_date = date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    platform_timezone = get_platform_timezone()
+    start = datetime.combine(selected_date, time.min, tzinfo=platform_timezone)
+    end = datetime.combine(selected_date + timedelta(days=1), time.min, tzinfo=platform_timezone)
+    return start, end
+
+
+def _filtered_audit_events(request):
+    events = AuditEvent.objects.select_related("actor", "group")
+    filters = {
+        "search": request.GET.get("search", "").strip(),
+        "action": request.GET.get("action", "").strip(),
+        "actor": request.GET.get("actor", "").strip(),
+        "group": request.GET.get("group", "").strip(),
+        "date": request.GET.get("date", "").strip(),
+    }
+    if filters["search"]:
+        events = events.filter(summary__icontains=filters["search"])
+    if filters["action"]:
+        events = events.filter(action=filters["action"])
+    if filters["actor"] == "system":
+        events = events.filter(actor__isnull=True)
+    elif filters["actor"].isdigit():
+        events = events.filter(actor_id=int(filters["actor"]))
+    if filters["group"].isdigit():
+        events = events.filter(group_id=int(filters["group"]))
+    date_bounds = _audit_date_bounds(filters["date"])
+    if date_bounds:
+        events = events.filter(created_at__gte=date_bounds[0], created_at__lt=date_bounds[1])
+    return events, filters
+
+
+def _audit_filter_options():
+    actions = sorted(
+        (
+            {"value": action, "label": audit_action_label(action)}
+            for action in AuditEvent.objects.values_list("action", flat=True).distinct()
+        ),
+        key=lambda item: (item["label"], item["value"]),
+    )
+    actors = [
+        {"id": actor_id, "username": username, "is_active": is_active}
+        for actor_id, username, is_active in AuditEvent.objects.exclude(actor__isnull=True)
+        .values_list("actor_id", "actor__username", "actor__is_active")
+        .distinct()
+        .order_by("actor__username")
+    ]
+    groups = [
+        {"id": group_id, "name": name}
+        for group_id, name in AuditEvent.objects.exclude(group__isnull=True)
+        .values_list("group_id", "group__name")
+        .distinct()
+        .order_by("group__name")
+    ]
+    return actions, actors, groups
+
+
 @login_required(login_url="config-login")
 def config_audit(request):
     if not request.user.is_superuser:
-        return HttpResponseForbidden("Developer root access is required.")
-    events = AuditEvent.objects.select_related("actor", "group")[:200]
-    return render(request, "core/config_audit.html", {"events": events})
+        return HttpResponseForbidden("Platform owner access is required.")
+    events, filters = _filtered_audit_events(request)
+    paginator = Paginator(events, AUDIT_PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
+    actions, actors, groups = _audit_filter_options()
+    return render(request, "core/config_audit.html", {
+        "events": page_obj.object_list,
+        "page_obj": page_obj,
+        "filters": filters,
+        "filters_active": any(filters.values()),
+        "filter_query": query.urlencode(),
+        "action_options": actions,
+        "actor_options": actors,
+        "group_options": groups,
+        "platform_timezone": get_platform_settings().timezone,
+    })
+
+
+def _csv_safe(value):
+    text = str(value or "")
+    return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+
+@login_required(login_url="config-login")
+def config_audit_export(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    events, _ = _filtered_audit_events(request)
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    platform_timezone = get_platform_timezone()
+    export_date = timezone.localdate(timezone=platform_timezone).isoformat()
+    response["Content-Disposition"] = f'attachment; filename="northbound-audit-activity-{export_date}.csv"'
+    writer = csv.writer(response)
+    writer.writerow(["Timestamp", "Action", "Action Identifier", "Actor", "Group", "Summary"])
+    for event in events.iterator():
+        local_timestamp = timezone.localtime(event.created_at, platform_timezone).isoformat()
+        writer.writerow([
+            local_timestamp,
+            _csv_safe(event.action_label),
+            _csv_safe(event.action),
+            _csv_safe(event.actor.username if event.actor else "System"),
+            _csv_safe(event.group.name if event.group else "Platform"),
+            _csv_safe(safe_audit_summary(event.summary)),
+        ])
+    return response
+
+
+@login_required(login_url="config-login")
+def platform_settings(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/platform_settings.html")
+
+
+@login_required(login_url="config-login")
+def platform_general_settings(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    platform_settings = get_platform_settings()
+    original_values = {
+        field: getattr(platform_settings, field)
+        for field in (
+            "display_name",
+            "timezone",
+            "allow_public_registration",
+            "allow_user_group_creation",
+        )
+    }
+    form = PlatformSettingsForm(request.POST or None, instance=platform_settings)
+    if request.method == "POST" and form.is_valid():
+        changed_fields = list(form.changed_data)
+        form.save()
+        if changed_fields:
+            field_labels = {
+                "display_name": "Platform display name",
+                "timezone": "Platform timezone",
+                "allow_public_registration": "Public registration",
+                "allow_user_group_creation": "Normal account group creation",
+            }
+
+            def display_value(value):
+                return "Enabled" if value is True else "Disabled" if value is False else str(value)
+
+            changes = "; ".join(
+                f"{field_labels[field]} changed from {display_value(original_values[field])} to "
+                f"{display_value(form.cleaned_data[field])}"
+                for field in changed_fields
+            )
+            AuditEvent.objects.create(
+                actor=request.user,
+                action="platform.general_settings_updated",
+                object_type="PlatformSettings",
+                object_id=str(platform_settings.pk),
+                summary=f"Updated General Settings: {changes}.",
+            )
+            messages.success(request, "General Settings were updated.")
+        else:
+            messages.info(request, "General Settings were already up to date.")
+        return redirect("platform-general-settings")
+    return render(request, "core/platform_general_settings.html", {"form": form})
+
+
+@login_required(login_url="config-login")
+def platform_system_status(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    return render(request, "core/platform_system_status.html", build_system_status())
+
+
+@login_required(login_url="config-login")
+def platform_storage_maintenance(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    context = storage_overview()
+    context.update({
+        "audit_retention_years": AUDIT_RETENTION_YEARS,
+        "platform_timezone": get_platform_settings().timezone,
+    })
+    return render(request, "core/platform_storage_maintenance.html", context)
+
+
+def _maintenance_confirmation(request, **context):
+    context.setdefault("error", "")
+    context.setdefault("cancel_url", reverse("platform-storage-maintenance"))
+    return render(request, "core/platform_maintenance_confirm.html", context)
+
+
+@login_required(login_url="config-login")
+def platform_cache_cleanup(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    usage = disposable_cache_usage()
+    if not usage["count"]:
+        messages.info(request, "There are currently no disposable cache files eligible for cleanup.")
+        return redirect("platform-storage-maintenance")
+    context = {
+        "eyebrow": "Disposable Cache Cleanup",
+        "title": "Remove Disposable Cache Files?",
+        "description": (
+            f"This permanently removes {usage['count']} explicitly reproducible cache file(s) "
+            f"using approximately {filesizeformat(usage['size'])}. Persistent media and Stored Backups are not affected."
+        ),
+        "confirmation_word": "CLEANUP",
+        "action_label": "Clean Disposable Cache",
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "CLEANUP":
+            context["error"] = "Enter CLEANUP exactly to confirm."
+        else:
+            try:
+                result = cleanup_disposable_cache(actor=request.user)
+            except (MaintenanceBusyError, RuntimeError) as exc:
+                context["error"] = str(exc)
+            else:
+                message = (
+                    f"Removed {result['count']} disposable cache file(s) and reclaimed "
+                    f"{filesizeformat(result['size'])}."
+                )
+                if result["failed_count"]:
+                    messages.warning(
+                        request,
+                        f"{message} {result['failed_count']} file(s) could not be removed.",
+                    )
+                else:
+                    messages.success(request, message)
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
+
+
+@login_required(login_url="config-login")
+def platform_audit_prune(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    try:
+        years = int(request.POST.get("years") or request.GET.get("years") or "")
+        preview = audit_prune_preview(years)
+    except (TypeError, ValueError):
+        messages.error(request, "Choose one, two, or three years of audit history to retain.")
+        return redirect("platform-storage-maintenance")
+    context = {
+        "eyebrow": "Audit History Pruning",
+        "title": "Permanently Prune Audit History?",
+        "description": (
+            f"This permanently deletes {preview['affected_count']} audit event(s) older than "
+            f"{years} year(s). Deleted history can be recovered only by restoring an appropriate backup."
+        ),
+        "confirmation_word": "PRUNE",
+        "action_label": "Prune Audit History",
+        "hidden_fields": {"years": years},
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "PRUNE":
+            context["error"] = "Enter PRUNE exactly to confirm."
+        else:
+            try:
+                result = prune_audit_history(years=years, actor=request.user)
+            except (MaintenanceBusyError, RuntimeError) as exc:
+                context["error"] = str(exc)
+            else:
+                messages.success(
+                    request,
+                    f"Pruned {result['count']} audit event(s) older than {years} year(s).",
+                )
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
+
+
+@login_required(login_url="config-login")
+def platform_sqlite_optimize(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if connection.vendor != "sqlite":
+        messages.info(request, "Northbound database optimization is available only for SQLite deployments.")
+        return redirect("platform-storage-maintenance")
+    overview = storage_overview()
+    context = {
+        "eyebrow": "SQLite Database Optimization",
+        "title": "Optimize the SQLite Database?",
+        "description": (
+            f"The database currently uses approximately {filesizeformat(overview['database_size'] or 0)}. "
+            "Optimization compacts unused pages and may briefly require exclusive database access. "
+            "It does not delete live records."
+        ),
+        "confirmation_word": "OPTIMIZE",
+        "action_label": "Optimize Database",
+    }
+    if request.method == "POST":
+        if request.POST.get("confirmation") != "OPTIMIZE":
+            context["error"] = "Enter OPTIMIZE exactly to confirm."
+        else:
+            try:
+                result = optimize_sqlite_database(actor=request.user)
+            except (MaintenanceBusyError, RuntimeError, OSError) as exc:
+                context["error"] = str(exc)
+            else:
+                messages.success(
+                    request,
+                    f"SQLite optimization completed. Database size changed from "
+                    f"{filesizeformat(result['before_size'])} to {filesizeformat(result['after_size'])}; "
+                    f"{filesizeformat(result['reclaimed'])} reclaimed.",
+                )
+                return redirect("platform-storage-maintenance")
+    return _maintenance_confirmation(request, **context)
+
+
+def _stored_backup_or_404(filename):
+    try:
+        backup_path = stored_backup_path(filename)
+    except ValueError:
+        raise Http404
+    if not backup_path.is_file():
+        raise Http404
+    return backup_path
+
+
+@login_required(login_url="config-login")
+def platform_backups(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    is_sqlite = connection.vendor == "sqlite"
+    backup_settings = PlatformBackupSettings.load()
+    backup_settings_form = PlatformBackupSettingsForm(request.POST or None, instance=backup_settings)
+    if request.method == "POST" and backup_settings_form.is_valid():
+        backup_settings_form.save()
+        if is_sqlite:
+            for expired_backup in list_automatic_backups()[backup_settings.retention_count:]:
+                expired_backup.unlink(missing_ok=True)
+        selected_days = ", ".join(dict(PlatformBackupSettings.Weekday.choices)[day] for day in backup_settings.weekdays)
+        AuditEvent.objects.create(actor=request.user, action="platform.backup_settings_updated", object_type="PlatformBackupSettings", object_id=str(backup_settings.pk), summary=f"Updated automatic backups to {selected_days} at {backup_settings.backup_time}; retaining {backup_settings.retention_count}.")
+        messages.success(request, "Automatic backup settings were updated.")
+        return redirect("platform-backups")
+    stored_paths = list_stored_backups() if is_sqlite else []
+    stored_backups = [{
+        "name": path.name,
+        "size": path.stat().st_size,
+        "modified": datetime.fromtimestamp(path.stat().st_mtime, tz=get_platform_timezone()),
+        "kind": "Automatic" if path.name.startswith("northbound-automatic-") else "Manual",
+    } for path in stored_paths]
+    return render(request, "core/platform_backups.html", {
+        "is_sqlite": is_sqlite,
+        "restore_pending": pending_restore_path().exists() if is_sqlite else False,
+        "web_restart_enabled": settings.NORTHBOUND_WEB_RESTART,
+        "backup_settings_form": backup_settings_form,
+        "stored_backups": stored_backups,
+        "backup_location": str(automatic_backup_directory()) if is_sqlite else None,
+        "stored_backup_size": sum(backup["size"] for backup in stored_backups),
+        "next_scheduled_run": next_scheduled_backup(backup_settings) if is_sqlite else None,
+        "platform_timezone": get_platform_settings().timezone,
+    })
+
+
+@login_required(login_url="config-login")
+def platform_backup_create(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if request.method != "POST":
+        return redirect("platform-backups")
+    if connection.vendor != "sqlite":
+        messages.error(request, "In-app backups currently support the standard SQLite deployment. Back up PostgreSQL with its native tools.")
+        return redirect("platform-backups")
+    try:
+        backup_path = create_stored_backup()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        messages.error(request, f"The backup could not be created: {exc}")
+        return redirect("platform-backups")
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.backup_created",
+        object_type="PlatformBackup",
+        object_id=backup_path.name,
+        summary="Created a stored manual backup containing SQLite data and uploaded media.",
+    )
+    messages.success(request, "Backup created and added to Stored Backups.")
+    return redirect("platform-backups")
+
+
+@login_required(login_url="config-login")
+def stored_backup_download(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    backup_path = _stored_backup_or_404(filename)
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.backup_downloaded",
+        object_type="PlatformBackup",
+        object_id=filename,
+        summary=f"Downloaded stored backup {filename}.",
+    )
+    return FileResponse(backup_path.open("rb"), as_attachment=True, filename=filename, content_type="application/zip")
+
+
+@login_required(login_url="config-login")
+def stored_backup_delete(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    backup_path = _stored_backup_or_404(filename)
+    if request.method == "POST":
+        backup_path.unlink()
+        AuditEvent.objects.create(
+            actor=request.user,
+            action="platform.backup_deleted",
+            object_type="PlatformBackup",
+            object_id=filename,
+            summary=f"Deleted stored backup {filename}.",
+        )
+        messages.success(request, "The stored backup was deleted.")
+        return redirect("platform-backups")
+    return render(request, "core/confirm_remove.html", {
+        "eyebrow": "Stored Backups",
+        "title": "Delete This Backup?",
+        "description": f"{filename} will be permanently removed from stored backups.",
+        "cancel_url": reverse("platform-backups"),
+        "action_label": "Delete Backup",
+        "hide_reason": True,
+    })
+
+
+@login_required(login_url="config-login")
+def platform_backup_restore(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if request.method != "POST" or connection.vendor != "sqlite":
+        return redirect("platform-backups")
+    uploaded_backup = request.FILES.get("backup")
+    if not uploaded_backup:
+        messages.error(request, "Choose a Northbound backup ZIP to restore.")
+        return redirect("platform-backups")
+    try:
+        stage_restore(uploaded_backup)
+    except (ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        messages.error(request, f"The backup could not be staged: {exc}")
+        return redirect("platform-backups")
+    AuditEvent.objects.create(actor=request.user, action="platform.restore_staged", object_type="PlatformBackup", summary="Validated and staged a platform restore for the next application restart.")
+    messages.success(request, "Backup validated and staged. Restart Northbound to apply it before the web server starts.")
+    return redirect("platform-backups")
+
+
+def health(request):
+    return JsonResponse({"ok": True, "restore_pending": pending_restore_path().exists()})
+
+
+def _restore_confirmation_error(request):
+    if not request.user.check_password(request.POST.get("current_password", "")):
+        return "Your current password is incorrect."
+    if request.POST.get("confirmation") != "RESTORE":
+        return "Enter RESTORE exactly to confirm."
+    return ""
+
+
+def _render_restore_restarting(request):
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="platform.restore_restart_requested",
+        object_type="PlatformBackup",
+        summary="Requested a graceful application restart to apply the staged restore.",
+    )
+
+    def stop_gunicorn():
+        try:
+            master_pid = int(Path("/tmp/northbound-gunicorn.pid").read_text().strip())
+            os.kill(master_pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+
+    threading.Timer(2, stop_gunicorn).start()
+    return render(request, "core/platform_restore_restarting.html")
+
+
+@login_required(login_url="config-login")
+def stored_backup_restore(request, filename):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if connection.vendor != "sqlite":
+        return redirect("platform-backups")
+    backup_path = _stored_backup_or_404(filename)
+    error = ""
+    if request.method == "POST":
+        error = _restore_confirmation_error(request)
+        if not error:
+            try:
+                stage_stored_restore(backup_path)
+            except (ValueError, zipfile.BadZipFile, json.JSONDecodeError, OSError) as exc:
+                error = f"The backup could not be staged: {exc}"
+            else:
+                AuditEvent.objects.create(
+                    actor=request.user,
+                    action="platform.restore_staged",
+                    object_type="PlatformBackup",
+                    object_id=filename,
+                    summary=f"Validated and staged stored backup {filename} for restoration.",
+                )
+                if settings.NORTHBOUND_WEB_RESTART:
+                    return _render_restore_restarting(request)
+                messages.success(
+                    request,
+                    "Backup validated and staged. Restart Northbound to apply it before the web server starts.",
+                )
+                return redirect("platform-backups")
+    return render(request, "core/platform_restore_restart.html", {
+        "error": error,
+        "backup_name": filename,
+        "form_action": reverse("stored-backup-restore", kwargs={"filename": filename}),
+    })
+
+
+@login_required(login_url="config-login")
+def platform_restore_restart(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Platform owner access is required.")
+    if not settings.NORTHBOUND_WEB_RESTART or connection.vendor != "sqlite" or not pending_restore_path().exists():
+        messages.error(request, "A web-controlled restore restart is not available.")
+        return redirect("platform-backups")
+    error = ""
+    if request.method == "POST":
+        error = _restore_confirmation_error(request)
+        if not error:
+            return _render_restore_restarting(request)
+    return render(request, "core/platform_restore_restart.html", {
+        "error": error,
+        "form_action": reverse("platform-restore-restart"),
+    })
 
 
 def setup(request):
     if get_user_model().objects.filter(is_superuser=True).exists():
+        if request.user.is_authenticated and request.user.is_superuser:
+            return redirect("config-dashboard")
         return redirect("config-login")
     form = FirstRunSetupForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        user = form.save()
+        with transaction.atomic():
+            if get_user_model().objects.filter(is_superuser=True).exists():
+                return redirect("config-login")
+            user = form.save()
+            AuditEvent.objects.create(
+                actor=user,
+                action="platform.initial_owner_created",
+                object_type="User",
+                object_id=str(user.pk),
+                summary="Completed first-run setup and created the initial platform owner.",
+            )
         login(request, user)
         messages.success(request, "Platform setup complete.")
         return redirect("config-dashboard")
@@ -243,11 +1021,17 @@ def setup(request):
 def register(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
+    platform_settings = get_platform_settings()
+    if not platform_settings.allow_public_registration:
+        return render(request, "registration/registration_unavailable.html", status=403)
     form = PublicRegistrationForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         user = form.save()
         login(request, user)
-        messages.success(request, "Account created. You can create a reading group or join one with its access code.")
+        if platform_settings.allow_user_group_creation:
+            messages.success(request, "Account created. You can create a reading group or join one with its access code.")
+        else:
+            messages.success(request, "Account created. Join an existing reading group with its access code.")
         return redirect("dashboard")
     return render(request, "registration/register.html", {"form": form})
 
@@ -262,6 +1046,8 @@ def dashboard(request):
 
 @login_required
 def group_create(request):
+    if not request.user.is_superuser and not get_platform_settings().allow_user_group_creation:
+        return render(request, "core/group_creation_unavailable.html", status=403)
     form = GroupCreateForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         token = form.cleaned_data.get("hardcover_api_token", "")
@@ -283,6 +1069,8 @@ def group_create(request):
                 )
             AuditEvent.objects.create(actor=request.user, group=group, action="group.created", object_type="ReadingGroup", object_id=str(group.pk), summary=f"Created reading group {group.name}")
         messages.success(request, f"{group.name} was created. Share its six-character access code with invited readers.")
+        if request.user.is_superuser:
+            return redirect("config-group-detail", group_slug=group.slug)
         return redirect("group-detail", group_slug=group.slug)
     return render(request, "core/group_create.html", {"form": form})
 
@@ -519,7 +1307,7 @@ def participant_role_edit(request, group_slug, pk):
         return HttpResponseForbidden("Group owner or platform root access is required.")
     participant = get_object_or_404(Membership, pk=pk, group=group, user__is_superuser=False)
     if participant.user_id == request.user.id and not request.user.is_superuser:
-        messages.error(request, "Owners cannot change their own role. Another owner or platform root must do that.")
+        messages.error(request, "Group owners cannot change their own role. Another group owner or Platform Owner must do that.")
         return redirect("participant-list", group_slug=group.slug)
     form = MembershipRoleForm(request.POST or None, instance=participant)
     if request.method == "POST" and form.is_valid():
@@ -528,7 +1316,7 @@ def participant_role_edit(request, group_slug, pk):
         AuditEvent.objects.create(actor=request.user, group=group, action="membership.role_changed", object_type="Membership", object_id=str(updated.pk), summary=f"Changed {updated.display_name} from {previous_role} to {updated.role}; active={updated.is_active}")
         messages.success(request, f"Updated {updated.display_name}'s access.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.display_name}", "eyebrow": "Platform Root Control"})
+    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.display_name}", "eyebrow": "Platform Owner Control"})
 
 
 @login_required
@@ -971,7 +1759,7 @@ def submission_create(request, group_slug, month_pk):
         messages.error(request, "This challenge month is not open for submissions.")
         return redirect(month)
     if request.user.is_superuser and not participant:
-        raise Http404("A super-administrator must also have a group membership to submit books.")
+        raise Http404("A Platform Owner must also have a group membership to submit books.")
     if not MonthEnrollment.objects.filter(month=month, participant=participant).exists():
         messages.error(request, "You are not enrolled in this challenge month. Ask a group administrator to add you to the month or one of its teams.")
         return redirect(month)

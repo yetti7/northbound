@@ -17,6 +17,7 @@ def env_list(name, default=""):
 
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-development-key-change-me")
+NORTHBOUND_VERSION = os.getenv("NORTHBOUND_VERSION", "development").strip() or "development"
 TOKEN_ENCRYPTION_KEY = os.getenv("NORTHBOUND_TOKEN_ENCRYPTION_KEY", "")
 HARDCOVER_GRAPHQL_URL = os.getenv("HARDCOVER_GRAPHQL_URL", "https://api.hardcover.app/v1/graphql")
 DEBUG = env_bool("DJANGO_DEBUG", True)
@@ -66,11 +67,12 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "core.middleware.RequestSizeLimitMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.RequestSizeLimitMiddleware",
+    "core.middleware.RequirePlatformSetupMiddleware",
     "core.middleware.RequirePasswordChangeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -85,6 +87,7 @@ TEMPLATES = [{
         "django.template.context_processors.request",
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
+        "core.context_processors.platform_configuration",
     ]},
 }]
 WSGI_APPLICATION = "reading_challenge.wsgi.application"
@@ -148,6 +151,8 @@ MEDIA_ROOT = Path(os.getenv("NORTHBOUND_MEDIA_ROOT", BASE_DIR / "media"))
 NORTHBOUND_SERVE_MEDIA = env_bool("NORTHBOUND_SERVE_MEDIA", DEBUG)
 NORTHBOUND_MAX_PROFILE_PICTURE_BYTES = int(os.getenv("NORTHBOUND_MAX_PROFILE_PICTURE_BYTES", str(10 * 1024 * 1024)))
 NORTHBOUND_MAX_REQUEST_BYTES = int(os.getenv("NORTHBOUND_MAX_REQUEST_BYTES", str(11 * 1024 * 1024)))
+NORTHBOUND_MAX_BACKUP_BYTES = int(os.getenv("NORTHBOUND_MAX_BACKUP_BYTES", str(1024 * 1024 * 1024)))
+NORTHBOUND_WEB_RESTART = env_bool("NORTHBOUND_WEB_RESTART", False)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"

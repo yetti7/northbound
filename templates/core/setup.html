@@ -2,8 +2,9 @@
 {% block title %}Platform Setup · Northbound{% endblock %}
 {% block content %}
 <section class="auth-card wide">
-  <p class="eyebrow">First-Run Setup</p>
-  <h1>Create the Developer Account</h1>
-  <form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Complete Setup</button></form>
+  <p class="eyebrow">Welcome to Northbound</p>
+  <h1>Set Up Your Platform Owner</h1>
+  <p class="lede">This account controls the entire Northbound installation. It is separate from all group-level roles, and you can add another equal owner later.</p>
+  <form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Create Owner and Finish Setup</button></form>
 </section>
 {% endblock %}
