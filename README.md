@@ -56,6 +56,8 @@ python manage.py runserver
 
 Without `DATABASE_URL` or `POSTGRES_HOST`, Northbound uses SQLite. PostgreSQL remains supported for hosted and advanced deployments.
 
+For the deterministic development-only showcase dataset and reset-safe seeding command, see [docs/DEMO_DATA.md](docs/DEMO_DATA.md).
+
 To build the current checkout in Docker instead of pulling the released image:
 
 ```bash
