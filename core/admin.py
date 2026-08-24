@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, ReadingGroup, Team, TeamAssignment
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, ChallengeStaffAssignment, HardcoverConnection, Membership, MonthEnrollment, ReadingGroup, Team, TeamAssignment
 
 
 @admin.register(ReadingGroup)
@@ -15,6 +15,7 @@ class MembershipAdmin(admin.ModelAdmin):
 
 
 admin.site.register(ChallengeMonth)
+admin.site.register(ChallengeStaffAssignment)
 admin.site.register(Team)
 admin.site.register(TeamAssignment)
 admin.site.register(MonthEnrollment)

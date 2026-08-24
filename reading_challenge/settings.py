@@ -88,6 +88,7 @@ TEMPLATES = [{
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
         "core.context_processors.platform_configuration",
+        "core.context_processors.needs_attention",
     ]},
 }]
 WSGI_APPLICATION = "reading_challenge.wsgi.application"

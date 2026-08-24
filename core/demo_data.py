@@ -15,6 +15,7 @@ from .models import (
     CatalogBook,
     CatalogEdition,
     ChallengeMonth,
+    ChallengeStaffAssignment,
     Membership,
     MonthEnrollment,
     MonthTheme,
@@ -68,16 +69,16 @@ GROUP_SPECS = {
         "announcement": "Sunday check-in is open—share one passage that stayed with you this week.",
         "members": {
             "maren.holt": Membership.Role.OWNER,
-            "theo.bennett": Membership.Role.ADMIN,
+            "theo.bennett": Membership.Role.MODERATOR,
             "priya.shah": Membership.Role.MODERATOR,
-            "caleb.ross": Membership.Role.GAME_MANAGER,
-            "lena.ortiz": Membership.Role.READER,
-            "nora.kim": Membership.Role.READER,
-            "elliot.price": Membership.Role.READER,
-            "jasmine.cole": Membership.Role.READER,
-            "wesley.grant": Membership.Role.READER,
-            "fiona.brooks": Membership.Role.READER,
-            "jonah.vale": Membership.Role.READER,
+            "caleb.ross": Membership.Role.MEMBER,
+            "lena.ortiz": Membership.Role.MEMBER,
+            "nora.kim": Membership.Role.MEMBER,
+            "elliot.price": Membership.Role.MEMBER,
+            "jasmine.cole": Membership.Role.MEMBER,
+            "wesley.grant": Membership.Role.MEMBER,
+            "fiona.brooks": Membership.Role.MEMBER,
+            "jonah.vale": Membership.Role.MEMBER,
         },
         "reviewer": "priya.shah",
     },
@@ -88,16 +89,16 @@ GROUP_SPECS = {
         "announcement": "The lantern stays lit after midnight—bring your strangest atmospheric read to Friday's chat.",
         "members": {
             "celeste.rowan": Membership.Role.OWNER,
-            "jonah.vale": Membership.Role.ADMIN,
+            "jonah.vale": Membership.Role.MODERATOR,
             "amara.quinn": Membership.Role.MODERATOR,
-            "miles.arden": Membership.Role.GAME_MANAGER,
-            "ivy.mercer": Membership.Role.READER,
-            "dante.frost": Membership.Role.READER,
-            "soraya.bell": Membership.Role.READER,
-            "lucas.wren": Membership.Role.READER,
-            "opal.rivera": Membership.Role.READER,
-            "henry.sloane": Membership.Role.READER,
-            "nora.kim": Membership.Role.GAME_MANAGER,
+            "miles.arden": Membership.Role.MEMBER,
+            "ivy.mercer": Membership.Role.MEMBER,
+            "dante.frost": Membership.Role.MEMBER,
+            "soraya.bell": Membership.Role.MEMBER,
+            "lucas.wren": Membership.Role.MEMBER,
+            "opal.rivera": Membership.Role.MEMBER,
+            "henry.sloane": Membership.Role.MEMBER,
+            "nora.kim": Membership.Role.MEMBER,
         },
         "reviewer": "amara.quinn",
     },
@@ -512,6 +513,24 @@ class DemoDataSeeder:
             self.months[month_key] = month
             actor = self.users[next(username for username, role in GROUP_SPECS[spec["group"]]["members"].items() if role == Membership.Role.OWNER)]
             self._audit(actor, group, "month.created", "ChallengeMonth", month.pk, f"Created {month.name}.", spec["starts_on"])
+
+            if spec["status"] == ChallengeMonth.Status.OPEN:
+                reviewer_username = GROUP_SPECS[spec["group"]]["reviewer"]
+                host = ChallengeStaffAssignment.objects.create(
+                    month=month,
+                    membership=self.memberships[(spec["group"], reviewer_username)],
+                    role=ChallengeStaffAssignment.Role.HOST,
+                    assigned_by=actor,
+                )
+                self._audit(
+                    actor,
+                    group,
+                    "challenge.host_assigned",
+                    "ChallengeStaffAssignment",
+                    host.pk,
+                    f"Assigned {host.membership.display_name} as a Host for {month.name}.",
+                    spec["starts_on"],
+                )
 
             for team_key, name, color in TEAM_SPECS[month_key]:
                 self.teams[(month_key, team_key)] = Team.objects.create(month=month, name=name, color=color)

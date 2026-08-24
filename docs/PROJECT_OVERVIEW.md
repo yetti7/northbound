@@ -7,7 +7,7 @@ Northbound is a durable replacement for monthly Google Forms and formula-heavy t
 ## Macro domains
 
 1. **Platform operations** — equal platform owners, group provisioning, audit history, backups, and upgrades.
-2. **Groups and people** — group owners, administrators, moderators, game managers, readers, and historical membership.
+2. **Groups and people** — group owners, moderators, members, and historical membership.
 3. **Monthly lifecycle** — draft, open, closed, finalized, and archived challenge months.
 4. **Reading records** — book/edition selection, submitted pages, metadata pages, approved pages, and review decisions.
 5. **Challenges** — TBR, BOTM, prompt lists, date-based themes, and manual claims.

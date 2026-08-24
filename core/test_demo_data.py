@@ -219,10 +219,10 @@ class DemoDataSeederTests(TestCase):
             self.assertEqual(months.filter(status=ChallengeMonth.Status.OPEN).count(), 1)
             self.assertEqual(months.filter(status__in=[ChallengeMonth.Status.FINALIZED, ChallengeMonth.Status.ARCHIVED]).count(), 1)
 
-        self.assertEqual(Membership.objects.get(group__slug="lantern-leaf-society", user__username="nora.kim").role, Membership.Role.READER)
-        self.assertEqual(Membership.objects.get(group__slug="midnight-quill-guild", user__username="nora.kim").role, Membership.Role.GAME_MANAGER)
-        self.assertEqual(Membership.objects.get(group__slug="midnight-quill-guild", user__username="jonah.vale").role, Membership.Role.ADMIN)
-        self.assertEqual(Membership.objects.get(group__slug="lantern-leaf-society", user__username="jonah.vale").role, Membership.Role.READER)
+        self.assertEqual(Membership.objects.get(group__slug="lantern-leaf-society", user__username="nora.kim").role, Membership.Role.MEMBER)
+        self.assertEqual(Membership.objects.get(group__slug="midnight-quill-guild", user__username="nora.kim").role, Membership.Role.MEMBER)
+        self.assertEqual(Membership.objects.get(group__slug="midnight-quill-guild", user__username="jonah.vale").role, Membership.Role.MODERATOR)
+        self.assertEqual(Membership.objects.get(group__slug="lantern-leaf-society", user__username="jonah.vale").role, Membership.Role.MEMBER)
 
         for month in ChallengeMonth.objects.filter(group__slug__in=demo_slugs):
             self.assertEqual(month.teams.count(), 2)

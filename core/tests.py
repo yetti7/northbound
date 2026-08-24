@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from .integrations.hardcover import HardcoverLinkError, lookup_edition, parse_hardcover_url, resolve_scoring_edition, search_books
 from .integrations.secrets import decrypt_token
-from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import AuditEvent, BookSubmission, CatalogBook, CatalogEdition, CatalogSearchCache, ChallengeMonth, ChallengeStaffAssignment, HardcoverConnection, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformOwnerInvitation, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import CAPABILITIES
 
 
@@ -96,31 +96,46 @@ class PermissionOverrideTests(TestCase):
         self.reader = User.objects.create_user("permission-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Permission Group", slug="permission-group")
         self.owner_membership = Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Permission Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.DRAFT)
 
-    def permission_payload(self, role=Membership.Role.READER, **overrides):
+    def permission_payload(self, role=Membership.Role.MEMBER, **overrides):
         payload = {"role": role}
         payload.update({capability: overrides.get(capability, "inherit") for capability in CAPABILITIES})
         return payload
 
-    def test_owner_can_grant_team_management_without_month_management(self):
+    def test_retired_team_management_override_is_not_rendered_or_saved(self):
         self.client.force_login(self.owner)
         url = reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.reader_membership.pk})
         response = self.client.post(url, self.permission_payload(manage_teams="allow"))
         self.assertRedirects(response, reverse("participant-list", kwargs={"group_slug": self.group.slug}))
         self.reader_membership.refresh_from_db()
-        self.assertEqual(self.reader_membership.permission_overrides, {"manage_teams": True})
+        self.assertNotIn("manage_teams", CAPABILITIES)
+        self.assertNotIn("manage_teams", self.reader_membership.permission_overrides)
 
         self.client.force_login(self.reader)
         team_url = reverse("team-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})
-        self.assertEqual(self.client.get(team_url).status_code, 200)
+        self.assertEqual(self.client.get(team_url).status_code, 403)
         self.assertEqual(self.client.get(reverse("month-create", kwargs={"group_slug": self.group.slug})).status_code, 403)
 
     def test_owner_cannot_change_own_permissions(self):
         self.client.force_login(self.owner)
         url = reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.owner_membership.pk})
         self.assertRedirects(self.client.get(url), reverse("participant-list", kwargs={"group_slug": self.group.slug}))
+
+    def test_role_forms_expose_only_owner_moderator_and_member(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.reader_membership.pk})
+        )
+        self.assertEqual(
+            list(response.context["form"].fields["role"].choices),
+            list(Membership.Role.choices),
+        )
+        self.assertEqual(
+            [value for value, _label in response.context["form"].fields["role"].choices],
+            ["owner", "moderator", "member"],
+        )
 
 
 class PlatformAccountManagementTests(TestCase):
@@ -130,7 +145,7 @@ class PlatformAccountManagementTests(TestCase):
         self.reader = User.objects.create_user("managed-reader", "reader@example.com", "old-reader-password")
         self.deactivated_reader = User.objects.create_user("archived-reader", "archived@example.com", "old-reader-password", is_active=False)
         self.group = ReadingGroup.objects.create(name="Managed Group", slug="managed-group")
-        self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Managed Reader")
+        self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Managed Reader")
 
     def test_root_user_directory_excludes_root_and_shows_memberships(self):
         self.client.force_login(self.root)
@@ -213,7 +228,7 @@ class PlatformGroupManagementTests(TestCase):
             group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Central Owner"
         )
         self.reader_membership = Membership.objects.create(
-            group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Central Reader"
+            group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Central Reader"
         )
         self.month = ChallengeMonth.objects.create(
             group=self.group,
@@ -388,7 +403,7 @@ class HardcoverConnectionTests(TestCase):
         self.reader = User.objects.create_user("hardcover-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Hardcover Group", slug="hardcover-group")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.url = reverse("group-hardcover-connection", kwargs={"group_slug": self.group.slug})
         self.edit_url = reverse("group-edit", kwargs={"group_slug": self.group.slug})
 
@@ -486,8 +501,8 @@ class MyStatsTests(TestCase):
         self.reader = User.objects.create_user("stats-reader", password="test-password")
         self.other = User.objects.create_user("stats-other", password="test-password")
         self.group = ReadingGroup.objects.create(name="Stats Group", slug="stats-group")
-        self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Stats Reader")
-        other_membership = Membership.objects.create(group=self.group, user=self.other, role=Membership.Role.READER, display_name="Other Reader")
+        self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Stats Reader")
+        other_membership = Membership.objects.create(group=self.group, user=self.other, role=Membership.Role.MEMBER, display_name="Other Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Stats Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
         MonthEnrollment.objects.create(month=self.month, participant=self.membership)
         team = Team.objects.create(month=self.month, name="North Team")
@@ -524,9 +539,10 @@ class SubmissionWorkflowTests(TestCase):
         self.reader = User.objects.create_user("reader", password="test-password")
         self.mod = User.objects.create_user("mod", password="test-password")
         self.group = ReadingGroup.objects.create(name="Test Group", slug="test-group")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
-        Membership.objects.create(group=self.group, user=self.mod, role=Membership.Role.MODERATOR, display_name="Mod")
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
+        moderator_membership = Membership.objects.create(group=self.group, user=self.mod, role=Membership.Role.MODERATOR, display_name="Mod")
         self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.reader_membership)
 
     def test_reader_submits_and_moderator_approves_pages(self):
@@ -642,9 +658,10 @@ class ThemeScoringTests(TestCase):
         self.reader = User.objects.create_user("theme-reader", password="test-password")
         self.moderator = User.objects.create_user("theme-moderator", password="test-password")
         self.group = ReadingGroup.objects.create(name="Theme Group", slug="theme-group")
-        self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Theme Reader")
-        Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Theme Moderator")
+        self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Theme Reader")
+        moderator_membership = Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Theme Moderator")
         self.month = ChallengeMonth.objects.create(group=self.group, name="August Themes", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.participant)
         self.prompted = MonthTheme.objects.create(month=self.month, name="Level Up", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), bonus_pages=50, prompt="Name the character that levels up")
         self.limited = MonthTheme.objects.create(month=self.month, name="Midmonth", starts_on=date(2026, 8, 10), ends_on=date(2026, 8, 20), bonus_pages=75)
@@ -748,9 +765,10 @@ class MonthLifecycleEnforcementTests(TestCase):
         self.owner = User.objects.create_user("lifecycle-owner", password="test-password")
         self.reader = User.objects.create_user("lifecycle-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Lifecycle Group", slug="lifecycle-group")
-        Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        owner_membership = Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
+        self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Lifecycle Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.OPEN)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=owner_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.participant)
         self.submission = BookSubmission.objects.create(month=self.month, participant=self.participant, title="Pending Lifecycle Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 9, 10), submitted_pages=200)
 
@@ -818,8 +836,8 @@ class SubmissionPrivacyTests(TestCase):
         self.reader_two = User.objects.create_user("privacy-reader-two", password="test-password")
         self.moderator = User.objects.create_user("privacy-moderator", password="test-password")
         self.group = ReadingGroup.objects.create(name="Privacy Group", slug="privacy-group")
-        self.membership_one = Membership.objects.create(group=self.group, user=self.reader_one, role=Membership.Role.READER, display_name="Reader One")
-        self.membership_two = Membership.objects.create(group=self.group, user=self.reader_two, role=Membership.Role.READER, display_name="Reader Two")
+        self.membership_one = Membership.objects.create(group=self.group, user=self.reader_one, role=Membership.Role.MEMBER, display_name="Reader One")
+        self.membership_two = Membership.objects.create(group=self.group, user=self.reader_two, role=Membership.Role.MEMBER, display_name="Reader Two")
         Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Private Month", starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 31), status=ChallengeMonth.Status.OPEN)
         self.own_submission = BookSubmission.objects.create(month=self.month, participant=self.membership_one, title="My Visible Book", author="Author One", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 10, 5), submitted_pages=210)
@@ -834,14 +852,14 @@ class SubmissionPrivacyTests(TestCase):
         self.assertNotContains(response, "987")
         self.assertNotContains(response, "Reader Two")
 
-    def test_moderator_sees_all_month_submissions(self):
+    def test_moderator_sees_no_other_reader_month_submissions(self):
         self.client.force_login(self.moderator)
         response = self.client.get(self.month.get_absolute_url())
-        self.assertContains(response, "Recent Submissions")
-        self.assertContains(response, "My Visible Book")
-        self.assertContains(response, "Other Secret Book")
-        self.assertContains(response, "Reader One")
-        self.assertContains(response, "Reader Two")
+        self.assertContains(response, "My Submissions")
+        self.assertNotContains(response, "My Visible Book")
+        self.assertNotContains(response, "Other Secret Book")
+        self.assertNotContains(response, "Reader One")
+        self.assertNotContains(response, "Reader Two")
 
 
 class PlatformRootVisibilityTests(TestCase):
@@ -851,7 +869,7 @@ class PlatformRootVisibilityTests(TestCase):
         self.reader = User.objects.create_user("visible-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Visible Group", slug="visible-group")
         Membership.objects.create(group=self.group, user=self.root, role=Membership.Role.OWNER, display_name="Hidden Root")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Visible Reader")
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Visible Reader")
 
     def test_root_membership_is_hidden_from_participant_directory_and_count(self):
         self.client.force_login(self.root)
@@ -1886,7 +1904,7 @@ class GroupEditingTests(TestCase):
         self.reader = User.objects.create_user("group-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Original Group", slug="original-group", timezone="America/New_York")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
 
     def test_owner_can_edit_group_without_changing_stable_slug(self):
         self.client.force_login(self.owner)
@@ -1914,12 +1932,13 @@ class OwnerRemovalTests(TestCase):
         self.owner = User.objects.create_user("owner", password="test-password")
         self.reader = User.objects.create_user("delete-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Owner Group", slug="owner-group")
-        Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        self.owner_membership = Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=self.owner_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.submission = BookSubmission.objects.create(month=self.month, participant=self.reader_membership, title="Removable Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 10), submitted_pages=200, approved_pages=200, status=BookSubmission.Status.APPROVED)
 
-    def test_owner_soft_removes_book_from_totals(self):
+    def test_host_soft_removes_book_from_totals(self):
         self.client.force_login(self.owner)
         response = self.client.post(reverse("submission-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.submission.pk}), {"reason": "Duplicate"})
         self.assertRedirects(response, self.month.get_absolute_url())
@@ -1978,7 +1997,7 @@ class RegistrationAndGroupAccessTests(TestCase):
         response = self.client.post(reverse("group-join"), {"access_code": group.join_code.lower()})
         self.assertRedirects(response, reverse("group-detail", kwargs={"group_slug": group.slug}))
         membership = Membership.objects.get(group=group, user=joiner)
-        self.assertEqual(membership.role, Membership.Role.READER)
+        self.assertEqual(membership.role, Membership.Role.MEMBER)
 
         self.client.force_login(owner)
         response = self.client.post(reverse("participant-role-edit", kwargs={"group_slug": group.slug, "pk": membership.pk}), {"role": Membership.Role.MODERATOR, "is_active": "on"})
@@ -2053,7 +2072,7 @@ class TeamStatsVisibilityTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Visibility Group", slug="visibility-group")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
         Membership.objects.create(group=self.group, user=self.mod, role=Membership.Role.MODERATOR, display_name="Mod")
-        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Secret Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
         Team.objects.create(month=self.month, name="Team One", color="#6633cc")
 
@@ -2093,9 +2112,16 @@ class MonthEnrollmentTests(TestCase):
         self.reader = User.objects.create_user("enrollment-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Enrollment Group", slug="enrollment-group")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.admin, role=Membership.Role.ADMIN, display_name="Admin")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        admin_membership = Membership.objects.create(
+            group=self.group,
+            user=self.admin,
+            role=Membership.Role.MODERATOR,
+            display_name="Moderator",
+            permission_overrides={"manage_participants": True, "manage_teams": True},
+        )
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Enrollment Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=admin_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.team = Team.objects.create(month=self.month, name="Enrollment Team")
 
     def test_team_assignment_automatically_enrolls_participant(self):
@@ -2111,14 +2137,14 @@ class MonthEnrollmentTests(TestCase):
         self.assertRedirects(response, self.month.get_absolute_url())
         self.assertFalse(BookSubmission.objects.exists())
 
-    def test_admin_can_enroll_reader_without_team(self):
+    def test_host_can_enroll_reader_without_team(self):
         self.client.force_login(self.admin)
         response = self.client.post(reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"participant": self.reader_membership.pk})
         self.assertRedirects(response, reverse("month-participant-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.assertTrue(MonthEnrollment.objects.filter(month=self.month, participant=self.reader_membership).exists())
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership).exists())
 
-    def test_admin_can_optionally_assign_team_while_enrolling(self):
+    def test_host_can_optionally_assign_team_while_enrolling(self):
         self.client.force_login(self.admin)
         response = self.client.post(reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {
             "participant": self.reader_membership.pk,
@@ -2128,7 +2154,7 @@ class MonthEnrollmentTests(TestCase):
         self.assertTrue(MonthEnrollment.objects.filter(month=self.month, participant=self.reader_membership).exists())
         self.assertTrue(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, team=self.team).exists())
 
-    def test_admin_can_assign_move_and_unassign_enrolled_reader(self):
+    def test_host_can_assign_move_and_unassign_enrolled_reader(self):
         enrollment = MonthEnrollment.objects.create(month=self.month, participant=self.reader_membership)
         second_team = Team.objects.create(month=self.month, name="Second Team")
         self.client.force_login(self.admin)
@@ -2145,11 +2171,11 @@ class MonthEnrollmentTests(TestCase):
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership).exists())
         self.assertTrue(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
 
-    def test_owner_removes_reader_from_month_but_preserves_submission(self):
+    def test_host_removes_reader_from_month_but_preserves_submission(self):
         enrollment = MonthEnrollment.objects.create(month=self.month, participant=self.reader_membership)
         TeamAssignment.objects.create(month=self.month, participant=self.reader_membership, team=self.team)
         submission = BookSubmission.objects.create(month=self.month, participant=self.reader_membership, title="Preserved Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 10), submitted_pages=200)
-        self.client.force_login(self.owner)
+        self.client.force_login(self.admin)
 
         response = self.client.post(reverse("month-participant-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": enrollment.pk}))
         self.assertRedirects(response, reverse("month-participant-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
@@ -2165,7 +2191,13 @@ class MonthLifecycleTests(TestCase):
         self.admin = User.objects.create_user("lifecycle-admin", password="test-password")
         self.group = ReadingGroup.objects.create(name="Lifecycle Group", slug="lifecycle-group")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.admin, role=Membership.Role.ADMIN, display_name="Admin")
+        admin_membership = Membership.objects.create(
+            group=self.group,
+            user=self.admin,
+            role=Membership.Role.MODERATOR,
+            display_name="Moderator",
+            permission_overrides={"manage_months": True},
+        )
         self.month = ChallengeMonth.objects.create(group=self.group, name="Draft Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.DRAFT)
 
     def test_admin_can_change_draft_to_open(self):
@@ -2227,12 +2259,19 @@ class TeamManagementTests(TestCase):
         self.reader = User.objects.create_user("team-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Team Management Group", slug="team-management-group")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.admin, role=Membership.Role.ADMIN, display_name="Admin")
-        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        admin_membership = Membership.objects.create(
+            group=self.group,
+            user=self.admin,
+            role=Membership.Role.MODERATOR,
+            display_name="Moderator",
+            permission_overrides={"manage_teams": True},
+        )
+        self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Team Draft", starts_on=date(2026, 11, 1), ends_on=date(2026, 11, 30), status=ChallengeMonth.Status.DRAFT)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=admin_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.team = Team.objects.create(month=self.month, name="Original Team", color="#112233")
 
-    def test_admin_can_rename_and_recolor_team(self):
+    def test_host_can_rename_and_recolor_team(self):
         self.client.force_login(self.admin)
         response = self.client.post(reverse("team-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk}), {
             "name": "Renamed Team",
@@ -2264,15 +2303,15 @@ class TeamManagementTests(TestCase):
         self.team.refresh_from_db()
         self.assertFalse(self.team.is_archived)
 
-    def test_owner_can_delete_only_unused_draft_team(self):
-        self.client.force_login(self.owner)
+    def test_host_can_delete_only_unused_draft_team(self):
+        self.client.force_login(self.admin)
         response = self.client.post(reverse("team-delete", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk}))
         self.assertRedirects(response, reverse("team-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.assertFalse(Team.objects.filter(pk=self.team.pk).exists())
 
     def test_assigned_or_non_draft_team_is_protected_from_deletion(self):
         TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.reader_membership)
-        self.client.force_login(self.owner)
+        self.client.force_login(self.admin)
         delete_url = reverse("team-delete", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk})
         response = self.client.post(delete_url)
         self.assertRedirects(response, reverse("team-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk}))
@@ -2293,9 +2332,9 @@ class ReaderProfileTests(TestCase):
         self.other_reader = User.objects.create_user("profile-other", password="test-password")
         self.moderator = User.objects.create_user("profile-moderator", password="test-password")
         self.group = ReadingGroup.objects.create(name="Profile Group", slug="profile-group")
-        self.profile_membership = Membership.objects.create(group=self.group, user=self.profile_user, role=Membership.Role.READER, display_name="Profile Reader")
-        Membership.objects.create(group=self.group, user=self.other_reader, role=Membership.Role.READER, display_name="Other Reader")
-        Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
+        self.profile_membership = Membership.objects.create(group=self.group, user=self.profile_user, role=Membership.Role.MEMBER, display_name="Profile Reader")
+        Membership.objects.create(group=self.group, user=self.other_reader, role=Membership.Role.MEMBER, display_name="Other Reader")
+        moderator_membership = Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
         self.month = ChallengeMonth.objects.create(group=self.group, name="Profile Month", starts_on=date(2026, 12, 1), ends_on=date(2026, 12, 31), status=ChallengeMonth.Status.OPEN)
         self.team = Team.objects.create(month=self.month, name="Profile Team", color="#445566")
         TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.profile_membership)
@@ -2325,12 +2364,13 @@ class ReaderProfileTests(TestCase):
         self.assertNotContains(response, "Profile Team")
         self.assertNotContains(response, "Private Profile Book")
 
-    def test_moderator_sees_detailed_monthly_profile(self):
+    def test_moderator_sees_summary_but_not_detailed_history(self):
         self.client.force_login(self.moderator)
         response = self.client.get(self.url)
-        self.assertContains(response, "Monthly History")
-        self.assertContains(response, "Profile Month")
-        self.assertContains(response, "Profile Team")
+        self.assertContains(response, "Verified Pages")
+        self.assertNotContains(response, "Monthly History")
+        self.assertNotContains(response, "Profile Month")
+        self.assertNotContains(response, "Profile Team")
 
 
 class AnnouncementTests(TestCase):
@@ -2341,8 +2381,8 @@ class AnnouncementTests(TestCase):
         self.reader = User.objects.create_user("announcement-reader", password="test-password")
         self.group = ReadingGroup.objects.create(name="Announcement Group", slug="announcement-group", announcement_enabled=True, announcement="Group-wide news")
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
-        Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
-        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.READER, display_name="Reader")
+        moderator_membership = Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
+        Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         self.month = ChallengeMonth.objects.create(
             group=self.group,
             name="Announcement Month",
@@ -2350,6 +2390,7 @@ class AnnouncementTests(TestCase):
             ends_on=date(2026, 8, 31),
             status=ChallengeMonth.Status.OPEN,
         )
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.client.force_login(self.owner)
 
     def test_group_announcement_appears_above_group_summary(self):
@@ -2374,7 +2415,7 @@ class AnnouncementTests(TestCase):
         self.assertContains(response, "Month-specific news")
         self.assertNotContains(response, "Group-wide news")
 
-    def test_moderator_can_inline_edit_announcements(self):
+    def test_moderator_host_can_edit_group_and_challenge_announcements(self):
         self.client.force_login(self.moderator)
         group_response = self.client.post(reverse("group-announcement-update", kwargs={"group_slug": self.group.slug}), {"announcement": "Updated group news"})
         self.assertRedirects(group_response, reverse("group-detail", kwargs={"group_slug": self.group.slug}))

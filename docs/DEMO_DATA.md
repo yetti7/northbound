@@ -29,16 +29,16 @@ This broad social reading group demonstrates public team comparisons, an inherit
 | Username | Name | Group role |
 | --- | --- | --- |
 | `maren.holt` | Maren Holt | Group Owner |
-| `theo.bennett` | Theo Bennett | Administrator |
+| `theo.bennett` | Theo Bennett | Moderator |
 | `priya.shah` | Priya Shah | Moderator |
-| `caleb.ross` | Caleb Ross | Game Manager |
-| `lena.ortiz` | Lena Ortiz | Reader |
-| `nora.kim` | Nora Kim | Reader |
-| `elliot.price` | Elliot Price | Reader |
-| `jasmine.cole` | Jasmine Cole | Reader |
-| `wesley.grant` | Wesley Grant | Reader |
-| `fiona.brooks` | Fiona Brooks | Reader, currently unassigned |
-| `jonah.vale` | Jonah Vale | Cross-group Reader |
+| `caleb.ross` | Caleb Ross | Member |
+| `lena.ortiz` | Lena Ortiz | Member |
+| `nora.kim` | Nora Kim | Member |
+| `elliot.price` | Elliot Price | Member |
+| `jasmine.cole` | Jasmine Cole | Member |
+| `wesley.grant` | Wesley Grant | Member |
+| `fiona.brooks` | Fiona Brooks | Member, currently unassigned |
+| `jonah.vale` | Jonah Vale | Cross-group Member |
 
 ## Midnight Quill Guild
 
@@ -47,16 +47,16 @@ This atmospheric genre group demonstrates staff-only team statistics, a custom c
 | Username | Name | Group role |
 | --- | --- | --- |
 | `celeste.rowan` | Celeste Rowan | Group Owner |
-| `jonah.vale` | Jonah Vale | Administrator |
+| `jonah.vale` | Jonah Vale | Moderator |
 | `amara.quinn` | Amara Quinn | Moderator |
-| `miles.arden` | Miles Arden | Game Manager |
-| `ivy.mercer` | Ivy Mercer | Reader |
-| `dante.frost` | Dante Frost | Reader |
-| `soraya.bell` | Soraya Bell | Reader |
-| `lucas.wren` | Lucas Wren | Reader |
-| `opal.rivera` | Opal Rivera | Reader |
-| `henry.sloane` | Henry Sloane | Reader, currently unassigned |
-| `nora.kim` | Nora Kim | Cross-group Game Manager |
+| `miles.arden` | Miles Arden | Member |
+| `ivy.mercer` | Ivy Mercer | Member |
+| `dante.frost` | Dante Frost | Member |
+| `soraya.bell` | Soraya Bell | Member |
+| `lucas.wren` | Lucas Wren | Member |
+| `opal.rivera` | Opal Rivera | Member |
+| `henry.sloane` | Henry Sloane | Member, currently unassigned |
+| `nora.kim` | Nora Kim | Cross-group Member |
 
 The dataset includes two challenge months per group, two teams and two themes per month, 20 fictional catalog books, 34 submissions, approved and pending theme claims, unequal team scores, historical team changes, review queues, and safe audit activity. It uses no external API calls, downloaded covers, or filesystem paths outside normal Northbound data storage.
 
