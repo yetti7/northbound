@@ -89,6 +89,7 @@ TEMPLATES = [{
         "django.contrib.messages.context_processors.messages",
         "core.context_processors.platform_configuration",
         "core.context_processors.needs_attention",
+        "core.context_processors.logical_navigation",
     ]},
 }]
 WSGI_APPLICATION = "reading_challenge.wsgi.application"

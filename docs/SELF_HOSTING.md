@@ -18,6 +18,8 @@ docker compose ps
 
 Open `/setup/` at the configured URL. No PostgreSQL administration or database password is required.
 
+The application container automatically runs Challenge schedule processing alongside Gunicorn. Due registration and lifecycle actions are evaluated every 30 seconds on both SQLite and PostgreSQL. SQLite automatic backups use a separate SQLite-specific scheduler process.
+
 ## Persistent data
 
 The `northbound_data` volume contains:

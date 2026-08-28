@@ -56,7 +56,7 @@ class ChallengeHostStaffingTests(TestCase):
             name="Hosted Month",
             starts_on=date(2026, 8, 1),
             ends_on=date(2026, 8, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         self.other_month = ChallengeMonth.objects.create(
             group=self.group,

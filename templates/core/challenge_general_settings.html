@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}General Settings · {{ month.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ month.name }} · Challenge Settings</p><h1>General Settings</h1><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">Save General Settings</button><a class="button" href="{% url 'challenge-settings' month.group.slug month.pk %}">Cancel</a></div></form></section>
+{% endblock %}

@@ -1,28 +1,31 @@
-from .models import ChallengeStaffAssignment, Membership
+from django.db.models import Q
+
+from .models import ChallengeStaffAssignment, Membership, MonthEnrollment, TeamAssignment
 
 
 CAPABILITIES = {
     "manage_group_settings": "Manage Group settings, access code, and integrations",
     "manage_participants": "Manage permanent Group members",
-    "manage_months": "Create and edit Months, delete Draft Months, and assign Hosts",
-    "manage_announcements": "Edit permanent Group announcements",
-    "remove_content": "Manage legacy team-stat visibility configuration",
-    "view_hidden_stats": "View team statistics when they are restricted",
+    "manage_months": "Create Challenges, manage Draft Challenges, and assign Hosts",
+    "manage_announcements": "Manage Group announcements",
+    "remove_content": "Legacy compatibility: retired content authority",
+    "view_hidden_stats": "Legacy compatibility: retired score-visibility authority",
     "manage_permissions": "Manage Group roles and permission delegation",
 }
 
-# remove_content remains an internal compatibility capability for the
-# Phase-3-deferred team-stat visibility setting. It is intentionally not a
-# human-facing Group delegation control.
+INTERNAL_COMPATIBILITY_CAPABILITIES = {"remove_content", "view_hidden_stats"}
+
+# Preserve restored/historical override keys without exposing them as a second
+# human-facing path to Challenge competition visibility.
 DELEGABLE_CAPABILITIES = {
     capability: label
     for capability, label in CAPABILITIES.items()
-    if capability != "remove_content"
+    if capability not in INTERNAL_COMPATIBILITY_CAPABILITIES
 }
 
 ROLE_CAPABILITIES = {
     Membership.Role.OWNER: set(CAPABILITIES),
-    Membership.Role.MODERATOR: {"manage_announcements", "view_hidden_stats"},
+    Membership.Role.MODERATOR: {"manage_announcements"},
     Membership.Role.MEMBER: set(),
 }
 
@@ -85,8 +88,52 @@ def can_operate_challenge(user, month):
     return user.is_authenticated and (user.is_superuser or is_challenge_host(user, month))
 
 
-def can_manage_announcements(user, group):
+def can_view_challenge(user, month):
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    membership = membership_for(user, month.group)
+    if not membership:
+        return False
+    if month.status != month.Status.DRAFT:
+        return True
+    if membership.role == Membership.Role.OWNER:
+        return True
+    return membership_has_capability(membership, "manage_months") or is_challenge_host(user, month)
+
+
+def can_transition_challenge(user, month):
+    """Lifecycle authority without conflating Group authority with Host operations."""
+    return can_manage_months(user, month.group) or can_operate_challenge(user, month)
+
+
+def visible_challenges_for(user, queryset):
+    if not user.is_authenticated:
+        return queryset.none()
+    if user.is_superuser:
+        return queryset
+    membership_ids = Membership.objects.filter(user=user, is_active=True).values_list("pk", flat=True)
+    return queryset.filter(
+        Q(status__isnull=False) & (
+            ~Q(status="draft")
+            | Q(group__memberships__user=user, group__memberships__is_active=True, group__memberships__role=Membership.Role.OWNER)
+            | Q(group__memberships__user=user, group__memberships__is_active=True, group__memberships__permission_overrides__manage_months=True)
+            | Q(
+                staff_assignments__membership_id__in=membership_ids,
+                staff_assignments__role=ChallengeStaffAssignment.Role.HOST,
+                staff_assignments__ended_at__isnull=True,
+            )
+        )
+    ).distinct()
+
+
+def can_manage_group_announcements(user, group):
     return has_capability(user, group, "manage_announcements")
+
+
+def can_manage_challenge_announcements(user, month):
+    return can_operate_challenge(user, month) or can_manage_months(user, month.group)
 
 
 def can_manage_permissions(user, group):
@@ -136,6 +183,9 @@ def scope_reviewable_submissions(user, month, queryset):
     return queryset.filter(
         participant__team_assignments__month=month,
         participant__team_assignments__team_id__in=team_ids,
+        participant__team_assignments__ended_at__isnull=True,
+        participant__month_enrollments__month=month,
+        participant__month_enrollments__is_active=True,
     ).distinct()
 
 
@@ -147,24 +197,82 @@ def can_review_submission(user, submission):
     ).exists()
 
 
-def can_remove(user, group):
-    return has_capability(user, group, "remove_content")
-
-
-def can_view_team_stats(user, month):
+def _has_competition_staff_access(user, month, membership):
     if user.is_superuser:
         return True
-    membership = membership_for(user, month.group)
     if not membership:
         return False
-    if month.team_stats_visibility == month.TeamStatsVisibility.EVERYONE:
+    if membership.role == Membership.Role.OWNER:
         return True
-    override = membership.permission_overrides.get("view_hidden_stats")
-    if override is not None:
-        return bool(override)
-    if month.team_stats_visibility == month.TeamStatsVisibility.STAFF:
-        return membership.role in STAFF_ROLES
-    return membership.role == Membership.Role.OWNER
+    if membership.role == Membership.Role.MODERATOR and membership_has_capability(membership, "manage_months"):
+        return True
+    return is_challenge_host(user, month)
+
+
+def _can_view_competition_domain(user, month, visibility, *, team=None):
+    if not user.is_authenticated:
+        return False
+    membership = membership_for(user, month.group)
+    if _has_competition_staff_access(user, month, membership):
+        return True
+    if not membership:
+        return False
+    level = month.CompetitionVisibility
+    if visibility == level.EVERYBODY:
+        return True
+    if visibility == level.HOSTS:
+        return False
+    if visibility == level.HOSTS_FLOATERS:
+        return ChallengeStaffAssignment.objects.filter(
+            month=month,
+            membership=membership,
+            role=ChallengeStaffAssignment.Role.FLOATER,
+            ended_at__isnull=True,
+        ).exists()
+    if team is None or team.month_id != month.pk:
+        return False
+    if visibility == level.HOSTS_TEAM_LEADERS:
+        return ChallengeStaffAssignment.objects.filter(
+            month=month,
+            team=team,
+            membership=membership,
+            role=ChallengeStaffAssignment.Role.TEAM_LEADER,
+            ended_at__isnull=True,
+        ).exists()
+    if visibility == level.TEAM_MEMBERS:
+        return MonthEnrollment.objects.filter(
+            month=month,
+            participant=membership,
+            is_active=True,
+        ).exists() and TeamAssignment.objects.filter(
+            month=month,
+            team=team,
+            participant=membership,
+            ended_at__isnull=True,
+        ).exists()
+    return False
+
+
+def can_view_team_standings(user, month, team=None):
+    return _can_view_competition_domain(
+        user,
+        month,
+        month.team_standings_visibility,
+        team=team,
+    )
+
+
+def can_view_reader_scores(user, month, team=None, reader=None):
+    return _can_view_competition_domain(
+        user,
+        month,
+        month.reader_scores_visibility,
+        team=team,
+    )
+
+
+def can_configure_competition_visibility(user, month):
+    return can_manage_months(user, month.group) or can_operate_challenge(user, month)
 
 
 def can_view_access_code(user, group):

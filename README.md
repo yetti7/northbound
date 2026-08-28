@@ -54,6 +54,15 @@ python manage.py migrate
 python manage.py runserver
 ```
 
+In a second terminal, run the Challenge scheduler so date/time automation behaves like the production container:
+
+```bash
+. .venv/bin/activate
+python manage.py run_challenge_scheduler
+```
+
+The scheduler evaluates due Registration Opens, Registration Closes, Challenge Starts, Challenge Ends, and enabled Final Announcement actions every 30 seconds. It works with both SQLite and PostgreSQL. The normal production container starts it automatically; SQLite backup scheduling remains a separate process.
+
 Without `DATABASE_URL` or `POSTGRES_HOST`, Northbound uses SQLite. PostgreSQL remains supported for hosted and advanced deployments.
 
 For the deterministic development-only showcase dataset and reset-safe seeding command, see [docs/DEMO_DATA.md](docs/DEMO_DATA.md).

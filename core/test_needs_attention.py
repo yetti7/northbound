@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim
+from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim
 from .review_attention import needs_attention_summary
 
 
@@ -34,14 +34,21 @@ class NeedsAttentionTests(TestCase):
         self.reader_one = member(self.reader_one_user, "Reader One")
         self.reader_two = member(self.reader_two_user, "Reader Two")
         self.member = member(self.member_user, "Member")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Attention Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
-        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Second Attention Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.CLOSED)
-        self.unauthorized_month = ChallengeMonth.objects.create(group=self.group, name="Unauthorized Month", starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Attention Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
+        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Second Attention Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.FINALIZING)
+        self.unauthorized_month = ChallengeMonth.objects.create(group=self.group, name="Unauthorized Month", starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 31), status=ChallengeMonth.Status.ACTIVE)
         self.team_one = Team.objects.create(month=self.month, name="North Team")
         self.team_two = Team.objects.create(month=self.month, name="South Team")
         for participant, team in ((self.leader, self.team_one), (self.reader_one, self.team_one), (self.reader_two, self.team_two)):
+            MonthEnrollment.objects.create(month=self.month, participant=participant, enrolled_by=self.owner_user)
             TeamAssignment.objects.create(month=self.month, participant=participant, team=team)
-        ChallengeStaffAssignment.objects.create(month=self.month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
+        ChallengeStaffAssignment.objects.create(
+            month=self.month,
+            membership=self.host,
+            role=ChallengeStaffAssignment.Role.HOST,
+            assigned_by=self.owner_user,
+            host_assignment_notice_seen_at=timezone.now(),
+        )
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader, team=self.team_one, role=ChallengeStaffAssignment.Role.TEAM_LEADER, assigned_by=self.host_user)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.floater, role=ChallengeStaffAssignment.Role.FLOATER, assigned_by=self.host_user)
         self.theme = MonthTheme.objects.create(month=self.month, name="Attention Theme", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), bonus_pages=25)
@@ -60,14 +67,14 @@ class NeedsAttentionTests(TestCase):
         self.assertEqual(needs_attention_summary(self.floater_user)["total"], 4)
 
     def test_host_plus_team_leader_does_not_double_count(self):
-        ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
+        ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user, host_assignment_notice_seen_at=timezone.now())
         summary = needs_attention_summary(self.leader_user)
         self.assertEqual(summary["total"], 4)
         self.assertEqual(len(summary["challenges"]), 1)
         self.assertEqual(summary["challenges"][0]["scope_label"], "Entire Challenge")
 
     def test_multiple_challenges_aggregate_and_unauthorized_challenge_is_excluded(self):
-        ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
+        ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user, host_assignment_notice_seen_at=timezone.now())
         other_submission = self.make_submission(self.other_month, self.member, "Second Challenge Work")
         summary = needs_attention_summary(self.host_user)
         self.assertEqual(summary["total"], 5)
@@ -116,7 +123,7 @@ class NeedsAttentionTests(TestCase):
         self.assertIsNotNone(new_submission.pk)
 
     def test_intermediary_page_lists_only_authorized_challenges_and_links_to_scoped_queue(self):
-        ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.leader, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
+        ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.leader, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user, host_assignment_notice_seen_at=timezone.now())
         self.make_submission(self.other_month, self.member, "Second Challenge Work")
         self.client.force_login(self.leader_user)
         response = self.client.get(reverse("needs-attention"))

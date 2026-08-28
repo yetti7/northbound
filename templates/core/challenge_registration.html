@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{% if editing %}Edit Registration{% else %}Register{% endif %} · {{ month.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>{% if editing %}Edit Registration{% elif is_reregistration %}Register Again{% else %}Register{% endif %}</h1>
+{% if is_reregistration %}<p class="lede">Your preserved registration information is shown below. Re-registering restores participation without creating a duplicate registration.</p>{% else %}<p class="lede">Confirm your registration{% if form.questions %} and provide the Challenge planning information below{% endif %}.</p>{% endif %}
+{% if not answers_editable %}<p class="muted">Your preserved registration responses are locked under this Challenge's editing policy. Re-registering will not reset that policy or deadline.</p>{% endif %}
+<form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">{% if editing %}Save Registration{% elif is_reregistration %}Submit Re-registration{% else %}Submit Registration{% endif %}</button><a class="button" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+{% endblock %}

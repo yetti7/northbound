@@ -44,7 +44,7 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
             name="Boundary Month",
             starts_on=date(2026, 10, 1),
             ends_on=date(2026, 10, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         self.team_one = Team.objects.create(month=self.month, name="Team One")
         self.team_two = Team.objects.create(month=self.month, name="Team Two")
@@ -103,7 +103,7 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
         self.assertContains(response, self.month.name)
         self.assertContains(response, self.team_one.name)
 
-    def test_all_other_authority_layers_receive_summary_only(self):
+    def test_non_platform_authority_layers_receive_summary_only(self):
         for user in (
             self.owner_user,
             self.moderator_user,
@@ -111,7 +111,6 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
             self.leader_user,
             self.floater_user,
             self.opponent_user,
-            self.platform_owner,
         ):
             self.client.force_login(user)
             response = self.client.get(self.profile_url)
@@ -122,6 +121,13 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
                 self.assertNotContains(response, self.month.name)
                 self.assertNotContains(response, self.team_one.name)
 
+    def test_platform_owner_has_administrative_history_visibility(self):
+        self.client.force_login(self.platform_owner)
+        response = self.client.get(self.profile_url)
+        self.assertContains(response, "Monthly History")
+        self.assertContains(response, self.month.name)
+        self.assertContains(response, self.team_one.name)
+
     def test_month_detail_is_self_only_for_reader_and_staffing_roles(self):
         expectations = (
             (self.reader_user, "Reader Private Book"),
@@ -130,7 +136,6 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
             (self.owner_user, None),
             (self.moderator_user, None),
             (self.floater_user, None),
-            (self.platform_owner, None),
         )
         all_titles = {
             "Host Own Book", "Leader Own Book", "Reader Private Book", "Opponent Private Book"
@@ -147,6 +152,12 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
                         self.assertContains(response, title)
                     else:
                         self.assertNotContains(response, title)
+
+        self.client.force_login(self.platform_owner)
+        response = self.client.get(self.month.get_absolute_url())
+        self.assertContains(response, "All Submissions · Platform Administration")
+        for title in all_titles:
+            self.assertContains(response, title)
 
     def test_staffing_review_queue_scope_remains_operational(self):
         review_url = reverse(

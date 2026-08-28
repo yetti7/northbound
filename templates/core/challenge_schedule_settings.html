@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Challenge Schedule · {{ month.name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">{{ month.name }} · Challenge Settings</p><h1>Challenge Schedule</h1><p class="lede">Schedule date and time values use {{ month.group.timezone }}.</p></div></div>
+<form method="post" class="stacked-form">{% csrf_token %}{{ form.non_field_errors }}
+  <div class="card-grid schedule-settings-grid">
+    <section class="card schedule-setting-card"><h2>Registration Opens</h2><p>{{ form.registration_opens_at.label_tag }}{{ form.registration_opens_at }}{{ form.registration_opens_at.errors }}</p><p>{{ form.auto_open_registration }} {{ form.auto_open_registration.label_tag }}{{ form.auto_open_registration.errors }}</p></section>
+    <section class="card schedule-setting-card"><h2>Registration Closes</h2><p>{{ form.registration_closes_at.label_tag }}{{ form.registration_closes_at }}{{ form.registration_closes_at.errors }}</p><p>{{ form.auto_close_registration }} {{ form.auto_close_registration.label_tag }}{{ form.auto_close_registration.errors }}</p></section>
+    <section class="card schedule-setting-card"><h2>Challenge Starts</h2><p>{{ form.starts_at.label_tag }}{{ form.starts_at }}{{ form.starts_at.errors }}</p><p>{{ form.auto_start_challenge }} {{ form.auto_start_challenge.label_tag }}{{ form.auto_start_challenge.errors }}</p></section>
+    <section class="card schedule-setting-card"><h2>Challenge Ends</h2><p>{{ form.ends_at.label_tag }}{{ form.ends_at }}{{ form.ends_at.errors }}</p><p>{{ form.auto_end_challenge }} {{ form.auto_end_challenge.label_tag }}{{ form.auto_end_challenge.errors }}</p></section>
+    <section class="card schedule-setting-card"><h2>Final Announcement</h2><p>{{ form.final_announcement_at.label_tag }}{{ form.final_announcement_at }}{{ form.final_announcement_at.errors }}</p><p>{{ form.auto_complete_challenge }} {{ form.auto_complete_challenge.label_tag }}{{ form.auto_complete_challenge.errors }}</p></section>
+  </div>
+  <div class="action-row"><button class="button primary">Save Schedule</button><a class="button" href="{% url 'challenge-settings' month.group.slug month.pk %}">Cancel</a></div>
+</form>
+{% endblock %}

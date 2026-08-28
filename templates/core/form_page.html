@@ -1,3 +1,2 @@
 {% extends "base.html" %}
-{% block content %}<section class="form-card"><p class="eyebrow">{{ eyebrow }}</p><h1>{{ title }}</h1><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save</button></form></section>{% endblock %}
-
+{% block content %}<section class="form-card"><p class="eyebrow">{{ eyebrow }}</p><h1>{{ title }}</h1>{% if form_note %}<p class="muted">{{ form_note }}</p>{% endif %}<form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save</button></form></section>{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ account_user.username }} · Account Management{% endblock %}
+{% block content %}
+<section class="form-card">
+  <p class="eyebrow"><a href="{% url 'config-user-detail' account_user.pk %}">Platform Account</a></p>
+  <h1>Edit Account</h1>
+  <p class="lede">Update this account's sign-in identity without changing its Group access, participation, history, or permissions.</p>
+  <form method="post" class="stacked-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="action-row"><button class="button primary">Save Account</button><a class="button" href="{% url 'config-user-detail' account_user.pk %}">Cancel</a></div>
+  </form>
+</section>
+{% endblock %}

@@ -1,17 +1,62 @@
 {% extends "base.html" %}
-{% block title %}Month Participants · {{ month.name }}{% endblock %}
+{% block title %}Challenge Participants · {{ month.name }}{% endblock %}
 {% block content %}
 <div class="page-heading">
-  <div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Month Participants</h1><p class="lede">Only these readers can submit books to {{ month.name }}. Team assignment is optional.</p></div>
+  <div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Challenge Participants</h1><p class="lede">Compare Reader history and registration details while planning teams for {{ month.name }}.</p></div>
   {% if can_manage_participants %}<a class="button primary" href="{% url 'month-participant-add' month.group.slug month.pk %}">Add Participant</a>{% endif %}
 </div>
-<div class="table-wrap"><table><thead><tr><th>Participant</th><th>Group Role</th><th>Team</th><th>Enrolled</th>{% if can_manage_teams or can_remove %}<th>Actions</th>{% endif %}</tr></thead><tbody>
-{% for enrollment in enrollments %}<tr>
-  <td><div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span>{{ enrollment.participant.display_name }}</span></div></td>
-  <td>{{ enrollment.participant.get_role_display }}</td>
-  <td>{% for assignment in enrollment.participant.current_month_team_assignments %}<span class="member-chip">{{ assignment.team.name }}</span>{% empty %}<span class="muted">Unassigned</span>{% endfor %}</td>
-  <td>{{ enrollment.enrolled_at|date:"M j, Y" }}</td>
-  {% if can_manage_teams or can_remove %}<td>{% if can_manage_teams %}<a href="{% url 'month-participant-edit' month.group.slug month.pk enrollment.pk %}">Edit Team</a>{% endif %}{% if can_remove %}<a class="danger-link" href="{% url 'month-participant-remove' month.group.slug month.pk enrollment.pk %}">Remove From Month</a>{% endif %}</td>{% endif %}
-</tr>{% empty %}<tr><td colspan="5">No participants are enrolled in this month.</td></tr>{% endfor %}
-</tbody></table></div>
+
+<div class="table-wrap participant-planning-desktop">
+  <table class="participant-planning-table">
+    <thead><tr>
+      <th><a class="table-sort" href="{{ sort_headers.reader.url }}">Reader{% if sort_headers.reader.active %} {% if sort_headers.reader.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+      {% if can_view_planning_data %}
+        <th>Discord Username</th>
+        <th><a class="table-sort" href="{{ sort_headers.average.url }}">Avg Pages{% if sort_headers.average.active %} {% if sort_headers.average.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+        <th><a class="table-sort" href="{{ sort_headers.last.url }}">Last Challenge{% if sort_headers.last.active %} {% if sort_headers.last.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+        <th><a class="table-sort" href="{{ sort_headers.completed.url }}">Completed{% if sort_headers.completed.active %} {% if sort_headers.completed.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+      {% endif %}
+      <th><a class="table-sort" href="{{ sort_headers.team.url }}">Team{% if sort_headers.team.active %} {% if sort_headers.team.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+      <th>Registration</th>
+      {% if can_view_planning_data or can_manage_teams or can_remove %}<th>Actions</th>{% endif %}
+    </tr></thead>
+    <tbody>
+    {% for enrollment in enrollments %}
+      <tr{% if not enrollment.is_active %} class="inactive-participation"{% endif %}>
+        <td><div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span><strong><a href="{% url 'participant-detail' month.group.slug enrollment.participant.pk %}">{{ enrollment.participant.display_name }}</a></strong></span></div></td>
+        {% if can_view_planning_data %}
+          <td>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</td>
+          <td>{{ enrollment.planning.average_pages_display }}</td>
+          <td>{{ enrollment.planning.last_challenge_pages_display }}</td>
+          <td>{{ enrollment.planning.completed_challenges }}</td>
+        {% endif %}
+        <td>{% if enrollment.current_team_name %}<span class="member-chip">{{ enrollment.current_team_name }}</span>{% else %}<span class="muted">Unassigned</span>{% endif %}</td>
+        <td>{% if enrollment.is_active %}<span class="pill">Active</span>{% else %}<span class="pill">{{ enrollment.get_inactive_reason_display }}</span>{% endif %}{% for warning in enrollment.checkpoint_warnings %}<span class="checkpoint-warning"><span class="checkpoint-warning-dot" aria-hidden="true"></span>Below {{ warning.threshold_percentage }}% checkpoint · {{ warning.checkpoint.scheduled_at|date:"M j" }}</span>{% endfor %}</td>
+        {% if can_view_planning_data or can_manage_teams or can_remove %}<td><div class="planning-actions">
+          {% if can_view_registration_answers %}<details class="registration-response-details"><summary>View Registration</summary><dl class="details">{% for row in enrollment.registration_rows %}<dt>{{ row.question.wording }}</dt><dd>{{ row.value|default:"Not provided" }}</dd>{% empty %}<dt>Custom Questions</dt><dd>This Challenge has no custom signup questions.</dd>{% endfor %}</dl><a href="{% url 'challenge-registration-detail' month.group.slug month.pk enrollment.pk %}">Open registration detail</a></details>{% endif %}
+          {% if enrollment.is_active %}{% if can_manage_teams %}<a href="{% url 'month-participant-edit' month.group.slug month.pk enrollment.pk %}">Edit Team</a>{% endif %}{% if can_remove %}<a class="danger-link" href="{% url 'month-participant-remove' month.group.slug month.pk enrollment.pk %}">Remove</a>{% endif %}{% elif can_manage_participants %}<a href="{% url 'month-participant-reactivate' month.group.slug month.pk enrollment.pk %}">Reactivate</a>{% endif %}
+        </div></td>{% endif %}
+      </tr>
+    {% empty %}<tr><td colspan="8">No participants are enrolled in this Challenge.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="participant-planning-mobile">
+  {% for enrollment in enrollments %}
+    <article class="card participant-planning-card{% if not enrollment.is_active %} inactive-participation{% endif %}">
+      <div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span><strong><a href="{% url 'participant-detail' month.group.slug enrollment.participant.pk %}">{{ enrollment.participant.display_name }}</a></strong></span></div>
+      <dl class="details planning-card-details">
+        {% if can_view_planning_data %}<dt>Discord Username</dt><dd>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</dd>{% endif %}
+        <dt>Team</dt><dd>{{ enrollment.current_team_name|default:"Unassigned" }}</dd>
+        {% if can_view_planning_data %}<dt>Avg Pages</dt><dd>{{ enrollment.planning.average_pages_display }}</dd><dt>Last Challenge</dt><dd>{{ enrollment.planning.last_challenge_pages_display }}</dd><dt>Completed</dt><dd>{{ enrollment.planning.completed_challenges }}</dd>{% endif %}
+        <dt>Registration</dt><dd>{% if enrollment.is_active %}Active{% else %}{{ enrollment.get_inactive_reason_display }}{% endif %}{% for warning in enrollment.checkpoint_warnings %}<span class="checkpoint-warning"><span class="checkpoint-warning-dot" aria-hidden="true"></span>Below {{ warning.threshold_percentage }}% checkpoint · {{ warning.checkpoint.scheduled_at|date:"M j" }}</span>{% endfor %}</dd>
+      </dl>
+      <div class="planning-card-actions">
+        {% if can_view_registration_answers %}<details class="registration-response-details"><summary class="button">View Registration</summary><dl class="details">{% for row in enrollment.registration_rows %}<dt>{{ row.question.wording }}</dt><dd>{{ row.value|default:"Not provided" }}</dd>{% empty %}<dt>Custom Questions</dt><dd>This Challenge has no custom signup questions.</dd>{% endfor %}</dl><a class="button" href="{% url 'challenge-registration-detail' month.group.slug month.pk enrollment.pk %}">Open Registration Detail</a></details>{% endif %}
+        {% if enrollment.is_active %}{% if can_manage_teams %}<a class="button" href="{% url 'month-participant-edit' month.group.slug month.pk enrollment.pk %}">Edit Team</a>{% endif %}{% if can_remove %}<a class="button danger-button" href="{% url 'month-participant-remove' month.group.slug month.pk enrollment.pk %}">Remove</a>{% endif %}{% elif can_manage_participants %}<a class="button" href="{% url 'month-participant-reactivate' month.group.slug month.pk enrollment.pk %}">Reactivate</a>{% endif %}
+      </div>
+    </article>
+  {% empty %}<div class="empty-state">No participants are enrolled in this Challenge.</div>{% endfor %}
+</div>
 {% endblock %}

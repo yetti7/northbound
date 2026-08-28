@@ -113,37 +113,37 @@ MONTH_SPECS = {
         "status": ChallengeMonth.Status.ARCHIVED,
         "announcement_mode": ChallengeMonth.AnnouncementMode.CUSTOM,
         "announcement": "Summer Pages is complete—browse the final team totals and celebrate every finish.",
-        "visibility": ChallengeMonth.TeamStatsVisibility.EVERYONE,
+        "visibility": ChallengeMonth.CompetitionVisibility.EVERYBODY,
     },
     "lantern-current": {
         "group": "lantern",
         "name": "Stories Under the Stars",
         "starts_on": date(2026, 8, 1),
         "ends_on": date(2026, 8, 31),
-        "status": ChallengeMonth.Status.OPEN,
+        "status": ChallengeMonth.Status.ACTIVE,
         "announcement_mode": ChallengeMonth.AnnouncementMode.INHERIT,
         "announcement": "",
-        "visibility": ChallengeMonth.TeamStatsVisibility.EVERYONE,
+        "visibility": ChallengeMonth.CompetitionVisibility.EVERYBODY,
     },
     "midnight-history": {
         "group": "midnight",
         "name": "Gothic Echoes",
         "starts_on": date(2026, 7, 1),
         "ends_on": date(2026, 7, 31),
-        "status": ChallengeMonth.Status.FINALIZED,
+        "status": ChallengeMonth.Status.COMPLETED,
         "announcement_mode": ChallengeMonth.AnnouncementMode.NONE,
         "announcement": "",
-        "visibility": ChallengeMonth.TeamStatsVisibility.STAFF,
+        "visibility": ChallengeMonth.CompetitionVisibility.HOSTS,
     },
     "midnight-current": {
         "group": "midnight",
         "name": "Secrets After Sundown",
         "starts_on": date(2026, 8, 1),
         "ends_on": date(2026, 8, 31),
-        "status": ChallengeMonth.Status.OPEN,
+        "status": ChallengeMonth.Status.ACTIVE,
         "announcement_mode": ChallengeMonth.AnnouncementMode.CUSTOM,
         "announcement": "Midmonth mystery swap begins Friday. Keep your recommendation spoiler-free.",
-        "visibility": ChallengeMonth.TeamStatsVisibility.STAFF,
+        "visibility": ChallengeMonth.CompetitionVisibility.HOSTS,
     },
 }
 
@@ -172,6 +172,8 @@ ASSIGNMENT_SPECS = {
         ("lantern-wraiths", ("amara.quinn", "miles.arden", "ivy.mercer", "lucas.wren", "opal.rivera")),
     ),
 }
+
+WITHDRAWN_DEMO_PARTICIPATION = ("lantern-current", "jonah.vale")
 
 THEME_SPECS = {
     "lantern-history": (
@@ -504,7 +506,8 @@ class DemoDataSeeder:
                 ends_on=spec["ends_on"],
                 late_entry_deadline=spec["starts_on"] + timedelta(days=10),
                 status=spec["status"],
-                team_stats_visibility=spec["visibility"],
+                team_standings_visibility=spec["visibility"],
+                reader_scores_visibility=spec["visibility"],
                 announcement_mode=spec["announcement_mode"],
                 announcement=spec["announcement"],
             )
@@ -514,7 +517,7 @@ class DemoDataSeeder:
             actor = self.users[next(username for username, role in GROUP_SPECS[spec["group"]]["members"].items() if role == Membership.Role.OWNER)]
             self._audit(actor, group, "month.created", "ChallengeMonth", month.pk, f"Created {month.name}.", spec["starts_on"])
 
-            if spec["status"] == ChallengeMonth.Status.OPEN:
+            if spec["status"] == ChallengeMonth.Status.ACTIVE:
                 reviewer_username = GROUP_SPECS[spec["group"]]["reviewer"]
                 host = ChallengeStaffAssignment.objects.create(
                     month=month,
@@ -540,6 +543,7 @@ class DemoDataSeeder:
                     month=month,
                     participant=self.memberships[(spec["group"], username)],
                     enrolled_by=actor,
+                    origin=MonthEnrollment.Origin.STAFF,
                 )
                 enrollment.full_clean()
                 enrollment.save()
@@ -551,7 +555,33 @@ class DemoDataSeeder:
                         month=month,
                         team=team,
                         participant=self.memberships[(spec["group"], username)],
+                        assigned_by=actor,
                     )
+
+            if month_key == WITHDRAWN_DEMO_PARTICIPATION[0]:
+                withdrawn_username = WITHDRAWN_DEMO_PARTICIPATION[1]
+                withdrawn_membership = self.memberships[(spec["group"], withdrawn_username)]
+                withdrawn_at = _timestamp(spec["starts_on"] + timedelta(days=20), 18)
+                enrollment = MonthEnrollment.objects.get(month=month, participant=withdrawn_membership)
+                enrollment.is_active = False
+                enrollment.inactive_reason = MonthEnrollment.InactiveReason.WITHDRAWN
+                enrollment.inactivated_at = withdrawn_at
+                enrollment.inactivated_by = self.users[withdrawn_username]
+                enrollment.save(update_fields=["is_active", "inactive_reason", "inactivated_at", "inactivated_by"])
+                TeamAssignment.objects.filter(
+                    month=month,
+                    participant=withdrawn_membership,
+                    ended_at__isnull=True,
+                ).update(ended_at=withdrawn_at, ended_by=self.users[withdrawn_username])
+                self._audit(
+                    self.users[withdrawn_username],
+                    group,
+                    "participation.self_withdrew",
+                    "MonthEnrollment",
+                    enrollment.pk,
+                    f"{withdrawn_membership.display_name} withdrew from {month.name}.",
+                    spec["starts_on"] + timedelta(days=20),
+                )
 
             for theme_key, name, description, bonus, stacking, prompt in THEME_SPECS[month_key]:
                 theme = MonthTheme(

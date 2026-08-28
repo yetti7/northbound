@@ -1,4 +1,5 @@
 from django import forms
+from django.forms import BaseFormSet, formset_factory
 from django.core import signing
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
@@ -7,7 +8,7 @@ from django.utils.text import slugify
 from django.conf import settings
 from zoneinfo import available_timezones
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import BookSubmission, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ProgressCheckpoint, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
 from .permissions import DELEGABLE_CAPABILITIES
 
 
@@ -94,6 +95,17 @@ class RegularAuthenticationForm(AuthenticationForm):
 
 
 class AccountProfileForm(AvatarFieldsMixin, forms.ModelForm):
+    discord_username = forms.CharField(
+        label="Discord Username",
+        required=False,
+        max_length=100,
+        help_text="Optional. Shared with appropriate Group and Challenge staff for registration and team planning.",
+    )
+    discord_username_is_public = forms.BooleanField(
+        label="Make Discord username public",
+        required=False,
+        help_text="Allow other members of your Groups to see it on your Group Participant Profile.",
+    )
 
     class Meta:
         model = get_user_model()
@@ -109,10 +121,52 @@ class AccountProfileForm(AvatarFieldsMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setup_avatar_fields(self.instance)
+        if self.instance.pk:
+            profile, _ = UserProfile.objects.get_or_create(user=self.instance)
+            self.fields["discord_username"].initial = profile.discord_username
+            self.fields["discord_username_is_public"].initial = profile.discord_username_is_public
 
     def save(self, commit=True):
         user = super().save(commit=commit)
-        self.save_avatar(user)
+        profile = self.save_avatar(user)
+        profile.discord_username = self.cleaned_data["discord_username"]
+        profile.discord_username_is_public = self.cleaned_data["discord_username_is_public"]
+        profile.save(update_fields=["discord_username", "discord_username_is_public"])
+        return user
+
+
+class PlatformAccountIdentityForm(forms.ModelForm):
+    discord_username = forms.CharField(
+        label="Discord Username",
+        required=False,
+        max_length=100,
+        help_text="Optional reusable profile data. This does not change Group access or participation.",
+    )
+
+    class Meta:
+        model = get_user_model()
+        fields = ("username", "first_name", "last_name", "email")
+        labels = {"first_name": "First Name", "last_name": "Last Name"}
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip()
+        if not email:
+            raise forms.ValidationError("An email address is required for account recovery.")
+        if get_user_model().objects.filter(email__iexact=email).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            profile, _ = UserProfile.objects.get_or_create(user=self.instance)
+            self.fields["discord_username"].initial = profile.discord_username
+
+    def save(self, commit=True):
+        user = super().save(commit=commit)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.discord_username = self.cleaned_data["discord_username"]
+        profile.save(update_fields=["discord_username"])
         return user
 
 
@@ -381,32 +435,368 @@ class GroupAccessCodeForm(forms.Form):
 class ChallengeMonthForm(forms.ModelForm):
     class Meta:
         model = ChallengeMonth
-        fields = ("name", "starts_on", "ends_on", "late_entry_deadline", "status", "announcement_mode", "announcement")
-        labels = {"starts_on": "Starts On", "ends_on": "Ends On", "late_entry_deadline": "Late Entry Deadline", "announcement_mode": "Announcement", "announcement": "Custom Announcement"}
-        widgets = {"starts_on": forms.DateInput(attrs={"type": "date"}), "ends_on": forms.DateInput(attrs={"type": "date"}), "late_entry_deadline": forms.DateInput(attrs={"type": "date"}), "announcement": forms.Textarea(attrs={"rows": 3})}
+        fields = (
+            "name",
+            "description",
+            "registration_opens_at",
+            "auto_open_registration",
+            "registration_closes_at",
+            "auto_close_registration",
+            "starts_at",
+            "auto_start_challenge",
+            "ends_at",
+            "auto_end_challenge",
+            "final_announcement_at",
+            "auto_complete_challenge",
+        )
+        labels = {
+            "name": "Challenge Title",
+            "registration_opens_at": "Registration Opens",
+            "auto_open_registration": "Open registration automatically",
+            "registration_closes_at": "Registration Closes",
+            "auto_close_registration": "Close registration automatically",
+            "starts_at": "Challenge Starts",
+            "auto_start_challenge": "Move Challenge to Active automatically",
+            "ends_at": "Challenge Ends",
+            "auto_end_challenge": "Move Challenge to Finalizing automatically",
+            "final_announcement_at": "Final Announcement",
+            "auto_complete_challenge": "Mark Challenge Completed at this time",
+        }
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 4}),
+            "registration_opens_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "registration_closes_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "starts_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "ends_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "final_announcement_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["announcement_mode"].required = False
-        if self.instance and self.instance.pk:
-            transitions = {
-                ChallengeMonth.Status.DRAFT: (ChallengeMonth.Status.DRAFT, ChallengeMonth.Status.OPEN),
-                ChallengeMonth.Status.OPEN: (ChallengeMonth.Status.OPEN, ChallengeMonth.Status.CLOSED),
-                ChallengeMonth.Status.CLOSED: (ChallengeMonth.Status.CLOSED, ChallengeMonth.Status.FINALIZED),
-                ChallengeMonth.Status.FINALIZED: (ChallengeMonth.Status.FINALIZED, ChallengeMonth.Status.ARCHIVED),
-                ChallengeMonth.Status.ARCHIVED: (ChallengeMonth.Status.ARCHIVED,),
-            }
-            allowed = transitions[self.instance.status]
-            self.fields["status"].choices = [choice for choice in ChallengeMonth.Status.choices if choice[0] in allowed]
-            if self.instance.status in {ChallengeMonth.Status.FINALIZED, ChallengeMonth.Status.ARCHIVED}:
-                for name, field in self.fields.items():
-                    if name != "status":
-                        field.disabled = True
-            if self.instance.status == ChallengeMonth.Status.ARCHIVED:
-                self.fields["status"].disabled = True
+        schedule_fields = (
+            "registration_opens_at",
+            "registration_closes_at",
+            "starts_at",
+            "ends_at",
+            "final_announcement_at",
+        )
+        for field_name in schedule_fields:
+            self.fields[field_name].input_formats = ["%Y-%m-%dT%H:%M"]
+        if not (self.instance and self.instance.pk):
+            for field_name in ("registration_opens_at", "registration_closes_at", "starts_at", "ends_at"):
+                self.fields[field_name].required = True
+        if self.instance and self.instance.pk and self.instance.status == ChallengeMonth.Status.ARCHIVED:
+            for field in self.fields.values():
+                field.disabled = True
 
-    def clean_announcement_mode(self):
-        return self.cleaned_data.get("announcement_mode") or ChallengeMonth.AnnouncementMode.INHERIT
+class ChallengeCreateForm(forms.Form):
+    name = forms.CharField(label="Challenge Title", max_length=80)
+    hosts = forms.ModelMultipleChoiceField(
+        label="Hosts",
+        queryset=Membership.objects.none(),
+        widget=forms.MultipleHiddenInput,
+        help_text="Select one or more Group members to configure and operate this Challenge.",
+    )
+
+    def __init__(self, *args, group, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.group = group
+        self.fields["hosts"].queryset = group.memberships.filter(
+            is_active=True,
+            user__is_superuser=False,
+        ).order_by("display_name", "pk")
+
+    def save(self, *, created_by):
+        with transaction.atomic():
+            month = ChallengeMonth.objects.create(
+                group=self.group,
+                name=self.cleaned_data["name"],
+                description="",
+                status=ChallengeMonth.Status.DRAFT,
+                registration_is_open=False,
+            )
+            assignments = []
+            for membership in self.cleaned_data["hosts"]:
+                assignments.append(ChallengeStaffAssignment.objects.create(
+                    month=month,
+                    membership=membership,
+                    role=ChallengeStaffAssignment.Role.HOST,
+                    assigned_by=created_by,
+                ))
+        return month, assignments
+
+
+class ChallengeGeneralSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("name", "description")
+        labels = {"name": "Challenge Title"}
+        widgets = {"description": forms.Textarea(attrs={"rows": 4})}
+
+
+class ChallengeAnnouncementForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("announcement",)
+        labels = {"announcement": "Challenge Announcement"}
+        widgets = {"announcement": forms.Textarea(attrs={"rows": 4})}
+        help_texts = {"announcement": "Leave blank when this Challenge does not need its own announcement."}
+
+    def clean(self):
+        cleaned = super().clean()
+        self.instance.announcement_mode = (
+            ChallengeMonth.AnnouncementMode.CUSTOM
+            if cleaned.get("announcement", "").strip()
+            else ChallengeMonth.AnnouncementMode.NONE
+        )
+        return cleaned
+
+    def save(self, commit=True):
+        challenge = super().save(commit=False)
+        if commit:
+            challenge.save(update_fields=["announcement", "announcement_mode"])
+        return challenge
+
+
+class ChallengeScheduleForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = (
+            "registration_opens_at",
+            "auto_open_registration",
+            "registration_closes_at",
+            "auto_close_registration",
+            "starts_at",
+            "auto_start_challenge",
+            "ends_at",
+            "auto_end_challenge",
+            "final_announcement_at",
+            "auto_complete_challenge",
+        )
+        labels = {
+            "registration_opens_at": "Registration Opens",
+            "auto_open_registration": "Open registration automatically",
+            "registration_closes_at": "Registration Closes",
+            "auto_close_registration": "Close registration automatically",
+            "starts_at": "Challenge Starts",
+            "auto_start_challenge": "Move Challenge to Active automatically",
+            "ends_at": "Challenge Ends",
+            "auto_end_challenge": "Move Challenge to Finalizing automatically",
+            "final_announcement_at": "Final Announcement",
+            "auto_complete_challenge": "Mark Challenge Completed at this time",
+        }
+        widgets = {
+            field_name: forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"})
+            for field_name in (
+                "registration_opens_at",
+                "registration_closes_at",
+                "starts_at",
+                "ends_at",
+                "final_announcement_at",
+            )
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name in (
+            "registration_opens_at",
+            "registration_closes_at",
+            "starts_at",
+            "ends_at",
+            "final_announcement_at",
+        ):
+            self.fields[field_name].input_formats = ["%Y-%m-%dT%H:%M"]
+        if self.instance and self.instance.pk:
+            for timestamp_field in ("registration_opens_at", "registration_closes_at", "starts_at", "ends_at"):
+                if getattr(self.instance, timestamp_field) is None:
+                    self.fields[timestamp_field].required = True
+        if self.instance and self.instance.pk and self.instance.status == ChallengeMonth.Status.ARCHIVED:
+            for field in self.fields.values():
+                field.disabled = True
+
+
+class ChallengeRegistrationSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("registration_answer_editing_policy", "registration_answer_editing_hours")
+        labels = {
+            "registration_answer_editing_policy": "Reader Answer Editing",
+            "registration_answer_editing_hours": "Editing Duration (Hours)",
+        }
+        help_texts = {
+            "registration_answer_editing_hours": "Used only when editing is allowed for a set period. Choose 1–720 hours.",
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if (
+            cleaned.get("registration_answer_editing_policy")
+            == ChallengeMonth.RegistrationAnswerEditingPolicy.TIMED
+            and not cleaned.get("registration_answer_editing_hours")
+        ):
+            self.add_error("registration_answer_editing_hours", "Enter the number of hours Readers may edit answers.")
+        return cleaned
+
+
+class ChallengeSignupQuestionForm(forms.Form):
+    wording = forms.CharField(label="Question", max_length=240)
+    question_type = forms.ChoiceField(label="Type", choices=ChallengeSignupQuestion.QuestionType.choices)
+    is_required = forms.BooleanField(label="Required", required=False)
+    choices_text = forms.CharField(
+        label="Choices",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+        help_text="For Single Choice or Multiple Choice, enter one choice per line (2–20 choices).",
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        question_type = cleaned.get("question_type")
+        choices = [line.strip() for line in cleaned.get("choices_text", "").splitlines() if line.strip()]
+        if len(choices) != len(set(choices)):
+            self.add_error("choices_text", "Choices must be unique.")
+        if len(choices) > 20:
+            self.add_error("choices_text", "A question may have at most 20 choices.")
+        if any(len(choice) > 120 for choice in choices):
+            self.add_error("choices_text", "Each choice must be 120 characters or fewer.")
+        choice_types = {
+            ChallengeSignupQuestion.QuestionType.SINGLE_CHOICE,
+            ChallengeSignupQuestion.QuestionType.MULTIPLE_CHOICE,
+        }
+        if question_type in choice_types and len(choices) < 2:
+            self.add_error("choices_text", "Single Choice and Multiple Choice questions require at least two nonblank choices.")
+        if question_type and question_type not in choice_types and choices:
+            self.add_error("choices_text", "Choices are available only for Single Choice and Multiple Choice questions.")
+        cleaned["choices"] = choices
+        return cleaned
+
+
+class ProgressCheckpointForm(forms.Form):
+    scheduled_at = forms.DateTimeField(
+        label="Checkpoint Date and Time",
+        input_formats=["%Y-%m-%dT%H:%M"],
+        widget=forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+    )
+    threshold_percentage = forms.IntegerField(label="Threshold Percentage", min_value=1, max_value=100, initial=25)
+    progress_basis = forms.ChoiceField(label="Progress Basis", choices=ProgressCheckpoint.ProgressBasis.choices)
+    target_basis = forms.ChoiceField(label="Target Basis", choices=ProgressCheckpoint.TargetBasis.choices)
+    fixed_target_pages = forms.IntegerField(label="Fixed Target Pages", min_value=1, required=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("target_basis") == ProgressCheckpoint.TargetBasis.FIXED:
+            if not cleaned.get("fixed_target_pages"):
+                self.add_error("fixed_target_pages", "Enter a positive page target for a Fixed Target checkpoint.")
+        else:
+            cleaned["fixed_target_pages"] = None
+        return cleaned
+
+
+class BaseProgressCheckpointFormSet(BaseFormSet):
+    ordering_widget = forms.HiddenInput
+    deletion_widget = forms.HiddenInput
+
+    def clean(self):
+        super().clean()
+        active = [form for form in self.forms if form.cleaned_data and not form.cleaned_data.get("DELETE")]
+        if len(active) > 5:
+            raise forms.ValidationError("A Challenge may have at most five progress checkpoints.")
+
+
+ProgressCheckpointFormSet = formset_factory(
+    ProgressCheckpointForm,
+    formset=BaseProgressCheckpointFormSet,
+    extra=0,
+    can_order=True,
+    can_delete=True,
+    max_num=5,
+    validate_max=True,
+)
+
+
+class BaseChallengeSignupQuestionFormSet(BaseFormSet):
+    ordering_widget = forms.HiddenInput
+    deletion_widget = forms.HiddenInput
+
+    def clean(self):
+        super().clean()
+        active_forms = [
+            form for form in self.forms
+            if form.cleaned_data and not form.cleaned_data.get("DELETE")
+        ]
+        if len(active_forms) > 10:
+            raise forms.ValidationError("A Challenge may have at most ten signup questions.")
+
+
+ChallengeSignupQuestionFormSet = formset_factory(
+    ChallengeSignupQuestionForm,
+    formset=BaseChallengeSignupQuestionFormSet,
+    extra=0,
+    can_delete=True,
+    can_order=True,
+    max_num=10,
+    validate_max=True,
+)
+
+
+class ChallengeRegistrationForm(forms.Form):
+    discord_username = forms.CharField(
+        label="Discord Username (Optional)",
+        required=False,
+        max_length=100,
+        help_text="Saved as reusable profile data. This does not change your public/private preference.",
+    )
+
+    def __init__(self, *args, month, profile, enrollment=None, include_discord=True, answers_editable=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.month = month
+        self.profile = profile
+        self.enrollment = enrollment
+        self.questions = list(month.signup_questions.all())
+        if not include_discord or profile.discord_username:
+            self.fields.pop("discord_username")
+        existing_answers = {
+            answer.question_id: answer.value
+            for answer in (enrollment.signup_answers.select_related("question") if enrollment else [])
+        }
+        for question in self.questions:
+            field_name = f"question_{question.pk}"
+            common = {"label": question.wording, "required": question.is_required}
+            if question.question_type == ChallengeSignupQuestion.QuestionType.SHORT_TEXT:
+                field = forms.CharField(max_length=500, **common)
+            elif question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER:
+                field = forms.DecimalField(max_digits=14, decimal_places=2, **common)
+            elif question.question_type == ChallengeSignupQuestion.QuestionType.SINGLE_CHOICE:
+                field = forms.ChoiceField(choices=[(choice, choice) for choice in question.choices], **common)
+            else:
+                field = forms.MultipleChoiceField(
+                    choices=[(choice, choice) for choice in question.choices],
+                    widget=forms.CheckboxSelectMultiple,
+                    **common,
+                )
+            if question.pk in existing_answers:
+                field.initial = existing_answers[question.pk]
+            field.disabled = not answers_editable
+            self.fields[field_name] = field
+
+    def save_profile_discord_username(self):
+        if "discord_username" not in self.fields:
+            return
+        value = self.cleaned_data.get("discord_username", "")
+        if value:
+            self.profile.discord_username = value
+            self.profile.save(update_fields=["discord_username"])
+
+    def save_answers(self, enrollment):
+        for question in self.questions:
+            value = self.cleaned_data.get(f"question_{question.pk}", "")
+            if question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER and value is not None:
+                value = format(value, "f")
+            ChallengeSignupAnswer.objects.update_or_create(
+                enrollment=enrollment,
+                question=question,
+                defaults={"value": value},
+            )
 
 
 class MonthThemeForm(forms.ModelForm):
@@ -422,11 +812,18 @@ class MonthThemeForm(forms.ModelForm):
             self.instance.month = month
 
 
-class TeamStatsVisibilityForm(forms.ModelForm):
+class CompetitionVisibilityForm(forms.ModelForm):
     class Meta:
         model = ChallengeMonth
-        fields = ("team_stats_visibility",)
-        labels = {"team_stats_visibility": "Visibility"}
+        fields = ("team_standings_visibility", "reader_scores_visibility")
+        labels = {
+            "team_standings_visibility": "Team Standings",
+            "reader_scores_visibility": "Reader Scores",
+        }
+        help_texts = {
+            "team_standings_visibility": "Controls which Challenge roles can see team totals and team comparisons.",
+            "reader_scores_visibility": "Controls which Challenge roles can see individual Reader Base, Modifier, and Total scores.",
+        }
 
 
 class ChallengeHostAssignmentForm(forms.ModelForm):
@@ -481,6 +878,9 @@ class ChallengeTeamLeaderAssignmentForm(forms.ModelForm):
         assigned_ids = team.assignments.filter(
             participant__is_active=True,
             participant__user__is_superuser=False,
+            participant__month_enrollments__month=team.month,
+            participant__month_enrollments__is_active=True,
+            ended_at__isnull=True,
         ).values_list("participant_id", flat=True)
         self.fields["membership"].queryset = team.month.group.memberships.filter(
             pk__in=assigned_ids,
@@ -506,7 +906,7 @@ class ChallengeFloaterAssignmentForm(forms.ModelForm):
     def __init__(self, *args, month, **kwargs):
         super().__init__(*args, **kwargs)
         self.month = month
-        excluded_ids = month.enrollments.values_list("participant_id", flat=True)
+        excluded_ids = month.enrollments.filter(is_active=True).values_list("participant_id", flat=True)
         active_staff_ids = month.staff_assignments.filter(
             role__in=(ChallengeStaffAssignment.Role.HOST, ChallengeStaffAssignment.Role.TEAM_LEADER, ChallengeStaffAssignment.Role.FLOATER),
             ended_at__isnull=True,
@@ -609,7 +1009,7 @@ class TeamAssignmentForm(forms.ModelForm):
     def __init__(self, *args, month, **kwargs):
         super().__init__(*args, **kwargs)
         self.month = month
-        assigned_ids = month.team_assignments.values_list("participant_id", flat=True)
+        assigned_ids = month.team_assignments.filter(ended_at__isnull=True).values_list("participant_id", flat=True)
         self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).exclude(pk__in=assigned_ids)
         self.fields["team"].queryset = month.teams.filter(is_archived=False)
 
@@ -624,26 +1024,29 @@ class TeamAssignmentForm(forms.ModelForm):
             self.add_error("participant", "End this member's active Floater assignment before assigning them to a team.")
         return cleaned
 
-    def save(self, commit=True):
+    def save(self, actor, commit=True):
         assignment = super().save(commit=False)
         assignment.month = self.month
         if commit:
-            assignment.full_clean()
-            assignment.save()
+            from .participation import assign_participant_to_team
+
+            assignment, _, _ = assign_participant_to_team(
+                month=self.month,
+                participant=assignment.participant,
+                team=assignment.team,
+                actor=actor,
+            )
         return assignment
 
 
-class MonthEnrollmentForm(forms.ModelForm):
+class MonthEnrollmentForm(forms.Form):
+    participant = forms.ModelChoiceField(queryset=Membership.objects.none())
     team = forms.ModelChoiceField(queryset=Team.objects.none(), required=False, help_text="Optional. The participant can be assigned to a team later.")
-
-    class Meta:
-        model = MonthEnrollment
-        fields = ("participant",)
 
     def __init__(self, *args, month, **kwargs):
         super().__init__(*args, **kwargs)
         self.month = month
-        enrolled_ids = month.enrollments.values_list("participant_id", flat=True)
+        enrolled_ids = month.enrollments.filter(is_active=True).values_list("participant_id", flat=True)
         self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).exclude(pk__in=enrolled_ids)
         self.fields["team"].queryset = month.teams.all()
 
@@ -659,15 +1062,24 @@ class MonthEnrollmentForm(forms.ModelForm):
         return cleaned
 
     def save(self, enrolled_by=None, commit=True):
-        enrollment = super().save(commit=False)
-        enrollment.month = self.month
-        enrollment.enrolled_by = enrolled_by
-        if commit:
-            enrollment.full_clean()
-            enrollment.save()
-            team = self.cleaned_data.get("team")
-            if team:
-                TeamAssignment.objects.create(month=self.month, participant=enrollment.participant, team=team)
+        from .participation import activate_participation, assign_participant_to_team
+
+        participant = self.cleaned_data["participant"]
+        team = self.cleaned_data.get("team")
+        if team:
+            _, enrollment, _ = assign_participant_to_team(
+                month=self.month,
+                participant=participant,
+                team=team,
+                actor=enrolled_by,
+            )
+        else:
+            enrollment, _, _ = activate_participation(
+                month=self.month,
+                participant=participant,
+                actor=enrolled_by,
+                origin=MonthEnrollment.Origin.STAFF,
+            )
         return enrollment
 
 
@@ -678,23 +1090,36 @@ class MonthParticipantEditForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.enrollment = enrollment
         self.fields["team"].queryset = enrollment.month.teams.filter(is_archived=False)
-        assignment = TeamAssignment.objects.filter(month=enrollment.month, participant=enrollment.participant).first()
+        assignment = TeamAssignment.objects.filter(
+            month=enrollment.month,
+            participant=enrollment.participant,
+            ended_at__isnull=True,
+        ).first()
         self.fields["team"].initial = assignment.team_id if assignment else None
 
     def save(self, actor=None):
         team = self.cleaned_data.get("team")
-        assignment = TeamAssignment.objects.filter(month=self.enrollment.month, participant=self.enrollment.participant).first()
+        from .participation import assign_participant_to_team, end_team_assignment
+
+        assignment = TeamAssignment.objects.filter(
+            month=self.enrollment.month,
+            participant=self.enrollment.participant,
+            ended_at__isnull=True,
+        ).first()
         previous_team = assignment.team if assignment else None
         if team:
-            if assignment:
-                assignment.team = team
-                assignment._staffing_change_actor = actor
-                assignment.save()
-            else:
-                TeamAssignment.objects.create(month=self.enrollment.month, participant=self.enrollment.participant, team=team)
+            assign_participant_to_team(
+                month=self.enrollment.month,
+                participant=self.enrollment.participant,
+                team=team,
+                actor=actor,
+            )
         elif assignment:
-            assignment._staffing_change_actor = actor
-            assignment.delete()
+            end_team_assignment(
+                assignment=assignment,
+                actor=actor,
+                reason="staff left the Reader unassigned",
+            )
         return previous_team, team
 
 

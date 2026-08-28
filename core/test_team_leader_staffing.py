@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .models import AuditEvent, BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, ReadingGroup, Team, TeamAssignment
-from .permissions import can_view_team_stats
+from .permissions import can_view_team_standings
 
 
 class TeamLeaderStaffingTests(TestCase):
@@ -42,17 +42,19 @@ class TeamLeaderStaffingTests(TestCase):
             name="Leader Month",
             starts_on=date(2026, 8, 1),
             ends_on=date(2026, 8, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         self.other_month = ChallengeMonth.objects.create(
             group=self.group,
             name="Other Leader Month",
             starts_on=date(2026, 9, 1),
             ends_on=date(2026, 9, 30),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         self.team_one = Team.objects.create(month=self.month, name="Team One")
         self.team_two = Team.objects.create(month=self.month, name="Team Two")
+        for participant in (self.reader_one, self.reader_two, self.host_membership):
+            MonthEnrollment.objects.create(month=self.month, participant=participant, enrolled_by=self.owner)
         self.reader_one_assignment = TeamAssignment.objects.create(
             month=self.month, team=self.team_one, participant=self.reader_one
         )
@@ -136,6 +138,7 @@ class TeamLeaderStaffingTests(TestCase):
             display_name="Inactive Leader",
             is_active=False,
         )
+        MonthEnrollment.objects.create(month=self.month, participant=inactive)
         TeamAssignment.objects.create(month=self.month, team=self.team_one, participant=inactive)
         with self.assertRaises(ValidationError):
             self.create_leader(inactive)
@@ -157,7 +160,7 @@ class TeamLeaderStaffingTests(TestCase):
 
     def test_team_leader_remains_reader_without_group_or_visibility_authority(self):
         self.create_leader(self.reader_one)
-        self.assertFalse(can_view_team_stats(self.reader_one_user, self.month))
+        self.assertFalse(can_view_team_standings(self.reader_one_user, self.month))
 
         self.client.force_login(self.reader_one_user)
         self.assertEqual(
@@ -227,13 +230,22 @@ class TeamLeaderStaffingTests(TestCase):
         leader.refresh_from_db()
         self.assertIsNotNone(leader.ended_at)
         self.assertEqual(leader.ended_by, self.host_user)
-        self.assertEqual(TeamAssignment.objects.get(pk=self.reader_one_assignment.pk).team, self.team_two)
+        self.reader_one_assignment.refresh_from_db()
+        self.assertIsNotNone(self.reader_one_assignment.ended_at)
+        self.assertEqual(
+            TeamAssignment.objects.get(
+                month=self.month,
+                participant=self.reader_one,
+                ended_at__isnull=True,
+            ).team,
+            self.team_two,
+        )
         self.assertTrue(
             AuditEvent.objects.filter(
                 action="challenge.team_leader_ended",
                 object_id=str(leader.pk),
                 actor=self.host_user,
-                summary__contains="underlying team assignment changed",
+                summary__contains="moved to Team Two",
             ).exists()
         )
 
@@ -255,7 +267,8 @@ class TeamLeaderStaffingTests(TestCase):
         )
         leader.refresh_from_db()
         self.assertIsNotNone(leader.ended_at)
-        self.assertFalse(TeamAssignment.objects.filter(pk=self.reader_one_assignment.pk).exists())
+        self.reader_one_assignment.refresh_from_db()
+        self.assertIsNotNone(self.reader_one_assignment.ended_at)
         self.assertTrue(MonthEnrollment.objects.filter(month=self.month, participant=self.reader_one).exists())
 
     def test_only_current_host_for_this_challenge_can_manage_team_leaders(self):
@@ -263,6 +276,7 @@ class TeamLeaderStaffingTests(TestCase):
         self.assertEqual(self.client.post(self.list_url, {"membership": self.reader_two.pk}).status_code, 403)
 
         other_team = Team.objects.create(month=self.other_month, name="Other Team")
+        MonthEnrollment.objects.create(month=self.other_month, participant=self.reader_two, enrolled_by=self.owner)
         TeamAssignment.objects.create(month=self.other_month, team=other_team, participant=self.reader_two)
         other_url = reverse(
             "team-leader-list",
@@ -283,10 +297,11 @@ class TeamLeaderStaffingTests(TestCase):
 
         self.client.force_login(self.host_user)
         host_view = self.client.get(team_page)
-        self.assertContains(host_view, "Reader One · Team Leader")
+        self.assertContains(host_view, "Team Leader: Reader One")
+        self.assertNotContains(host_view, "Reader Two")
         self.assertContains(host_view, "Manage Team Leaders")
 
         self.client.force_login(self.reader_two_user)
         reader_view = self.client.get(team_page)
-        self.assertContains(reader_view, "Reader One · Team Leader")
+        self.assertContains(reader_view, "Team Leader: Reader One")
         self.assertNotContains(reader_view, "Manage Team Leaders")

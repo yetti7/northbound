@@ -10,6 +10,8 @@
   <p>{{ form.first_name.label_tag }}{{ form.first_name }}{{ form.first_name.errors }}</p>
   <p>{{ form.last_name.label_tag }}{{ form.last_name }}{{ form.last_name.errors }}</p>
   <p>{{ form.email.label_tag }}{{ form.email }}{{ form.email.errors }}</p>
+  <p>{{ form.discord_username.label_tag }}{{ form.discord_username }}{{ form.discord_username.errors }}{% if form.discord_username.help_text %}<span class="helptext">{{ form.discord_username.help_text }}</span>{% endif %}</p>
+  <p>{{ form.discord_username_is_public }} {{ form.discord_username_is_public.label_tag }}{{ form.discord_username_is_public.errors }}{% if form.discord_username_is_public.help_text %}<span class="helptext">{{ form.discord_username_is_public.help_text }}</span>{% endif %}</p>
   {% include "core/includes/avatar_fields.html" %}
   <button class="button primary">Save Account</button>
 </form>

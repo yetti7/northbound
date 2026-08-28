@@ -11,11 +11,6 @@
   applyTheme(stored || preferred);
   document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => applyTheme(root.dataset.theme === "light" ? "dark" : "light"));
 
-  document.querySelector("[data-back-button]")?.addEventListener("click", () => {
-    if (history.length > 1) history.back();
-    else window.location.href = "/";
-  });
-
   const accountMenu = document.querySelector(".account-menu");
   if (accountMenu) {
     document.addEventListener("pointerdown", (event) => {
@@ -77,6 +72,127 @@ document.addEventListener("DOMContentLoaded", () => {
     const updateGroupAnnouncementField = () => { container.hidden = !enabled.checked; };
     enabled.addEventListener("change", updateGroupAnnouncementField);
     updateGroupAnnouncementField();
+  }
+
+  const hostBuilder = document.querySelector("[data-host-builder]");
+  if (hostBuilder) {
+    const picker = hostBuilder.querySelector("[data-host-picker]");
+    const addButton = hostBuilder.querySelector("[data-add-host]");
+    const inputContainer = hostBuilder.querySelector("[data-selected-host-inputs]");
+    const selectedList = hostBuilder.querySelector("[data-selected-host-list]");
+    const emptyMessage = hostBuilder.querySelector("[data-no-selected-hosts]");
+    const hostLabels = new Map([...picker.options].filter((option) => option.value).map((option) => [option.value, option.textContent.trim()]));
+
+    const selectedValues = () => [...inputContainer.querySelectorAll('input[name="hosts"]')].map((input) => input.value);
+    const renderSelectedHosts = () => {
+      const values = selectedValues();
+      selectedList.replaceChildren();
+      values.forEach((value) => {
+        const row = document.createElement("div");
+        row.className = "selected-host-row";
+        const name = document.createElement("strong");
+        name.textContent = hostLabels.get(value) || "Selected Host";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "danger-link selected-host-remove";
+        remove.textContent = "Remove Host";
+        remove.addEventListener("click", () => {
+          inputContainer.querySelector(`input[name="hosts"][value="${CSS.escape(value)}"]`)?.remove();
+          renderSelectedHosts();
+        });
+        row.append(name, remove);
+        selectedList.append(row);
+      });
+      [...picker.options].forEach((option) => { if (option.value) option.disabled = values.includes(option.value); });
+      emptyMessage.hidden = values.length !== 0;
+      if (picker.selectedOptions[0]?.disabled) picker.value = "";
+      addButton.disabled = !picker.value;
+    };
+
+    picker.addEventListener("change", () => { addButton.disabled = !picker.value; });
+    addButton.addEventListener("click", () => {
+      const value = picker.value;
+      if (!value || selectedValues().includes(value)) return;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "hosts";
+      input.value = value;
+      inputContainer.append(input);
+      picker.value = "";
+      renderSelectedHosts();
+      picker.focus();
+    });
+    renderSelectedHosts();
+  }
+
+  const bonusToggle = document.querySelector("[data-show-team-bonuses]");
+  if (bonusToggle) {
+    const displayedTeamTotal = document.querySelector("[data-team-displayed-total]");
+    const teamTotalNote = document.querySelector("[data-team-total-note]");
+    const mobileSortField = document.querySelector("[data-mobile-sort-field]");
+    const modifierSortOption = document.querySelector("[data-modifier-sort-option]");
+    const displayedTotalFor = (participant) => {
+      const base = Number(participant.dataset.basePages || 0);
+      const bonus = Number(participant.dataset.bonusPages || 0);
+      return bonusToggle.checked ? base + bonus : base;
+    };
+    const updateDisplayedTotals = () => {
+      document.querySelectorAll("[data-modifier-display]").forEach((element) => {
+        element.hidden = !bonusToggle.checked;
+      });
+      if (modifierSortOption) {
+        modifierSortOption.hidden = !bonusToggle.checked;
+        modifierSortOption.disabled = !bonusToggle.checked;
+      }
+      if (!bonusToggle.checked) {
+        document.querySelectorAll('[data-score-roster][data-sort-key="modifier"]').forEach((container) => {
+          container.dataset.sortKey = "total";
+        });
+        if (mobileSortField?.value === "modifier") mobileSortField.value = "total";
+      }
+      document.querySelectorAll("[data-score-participant]").forEach((participant) => {
+        participant.querySelector("[data-reader-displayed-total]").textContent = displayedTotalFor(participant);
+      });
+      if (displayedTeamTotal) {
+        displayedTeamTotal.textContent = bonusToggle.checked
+          ? displayedTeamTotal.dataset.bonusTotal
+          : displayedTeamTotal.dataset.baseTotal;
+      }
+      if (teamTotalNote) {
+        teamTotalNote.textContent = bonusToggle.checked
+          ? "Base + Modifier · Display only"
+          : "Base only · Modifier data preserved";
+      }
+
+      const totalSortRoster = document.querySelector('[data-score-roster][data-sort-key="total"]');
+      if (totalSortRoster) {
+        const direction = totalSortRoster.dataset.sortDirection;
+        document.querySelector("[data-modifier-sort-heading]")?.setAttribute("aria-sort", "none");
+        document.querySelector("[data-total-sort-heading]")?.setAttribute(
+          "aria-sort",
+          direction === "desc" ? "descending" : "ascending",
+        );
+        const modifierIndicator = document.querySelector("[data-modifier-sort-indicator]");
+        const totalIndicator = document.querySelector("[data-total-sort-indicator]");
+        if (modifierIndicator) modifierIndicator.textContent = "";
+        if (totalIndicator) totalIndicator.textContent = direction === "desc" ? " ↓" : " ↑";
+      }
+
+      document.querySelectorAll('[data-score-roster][data-sort-key="total"]').forEach((container) => {
+        const direction = container.dataset.sortDirection === "desc" ? -1 : 1;
+        const participants = [...container.querySelectorAll(":scope > [data-score-participant]")];
+        participants.sort((left, right) => {
+          const roleDifference = Number(left.dataset.roleRank) - Number(right.dataset.roleRank);
+          if (roleDifference) return roleDifference;
+          const totalDifference = displayedTotalFor(left) - displayedTotalFor(right);
+          if (totalDifference) return totalDifference * direction;
+          return left.dataset.readerName.localeCompare(right.dataset.readerName);
+        });
+        participants.forEach((participant) => container.append(participant));
+      });
+    };
+    bonusToggle.addEventListener("change", updateDisplayedTotals);
+    updateDisplayedTotals();
   }
 
   const submissionForm = document.querySelector("[data-submission-form]");

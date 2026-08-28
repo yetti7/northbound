@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Visibility · {{ month.name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'challenge-settings' month.group.slug month.pk %}">Challenge Settings</a></p><h1>Competition Visibility</h1><p class="lede">Choose which Challenge roles can see competition information. Group administrators and Platform Owners retain administrative oversight separately.</p></div></div>
+<form method="post" class="stacked-form visibility-settings-form">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="card-grid visibility-settings-grid">
+    <section class="card"><h2>{{ form.team_standings_visibility.label }}</h2><p class="muted">{{ form.team_standings_visibility.help_text }}</p>{{ form.team_standings_visibility.errors }}{{ form.team_standings_visibility }}</section>
+    <section class="card"><h2>{{ form.reader_scores_visibility.label }}</h2><p class="muted">{{ form.reader_scores_visibility.help_text }}</p>{{ form.reader_scores_visibility.errors }}{{ form.reader_scores_visibility }}</section>
+  </div>
+  <div class="action-row"><button class="button primary" type="submit">Save Visibility</button><a class="button" href="{% url 'challenge-settings' month.group.slug month.pk %}">Cancel</a></div>
+</form>
+{% endblock %}

@@ -9,6 +9,7 @@ from django.utils import timezone
 from datetime import timedelta
 from datetime import time as datetime_time
 from django.core.validators import MaxValueValidator, MinValueValidator
+from zoneinfo import ZoneInfo
 import hashlib
 import re
 import secrets
@@ -23,6 +24,8 @@ class UserProfile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="northbound_profile")
     profile_picture = models.ImageField(upload_to=profile_picture_path, blank=True)
     selected_avatar = models.CharField(max_length=100, blank=True)
+    discord_username = models.CharField(max_length=100, blank=True)
+    discord_username_is_public = models.BooleanField(default=False)
     must_change_password = models.BooleanField(default=False)
 
     @property
@@ -208,28 +211,66 @@ class Membership(models.Model):
 class ChallengeMonth(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
-        OPEN = "open", "Open"
-        CLOSED = "closed", "Closed"
-        FINALIZED = "finalized", "Finalized"
+        UPCOMING = "upcoming", "Upcoming"
+        ACTIVE = "active", "Active"
+        FINALIZING = "finalizing", "Finalizing"
+        COMPLETED = "completed", "Completed"
         ARCHIVED = "archived", "Archived"
 
-    class TeamStatsVisibility(models.TextChoices):
-        EVERYONE = "everyone", "Everyone in the group"
-        STAFF = "staff", "Owners and moderators"
-        OWNER = "owner", "Group owners only"
+    class CompetitionVisibility(models.TextChoices):
+        HOSTS = "hosts", "Hosts only"
+        HOSTS_FLOATERS = "hosts_floaters", "Hosts + Floaters"
+        HOSTS_TEAM_LEADERS = "hosts_leaders", "Hosts + Team Leaders"
+        TEAM_MEMBERS = "team_members", "Team Members"
+        EVERYBODY = "everybody", "Everybody"
 
     class AnnouncementMode(models.TextChoices):
         INHERIT = "inherit", "Use Group Announcement"
         CUSTOM = "custom", "Custom Announcement"
         NONE = "none", "No Announcement"
 
+    class RegistrationAnswerEditingPolicy(models.TextChoices):
+        NONE = "none", "No editing after registration"
+        TIMED = "timed", "Editing allowed for a set period"
+        UNTIL_CLOSE = "until_close", "Editing allowed until registration closes"
+
     group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE, related_name="challenge_months")
     name = models.CharField(max_length=80)
-    starts_on = models.DateField()
-    ends_on = models.DateField()
-    late_entry_deadline = models.DateField(null=True, blank=True)
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
-    team_stats_visibility = models.CharField(max_length=10, choices=TeamStatsVisibility.choices, default=TeamStatsVisibility.OWNER)
+    description = models.TextField(blank=True)
+    starts_on = models.DateField(null=True, blank=True)
+    ends_on = models.DateField(null=True, blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    registration_opens_at = models.DateTimeField(null=True, blank=True)
+    registration_closes_at = models.DateTimeField(null=True, blank=True)
+    final_announcement_at = models.DateTimeField(null=True, blank=True)
+    auto_open_registration = models.BooleanField(default=True)
+    auto_close_registration = models.BooleanField(default=True)
+    auto_start_challenge = models.BooleanField(default=True)
+    auto_end_challenge = models.BooleanField(default=True)
+    auto_complete_challenge = models.BooleanField(default=False)
+    registration_is_open = models.BooleanField(default=False)
+    registration_answer_editing_policy = models.CharField(
+        max_length=12,
+        choices=RegistrationAnswerEditingPolicy.choices,
+        default=RegistrationAnswerEditingPolicy.TIMED,
+    )
+    registration_answer_editing_hours = models.PositiveSmallIntegerField(
+        default=24,
+        validators=[MinValueValidator(1), MaxValueValidator(720)],
+    )
+    late_entry_deadline = models.DateField(null=True, blank=True, editable=False)
+    status = models.CharField(max_length=17, choices=Status.choices, default=Status.DRAFT)
+    team_standings_visibility = models.CharField(
+        max_length=14,
+        choices=CompetitionVisibility.choices,
+        default=CompetitionVisibility.HOSTS,
+    )
+    reader_scores_visibility = models.CharField(
+        max_length=14,
+        choices=CompetitionVisibility.choices,
+        default=CompetitionVisibility.HOSTS,
+    )
     announcement_mode = models.CharField(max_length=10, choices=AnnouncementMode.choices, default=AnnouncementMode.INHERIT)
     announcement = models.TextField(blank=True, help_text="Message displayed when Custom Announcement is selected.")
 
@@ -238,10 +279,149 @@ class ChallengeMonth(models.Model):
         ordering = ["-starts_on"]
 
     def clean(self):
-        if self.ends_on < self.starts_on:
+        if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
             raise ValidationError("The end date must be on or after the start date.")
+        if (
+            self.registration_opens_at
+            and self.registration_closes_at
+            and self.registration_closes_at < self.registration_opens_at
+        ):
+            raise ValidationError({"registration_closes_at": "Registration closing date/time cannot precede registration opening date/time."})
+        if self.starts_at and self.ends_at and self.ends_at < self.starts_at:
+            raise ValidationError({"ends_at": "Challenge ending date/time cannot precede Challenge starting date/time."})
         if self.announcement_mode == self.AnnouncementMode.CUSTOM and not self.announcement.strip():
             raise ValidationError({"announcement": "Enter an announcement or select a different announcement option."})
+        if self.pk and self.enrollments.exists():
+            persisted_policy = type(self).objects.filter(pk=self.pk).values(
+                "registration_answer_editing_policy",
+                "registration_answer_editing_hours",
+            ).first()
+            if persisted_policy and (
+                persisted_policy["registration_answer_editing_policy"] != self.registration_answer_editing_policy
+                or persisted_policy["registration_answer_editing_hours"] != self.registration_answer_editing_hours
+            ):
+                raise ValidationError({"registration_answer_editing_policy": "Reader answer editing is locked after the first registration."})
+
+    @classmethod
+    def lifecycle_order(cls):
+        return (
+            cls.Status.DRAFT,
+            cls.Status.UPCOMING,
+            cls.Status.ACTIVE,
+            cls.Status.FINALIZING,
+            cls.Status.COMPLETED,
+            cls.Status.ARCHIVED,
+        )
+
+    def validate_lifecycle_transition(self, target_status, *, confirm_reversal=False, confirm_completed_recovery=False):
+        if target_status not in self.Status.values:
+            raise ValidationError({"status": "Select a valid Challenge lifecycle state."})
+        if target_status == self.status:
+            return
+        if self.status == self.Status.ARCHIVED:
+            raise ValidationError({"status": "Archived Challenges cannot move backward through the normal lifecycle."})
+        order = self.lifecycle_order()
+        current_index = order.index(self.status)
+        target_index = order.index(target_status)
+        if abs(target_index - current_index) != 1:
+            raise ValidationError({"status": "Challenges may move only one adjacent lifecycle stage at a time."})
+        if target_index < current_index and not confirm_reversal:
+            raise ValidationError({"status": "Moving a Challenge backward requires explicit confirmation."})
+        if (
+            self.status == self.Status.COMPLETED
+            and target_status == self.Status.FINALIZING
+            and not confirm_completed_recovery
+        ):
+            raise ValidationError({"status": "Reopening a Completed Challenge requires explicit recovery confirmation."})
+
+    def transition_to(self, target_status, *, confirm_reversal=False, confirm_completed_recovery=False):
+        if not self.pk:
+            raise ValidationError({"status": "Save the Challenge before changing its lifecycle state."})
+        with transaction.atomic():
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            current.validate_lifecycle_transition(
+                target_status,
+                confirm_reversal=confirm_reversal,
+                confirm_completed_recovery=confirm_completed_recovery,
+            )
+            if target_status == current.status:
+                return self
+            current.status = target_status
+            current._allow_lifecycle_transition = True
+            current.save(update_fields=["status"])
+        self.status = target_status
+        return self
+
+    def apply_scheduled_actions(self, *, now=None):
+        current_time = now or timezone.now()
+        actions = []
+        original_status = self.status
+        lifecycle_target = None
+
+        if (
+            self.auto_open_registration
+            and self.registration_opens_at
+            and current_time >= self.registration_opens_at
+            and original_status in {self.Status.DRAFT, self.Status.UPCOMING, self.Status.ACTIVE}
+        ):
+            if not self.registration_is_open:
+                self.registration_is_open = True
+                actions.append("registration_opened")
+            if original_status == self.Status.DRAFT:
+                lifecycle_target = self.Status.UPCOMING
+
+        if (
+            self.auto_close_registration
+            and self.registration_closes_at
+            and current_time >= self.registration_closes_at
+            and self.registration_is_open
+        ):
+            self.registration_is_open = False
+            actions.append("registration_closed")
+
+        if (
+            self.auto_start_challenge
+            and self.starts_at
+            and current_time >= self.starts_at
+            and original_status == self.Status.UPCOMING
+        ):
+            lifecycle_target = self.Status.ACTIVE
+        elif (
+            self.auto_end_challenge
+            and self.ends_at
+            and current_time >= self.ends_at
+            and original_status == self.Status.ACTIVE
+        ):
+            lifecycle_target = self.Status.FINALIZING
+        elif (
+            self.auto_complete_challenge
+            and self.final_announcement_at
+            and current_time >= self.final_announcement_at
+            and original_status == self.Status.FINALIZING
+        ):
+            lifecycle_target = self.Status.COMPLETED
+
+        registration_changed = "registration_opened" in actions or "registration_closed" in actions
+        if registration_changed:
+            self.save(update_fields=["registration_is_open"])
+        if lifecycle_target:
+            self.transition_to(lifecycle_target)
+            actions.append(f"lifecycle_{lifecycle_target}")
+        return actions
+
+    def save(self, *args, **kwargs):
+        if self.group_id:
+            group_timezone = ZoneInfo(self.group.timezone)
+            if self.starts_at:
+                self.starts_on = timezone.localtime(self.starts_at, group_timezone).date()
+            if self.ends_at:
+                self.ends_on = timezone.localtime(self.ends_at, group_timezone).date()
+        if self.pk and not getattr(self, "_allow_lifecycle_transition", False):
+            persisted_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if persisted_status is not None and persisted_status != self.status:
+                raise ValidationError({"status": "Use the authoritative Challenge lifecycle transition mechanism."})
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.group}: {self.name}"
@@ -250,12 +430,69 @@ class ChallengeMonth(models.Model):
         return reverse("month-detail", kwargs={"group_slug": self.group.slug, "pk": self.pk})
 
     @property
-    def effective_announcement(self):
-        if self.announcement_mode == self.AnnouncementMode.CUSTOM:
-            return self.announcement.strip()
-        if self.announcement_mode == self.AnnouncementMode.INHERIT:
-            return self.group.announcement.strip() if self.group.announcement_enabled else ""
-        return ""
+    def signup_schema_is_locked(self):
+        return self.enrollments.exists()
+
+
+class ChallengeSignupQuestion(models.Model):
+    class QuestionType(models.TextChoices):
+        SHORT_TEXT = "short_text", "Short Text"
+        NUMBER = "number", "Number"
+        SINGLE_CHOICE = "single_choice", "Single Choice"
+        MULTIPLE_CHOICE = "multiple_choice", "Multiple Choice"
+
+    month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="signup_questions")
+    wording = models.CharField(max_length=240)
+    question_type = models.CharField(max_length=20, choices=QuestionType.choices)
+    is_required = models.BooleanField(default=False)
+    choices = models.JSONField(default=list, blank=True)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["month", "position"], name="unique_signup_question_position"),
+        ]
+
+    def clean(self):
+        if self.month_id and not self.pk and self.month.signup_questions.count() >= 10:
+            raise ValidationError("A Challenge may have at most ten signup questions.")
+        if self.pk and self.month.enrollments.exists():
+            persisted = type(self).objects.filter(pk=self.pk).values(
+                "wording", "question_type", "is_required", "choices", "position"
+            ).first()
+            current = {
+                "wording": self.wording,
+                "question_type": self.question_type,
+                "is_required": self.is_required,
+                "choices": self.choices,
+                "position": self.position,
+            }
+            if persisted and persisted != current:
+                raise ValidationError("Signup questions are locked after the first registration.")
+        normalized_choices = [str(choice).strip() for choice in self.choices if str(choice).strip()]
+        if len(normalized_choices) > 20:
+            raise ValidationError({"choices": "A signup question may have at most 20 choices."})
+        if any(len(choice) > 120 for choice in normalized_choices):
+            raise ValidationError({"choices": "Each signup-question choice must be 120 characters or fewer."})
+        choice_type = self.question_type in {self.QuestionType.SINGLE_CHOICE, self.QuestionType.MULTIPLE_CHOICE}
+        if choice_type and len(normalized_choices) < 2:
+            raise ValidationError({"choices": "Single Choice and Multiple Choice questions require at least two choices."})
+        if not choice_type and normalized_choices:
+            raise ValidationError({"choices": "Choices are available only for Single Choice and Multiple Choice questions."})
+        self.choices = normalized_choices
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.month.enrollments.exists():
+            raise ValidationError("Signup questions are locked after the first registration.")
+        return super().delete(*args, **kwargs)
+
+    def __str__(self):
+        return self.wording
 
 
 class ChallengeStaffAssignment(models.Model):
@@ -276,6 +513,7 @@ class ChallengeStaffAssignment(models.Model):
         on_delete=models.SET_NULL,
         related_name="assigned_challenge_staff",
     )
+    host_assignment_notice_seen_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     ended_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -317,19 +555,20 @@ class ChallengeStaffAssignment(models.Model):
         if self.ended_at is None and self.role == self.Role.HOST and active_other_roles.filter(role=self.Role.FLOATER).exists():
             raise ValidationError("End the active Floater assignment before assigning this member as a Host.")
         if self.ended_at is None and self.role == self.Role.FLOATER:
-            if MonthEnrollment.objects.filter(month=self.month, participant=self.membership).exists():
+            if MonthEnrollment.objects.filter(month=self.month, participant=self.membership, is_active=True).exists():
                 raise ValidationError("Enrolled Readers cannot be assigned as Floaters.")
             if active_other_roles.filter(role__in=(self.Role.HOST, self.Role.TEAM_LEADER)).exists():
                 raise ValidationError("A current Host or Team Leader cannot be assigned as a Floater.")
         if self.ended_at is None and self.role == self.Role.TEAM_LEADER:
             if active_other_roles.filter(role=self.Role.FLOATER).exists():
                 raise ValidationError("End the active Floater assignment before assigning this member as a Team Leader.")
-            if not MonthEnrollment.objects.filter(month=self.month, participant=self.membership).exists():
+            if not MonthEnrollment.objects.filter(month=self.month, participant=self.membership, is_active=True).exists():
                 raise ValidationError("Team Leaders must already be enrolled in the challenge month.")
             if not TeamAssignment.objects.filter(
                 month=self.month,
                 participant=self.membership,
                 team=self.team,
+                ended_at__isnull=True,
             ).exists():
                 raise ValidationError("Team Leaders can only lead their assigned team.")
 
@@ -364,8 +603,11 @@ class MonthTheme(models.Model):
     def clean(self):
         if self.ends_on < self.starts_on:
             raise ValidationError("The theme end date must be on or after its start date.")
-        if self.month_id and (self.starts_on < self.month.starts_on or self.ends_on > self.month.ends_on):
-            raise ValidationError("Theme dates must fall inside the challenge month.")
+        if self.month_id:
+            if not self.month.starts_on or not self.month.ends_on:
+                raise ValidationError("Configure the Challenge schedule before adding themes.")
+            if self.starts_on < self.month.starts_on or self.ends_on > self.month.ends_on:
+                raise ValidationError("Theme dates must fall inside the challenge month.")
 
     def __str__(self):
         return f"{self.month.name} — {self.name}"
@@ -386,19 +628,44 @@ class Team(models.Model):
 
     @property
     def approved_pages(self):
+        """Legacy/current approved final-score total, including approved bonuses."""
         return self.month.submissions.filter(
             participant__team_assignments__team=self,
             participant__team_assignments__month=self.month,
+            participant__team_assignments__ended_at__isnull=True,
+            participant__month_enrollments__month=self.month,
+            participant__month_enrollments__is_active=True,
             status=BookSubmission.Status.APPROVED,
             is_removed=False,
-        ).aggregate(total=Sum("final_scored_pages"))["total"] or 0
+        ).distinct().aggregate(total=Sum("final_scored_pages"))["total"] or 0
+
 
 
 class MonthEnrollment(models.Model):
+    class Origin(models.TextChoices):
+        LEGACY = "legacy", "Legacy"
+        SELF = "self", "Self-registration"
+        STAFF = "staff", "Staff"
+
+    class InactiveReason(models.TextChoices):
+        WITHDRAWN = "withdrawn", "Withdrawn"
+        REMOVED = "removed", "Removed"
+
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="enrollments")
     participant = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="month_enrollments")
     enrolled_at = models.DateTimeField(auto_now_add=True)
     enrolled_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_month_enrollments")
+    is_active = models.BooleanField(default=True)
+    origin = models.CharField(max_length=10, choices=Origin.choices, default=Origin.LEGACY)
+    inactive_reason = models.CharField(max_length=12, choices=InactiveReason.choices, blank=True)
+    inactivated_at = models.DateTimeField(null=True, blank=True)
+    inactivated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="inactivated_month_enrollments",
+    )
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["month", "participant"], name="one_enrollment_per_participant_per_month")]
@@ -422,14 +689,163 @@ class MonthEnrollment(models.Model):
     def __str__(self):
         return f"{self.month.name} — {self.participant.display_name}"
 
+    @property
+    def registration_answer_editing_deadline(self):
+        if self.month.registration_answer_editing_policy != ChallengeMonth.RegistrationAnswerEditingPolicy.TIMED:
+            return None
+        return self.enrolled_at + timedelta(hours=self.month.registration_answer_editing_hours)
+
+    def can_reader_edit_registration_answers(self, *, now=None):
+        current_time = now or timezone.now()
+        policy = self.month.registration_answer_editing_policy
+        if policy == ChallengeMonth.RegistrationAnswerEditingPolicy.NONE:
+            return False
+        if policy == ChallengeMonth.RegistrationAnswerEditingPolicy.UNTIL_CLOSE:
+            return self.month.registration_is_open
+        return current_time <= self.registration_answer_editing_deadline
+
+
+class ChallengeSignupAnswer(models.Model):
+    enrollment = models.ForeignKey(MonthEnrollment, on_delete=models.CASCADE, related_name="signup_answers")
+    question = models.ForeignKey(ChallengeSignupQuestion, on_delete=models.PROTECT, related_name="answers")
+    value = models.JSONField(default=str, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["question__position", "question_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["enrollment", "question"], name="one_answer_per_signup_question"),
+        ]
+
+    def clean(self):
+        if self.enrollment_id and self.question_id and self.enrollment.month_id != self.question.month_id:
+            raise ValidationError("The signup answer must belong to the enrollment's Challenge.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
+class ProgressCheckpoint(models.Model):
+    class ProgressBasis(models.TextChoices):
+        BASE = "base", "Base Pages"
+        TOTAL = "total", "Total Pages"
+
+    class TargetBasis(models.TextChoices):
+        PREVIOUS_AVERAGE = "previous_average", "Previous Monthly Average"
+        FIXED = "fixed", "Fixed Target"
+
+    class EvaluationState(models.TextChoices):
+        PENDING = "pending", "Pending"
+        EVALUATED = "evaluated", "Evaluated"
+        SKIPPED = "skipped", "Skipped"
+
+    month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="progress_checkpoints")
+    scheduled_at = models.DateTimeField()
+    threshold_percentage = models.PositiveSmallIntegerField(
+        default=25,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    progress_basis = models.CharField(max_length=8, choices=ProgressBasis.choices, default=ProgressBasis.BASE)
+    target_basis = models.CharField(max_length=20, choices=TargetBasis.choices, default=TargetBasis.PREVIOUS_AVERAGE)
+    fixed_target_pages = models.PositiveIntegerField(null=True, blank=True)
+    position = models.PositiveSmallIntegerField(default=1)
+    evaluation_state = models.CharField(max_length=10, choices=EvaluationState.choices, default=EvaluationState.PENDING)
+    evaluated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["position", "scheduled_at", "pk"]
+        constraints = [models.UniqueConstraint(fields=["month", "position"], name="unique_progress_checkpoint_position")]
+
+    def clean(self):
+        if self.month_id and not self.pk and self.month.progress_checkpoints.count() >= 5:
+            raise ValidationError("A Challenge may have at most five progress checkpoints.")
+        if self.target_basis == self.TargetBasis.FIXED and not self.fixed_target_pages:
+            raise ValidationError({"fixed_target_pages": "Enter a positive page target for a Fixed Target checkpoint."})
+        if self.target_basis == self.TargetBasis.PREVIOUS_AVERAGE:
+            self.fixed_target_pages = None
+        if self.pk:
+            persisted = type(self).objects.filter(pk=self.pk).values("evaluation_state").first()
+            if persisted and persisted["evaluation_state"] != self.EvaluationState.PENDING:
+                editable = type(self).objects.filter(pk=self.pk).values(
+                    "scheduled_at", "threshold_percentage", "progress_basis", "target_basis",
+                    "fixed_target_pages", "position", "evaluation_state", "evaluated_at",
+                ).first()
+                current = {
+                    "scheduled_at": self.scheduled_at,
+                    "threshold_percentage": self.threshold_percentage,
+                    "progress_basis": self.progress_basis,
+                    "target_basis": self.target_basis,
+                    "fixed_target_pages": self.fixed_target_pages,
+                    "position": self.position,
+                    "evaluation_state": self.evaluation_state,
+                    "evaluated_at": self.evaluated_at,
+                }
+                if editable != current:
+                    raise ValidationError("Evaluated checkpoint configuration is locked to preserve its historical results.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        persisted_state = type(self).objects.filter(pk=self.pk).values_list("evaluation_state", flat=True).first()
+        if persisted_state != self.EvaluationState.PENDING:
+            raise ValidationError("Evaluated checkpoints cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+
+class ProgressCheckpointResult(models.Model):
+    class Outcome(models.TextChoices):
+        MET = "met", "Met threshold"
+        BELOW = "below", "Below threshold"
+        NOT_EVALUATED = "not_evaluated", "Not Evaluated"
+
+    checkpoint = models.ForeignKey(ProgressCheckpoint, on_delete=models.PROTECT, related_name="results")
+    participant = models.ForeignKey(Membership, on_delete=models.PROTECT, related_name="progress_checkpoint_results")
+    evaluated_at = models.DateTimeField()
+    threshold_percentage = models.PositiveSmallIntegerField()
+    progress_basis = models.CharField(max_length=8, choices=ProgressCheckpoint.ProgressBasis.choices)
+    target_basis = models.CharField(max_length=20, choices=ProgressCheckpoint.TargetBasis.choices)
+    target_pages = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    required_pages = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    progress_pages = models.PositiveIntegerField(default=0)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+
+    class Meta:
+        ordering = ["checkpoint__scheduled_at", "participant__display_name", "pk"]
+        constraints = [models.UniqueConstraint(fields=["checkpoint", "participant"], name="one_progress_result_per_checkpoint_reader")]
+
 
 class TeamAssignment(models.Model):
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="team_assignments")
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="assignments")
     participant = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="team_assignments")
+    assigned_at = models.DateTimeField(auto_now_add=True, null=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_team_assignments",
+    )
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ended_team_assignments",
+    )
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["month", "participant"], name="one_team_per_participant_per_month")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["month", "participant"],
+                condition=Q(ended_at__isnull=True),
+                name="one_current_team_per_participant_per_month",
+            )
+        ]
 
     def clean(self):
         if self.team_id and self.month_id and self.team.month_id != self.month_id:
@@ -443,6 +859,12 @@ class TeamAssignment(models.Model):
             ended_at__isnull=True,
         ).exists():
             raise ValidationError("End this member's active Floater assignment before assigning them to a team.")
+        if self.ended_at is None and self.participant_id and self.month_id and not MonthEnrollment.objects.filter(
+            month=self.month,
+            participant=self.participant,
+            is_active=True,
+        ).exists():
+            raise ValidationError("Current team assignments require active Challenge participation.")
 
     def save(self, *args, **kwargs):
         previous = None
@@ -454,16 +876,9 @@ class TeamAssignment(models.Model):
                 or previous.participant_id != self.participant_id
                 or previous.team_id != self.team_id
             ):
-                end_active_team_leader_assignments(
-                    month=previous.month,
-                    participant=previous.participant,
-                    team=previous.team,
-                    actor=getattr(self, "_staffing_change_actor", None),
-                    reason="the underlying team assignment changed",
-                )
+                raise ValidationError("Historical team assignments cannot be rewritten. End the current assignment and create a new one.")
             self.full_clean()
             super().save(*args, **kwargs)
-            MonthEnrollment.objects.get_or_create(month=self.month, participant=self.participant)
 
     def delete(self, *args, **kwargs):
         with transaction.atomic():
@@ -475,6 +890,10 @@ class TeamAssignment(models.Model):
                 reason="the underlying team assignment was removed",
             )
             return super().delete(*args, **kwargs)
+
+    @property
+    def is_current(self):
+        return self.ended_at is None
 
 
 def end_active_team_leader_assignments(*, month, participant, team, actor=None, reason):
@@ -622,8 +1041,11 @@ class BookSubmission(models.Model):
     def clean(self):
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the selected reading group.")
-        if self.month_id and not (self.month.starts_on <= self.completed_on <= self.month.ends_on):
-            raise ValidationError("Completion date must fall inside the challenge month.")
+        if self.month_id:
+            if not self.month.starts_on or not self.month.ends_on:
+                raise ValidationError("The Challenge schedule must be configured before accepting submissions.")
+            if not (self.month.starts_on <= self.completed_on <= self.month.ends_on):
+                raise ValidationError("Completion date must fall inside the challenge month.")
         if self.started_on and self.completed_on and self.started_on > self.completed_on:
             raise ValidationError("Start date cannot be later than completion date.")
         if self.status == self.Status.APPROVED and not self.approved_pages:
@@ -709,6 +1131,18 @@ AUDIT_ACTION_LABELS = {
     "platform.disposable_cache_cleaned": "Disposable Cache Cleaned",
     "platform.audit_history_pruned": "Audit History Pruned",
     "platform.sqlite_optimized": "SQLite Database Optimized",
+    "account.identity_updated": "Account Identity Updated",
+    "participation.self_registered": "Reader Registered",
+    "participation.self_reactivated": "Reader Re-registered",
+    "participation.self_withdrew": "Reader Withdrew",
+    "participation.staff_created": "Reader Added by Staff",
+    "participation.staff_reactivated": "Reader Reactivated by Staff",
+    "participation.staff_removed": "Reader Removed by Staff",
+    "challenge.registration_schema_updated": "Challenge Registration Schema Updated",
+    "challenge.progress_checkpoints_updated": "Challenge Progress Checkpoints Updated",
+    "registration.answers_admin_corrected": "Registration Answers Administratively Corrected",
+    "team_assignment.ended": "Team Assignment Ended",
+    "team_assignment.moved": "Reader Moved Teams",
 }
 AUDIT_SECRET_PATTERN = re.compile(
     r"(?i)\b((?:[a-z0-9]+[_-])*(?:password(?:[_-]?hash)?|secret(?:[_-]?key)?|"

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Permissions · {{ participant.display_name }}{% endblock %}
+{% block title %}Group Permissions · {{ participant.display_name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'participant-list' group.slug %}">{{ group.name }} Participants</a></p><h1>{{ participant.display_name }}</h1><p class="lede">The role supplies defaults. Set individual capabilities to Allow or Deny only when this person needs an exception.</p></div></div>
-<section class="form-card"><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save Permissions</button></form></section>
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'participant-list' group.slug %}">{{ group.name }} Participants</a></p><h1>Group Permissions</h1><p class="lede">Configure permanent Group authority for {{ participant.display_name }}. Challenge staffing and participation are managed inside each Challenge.</p></div></div>
+<section class="form-card"><form method="post" class="stacked-form">{% csrf_token %}{{ form.non_field_errors }}<h2>Persistent Group Role</h2><p>{{ form.role.label_tag }}{{ form.role }}{{ form.role.errors }}{% if form.role.help_text %}<span class="helptext">{{ form.role.help_text }}</span>{% endif %}</p><h2>Delegated Group Permissions</h2><p class="muted">Use exceptions only for permanent Group-level responsibilities.</p>{% for field in form %}{% if field.name != 'role' %}<p>{{ field.label_tag }}{{ field }}{{ field.errors }}{% if field.help_text %}<span class="helptext">{{ field.help_text }}</span>{% endif %}</p>{% endif %}{% endfor %}<button class="button primary">Save Group Permissions</button></form></section>
 {% endblock %}

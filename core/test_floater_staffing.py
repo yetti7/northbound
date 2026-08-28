@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .models import AuditEvent, BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, ReadingGroup, Team, TeamAssignment
-from .permissions import can_view_team_stats
+from .permissions import can_view_team_standings
 
 
 class FloaterStaffingTests(TestCase):
@@ -27,11 +27,12 @@ class FloaterStaffingTests(TestCase):
         self.member = Membership.objects.create(group=self.group, user=self.member_user, role=Membership.Role.MEMBER, display_name="Floater One")
         self.second_member = Membership.objects.create(group=self.group, user=self.second_member_user, role=Membership.Role.MEMBER, display_name="Floater Two")
         self.reader = Membership.objects.create(group=self.group, user=self.reader_user, role=Membership.Role.MEMBER, display_name="Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Floater Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
-        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Other Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Floater Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
+        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Other Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.ACTIVE)
         self.team = Team.objects.create(month=self.month, name="Team One")
         self.host_assignment = ChallengeStaffAssignment.objects.create(month=self.month, membership=self.host_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.other_host_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
+        MonthEnrollment.objects.create(month=self.month, participant=self.reader, enrolled_by=self.owner)
         TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.reader)
         self.list_url = reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})
 
@@ -136,7 +137,7 @@ class FloaterStaffingTests(TestCase):
 
     def test_floater_cannot_submit_or_gain_group_and_visibility_authority(self):
         self.create_floater()
-        self.assertFalse(can_view_team_stats(self.member_user, self.month))
+        self.assertFalse(can_view_team_standings(self.member_user, self.month))
         self.client.force_login(self.member_user)
         response = self.client.post(
             reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),

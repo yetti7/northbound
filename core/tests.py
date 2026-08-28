@@ -146,6 +146,10 @@ class PlatformAccountManagementTests(TestCase):
         self.deactivated_reader = User.objects.create_user("archived-reader", "archived@example.com", "old-reader-password", is_active=False)
         self.group = ReadingGroup.objects.create(name="Managed Group", slug="managed-group")
         self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Managed Reader")
+        self.reader.first_name = "Morgan"
+        self.reader.last_name = "Reader"
+        self.reader.last_login = timezone.now()
+        self.reader.save(update_fields=["first_name", "last_name", "last_login"])
 
     def test_root_user_directory_excludes_root_and_shows_memberships(self):
         self.client.force_login(self.root)
@@ -155,6 +159,133 @@ class PlatformAccountManagementTests(TestCase):
         detail = self.client.get(reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
         self.assertContains(detail, "Managed Group")
         self.assertContains(detail, reverse("participant-permissions-edit", kwargs={"group_slug": self.group.slug, "pk": self.membership.pk}))
+        self.assertContains(detail, reverse("participant-detail", kwargs={"group_slug": self.group.slug, "pk": self.membership.pk}))
+
+    def test_account_detail_renders_installation_identity_without_reading_statistics_or_deletion(self):
+        self.client.force_login(self.root)
+        detail = self.client.get(reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
+        self.assertContains(detail, "Account Identity")
+        self.assertContains(detail, "managed-reader")
+        self.assertContains(detail, "Morgan Reader")
+        self.assertContains(detail, "reader@example.com")
+        self.assertContains(detail, "Last Sign-In")
+        self.assertContains(detail, "Date Joined")
+        self.assertContains(detail, "Password State")
+        self.assertContains(detail, "Group Memberships")
+        self.assertNotContains(detail, "Verified Pages")
+        self.assertNotContains(detail, "Approved Books")
+        self.assertNotContains(detail, "Delete Account")
+
+    def test_group_membership_shows_current_challenge_access_without_history_totals(self):
+        month = ChallengeMonth.objects.create(
+            group=self.group,
+            name="Current Managed Challenge",
+            starts_on=date(2026, 8, 1),
+            ends_on=date(2026, 8, 31),
+            status=ChallengeMonth.Status.ACTIVE,
+        )
+        MonthEnrollment.objects.create(month=month, participant=self.membership)
+        self.client.force_login(self.root)
+        detail = self.client.get(reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
+        self.assertContains(detail, "Current Managed Challenge")
+        self.assertContains(detail, "Reader")
+        self.assertContains(detail, "Participant Profile")
+        self.assertContains(detail, "Permissions &amp; Access", html=True)
+
+    def test_platform_owner_can_edit_identity_in_place_with_uniqueness_and_audit(self):
+        month = ChallengeMonth.objects.create(
+            group=self.group,
+            name="Preserved Account History",
+            starts_on=date(2026, 8, 1),
+            ends_on=date(2026, 8, 31),
+            status=ChallengeMonth.Status.ACTIVE,
+        )
+        enrollment = MonthEnrollment.objects.create(month=month, participant=self.membership)
+        submission = BookSubmission.objects.create(
+            month=month,
+            participant=self.membership,
+            title="Preserved Submission",
+            author="Author",
+            book_format=BookSubmission.Format.EBOOK,
+            completed_on=date(2026, 8, 10),
+            submitted_pages=200,
+        )
+        original_pk = self.reader.pk
+        self.client.force_login(self.root)
+        response = self.client.post(reverse("config-user-edit", kwargs={"pk": self.reader.pk}), {
+            "username": "renamed-reader",
+            "first_name": "Corrected",
+            "last_name": "Identity",
+            "email": "renamed@example.com",
+            "is_staff": "on",
+            "is_superuser": "on",
+        })
+        self.assertRedirects(response, reverse("config-user-detail", kwargs={"pk": original_pk}))
+        self.reader.refresh_from_db()
+        self.assertEqual(self.reader.pk, original_pk)
+        self.assertEqual(self.reader.username, "renamed-reader")
+        self.assertEqual(self.reader.first_name, "Corrected")
+        self.assertEqual(self.reader.last_name, "Identity")
+        self.assertEqual(self.reader.email, "renamed@example.com")
+        self.assertFalse(self.reader.is_staff)
+        self.assertFalse(self.reader.is_superuser)
+        self.assertTrue(Membership.objects.filter(pk=self.membership.pk, user=self.reader).exists())
+        self.assertTrue(MonthEnrollment.objects.filter(pk=enrollment.pk, participant__user=self.reader).exists())
+        self.assertTrue(BookSubmission.objects.filter(pk=submission.pk, participant__user=self.reader).exists())
+        event = AuditEvent.objects.get(action="account.identity_updated", object_id=str(original_pk))
+        self.assertEqual(event.actor, self.root)
+        self.assertIn("username, first name, last name, email address", event.summary)
+        self.assertNotIn("Morgan", event.summary)
+        self.assertNotIn("Corrected", event.summary)
+
+    def test_identity_edit_rejects_duplicate_username_and_case_insensitive_email(self):
+        get_user_model().objects.create_user("existing-reader", "Existing@Example.com", "password")
+        self.client.force_login(self.root)
+        url = reverse("config-user-edit", kwargs={"pk": self.reader.pk})
+        response = self.client.post(url, {"username": "existing-reader", "first_name": "Morgan", "last_name": "Reader", "email": "reader@example.com"})
+        self.assertContains(response, "A user with that username already exists")
+        response = self.client.post(url, {"username": "managed-reader", "first_name": "Morgan", "last_name": "Reader", "email": "existing@example.com"})
+        self.assertContains(response, "An account with this email address already exists")
+        self.reader.refresh_from_db()
+        self.assertEqual(self.reader.username, "managed-reader")
+        self.assertEqual(self.reader.email, "reader@example.com")
+        self.assertFalse(AuditEvent.objects.filter(action="account.identity_updated", object_id=str(self.reader.pk)).exists())
+
+    def test_identity_edit_exposes_only_identity_fields_and_no_change_is_not_audited(self):
+        self.client.force_login(self.root)
+        url = reverse("config-user-edit", kwargs={"pk": self.reader.pk})
+        response = self.client.get(url)
+        self.assertEqual(
+            tuple(response.context["form"].fields),
+            ("username", "first_name", "last_name", "email", "discord_username"),
+        )
+        self.assertNotContains(response, "Verified Pages")
+        response = self.client.post(url, {
+            "username": self.reader.username,
+            "first_name": self.reader.first_name,
+            "last_name": self.reader.last_name,
+            "email": self.reader.email,
+            "is_staff": "on",
+            "is_superuser": "on",
+        })
+        self.assertRedirects(response, reverse("config-user-detail", kwargs={"pk": self.reader.pk}))
+        self.reader.refresh_from_db()
+        self.assertFalse(self.reader.is_staff)
+        self.assertFalse(self.reader.is_superuser)
+        self.assertFalse(AuditEvent.objects.filter(action="account.identity_updated", object_id=str(self.reader.pk)).exists())
+
+    def test_platform_owner_management_stays_separate_and_ordinary_users_are_forbidden(self):
+        self.client.force_login(self.root)
+        self.assertEqual(self.client.get(reverse("config-user-detail", kwargs={"pk": self.root.pk})).status_code, 404)
+        self.assertEqual(self.client.get(reverse("config-user-edit", kwargs={"pk": self.root.pk})).status_code, 404)
+        self.client.force_login(self.reader)
+        for url in (
+            reverse("config-user-list"),
+            reverse("config-user-detail", kwargs={"pk": self.reader.pk}),
+            reverse("config-user-edit", kwargs={"pk": self.reader.pk}),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 403)
 
     def test_dashboard_account_summary_links_to_filtered_directory(self):
         self.client.force_login(self.root)
@@ -176,8 +307,8 @@ class PlatformAccountManagementTests(TestCase):
         self.assertContains(response, 'value="all"')
         self.assertContains(response, 'data-account-sort="account"')
         self.assertContains(response, 'data-account-sort="status"')
-        self.assertContains(response, 'data-search="managed-reader  reader@example.com"')
-        self.assertNotContains(response, 'data-search="managed-reader  reader@example.com active"')
+        self.assertContains(response, 'data-search="managed-reader morgan reader reader@example.com"')
+        self.assertNotContains(response, 'data-search="managed-reader morgan reader reader@example.com active"')
         self.assertContains(response, "Deactivated")
 
     def test_temporary_password_forces_replacement_and_is_audited(self):
@@ -211,9 +342,11 @@ class PlatformAccountManagementTests(TestCase):
         self.reader.refresh_from_db()
         self.assertFalse(self.reader.is_active)
         self.assertTrue(Membership.objects.filter(pk=self.membership.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(action="account.deactivated", object_id=str(self.reader.pk)).exists())
         self.client.post(url)
         self.reader.refresh_from_db()
         self.assertTrue(self.reader.is_active)
+        self.assertTrue(AuditEvent.objects.filter(action="account.reactivated", object_id=str(self.reader.pk)).exists())
 
 
 class PlatformGroupManagementTests(TestCase):
@@ -235,7 +368,7 @@ class PlatformGroupManagementTests(TestCase):
             name="August Challenge",
             starts_on=date(2026, 8, 1),
             ends_on=date(2026, 8, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         AuditEvent.objects.create(
             actor=self.owner,
@@ -503,7 +636,7 @@ class MyStatsTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Stats Group", slug="stats-group")
         self.membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Stats Reader")
         other_membership = Membership.objects.create(group=self.group, user=self.other, role=Membership.Role.MEMBER, display_name="Other Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Stats Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Stats Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         MonthEnrollment.objects.create(month=self.month, participant=self.membership)
         team = Team.objects.create(month=self.month, name="North Team")
         TeamAssignment.objects.create(month=self.month, team=team, participant=self.membership)
@@ -541,7 +674,7 @@ class SubmissionWorkflowTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Test Group", slug="test-group")
         self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
         moderator_membership = Membership.objects.create(group=self.group, user=self.mod, role=Membership.Role.MODERATOR, display_name="Mod")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.reader_membership)
 
@@ -660,7 +793,7 @@ class ThemeScoringTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Theme Group", slug="theme-group")
         self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Theme Reader")
         moderator_membership = Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Theme Moderator")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="August Themes", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="August Themes", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.participant)
         self.prompted = MonthTheme.objects.create(month=self.month, name="Level Up", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), bonus_pages=50, prompt="Name the character that levels up")
@@ -767,17 +900,17 @@ class MonthLifecycleEnforcementTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Lifecycle Group", slug="lifecycle-group")
         owner_membership = Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
         self.participant = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Lifecycle Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Lifecycle Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.ACTIVE)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=owner_membership, role=ChallengeStaffAssignment.Role.HOST)
         MonthEnrollment.objects.create(month=self.month, participant=self.participant)
         self.submission = BookSubmission.objects.create(month=self.month, participant=self.participant, title="Pending Lifecycle Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 9, 10), submitted_pages=200)
 
     def set_status(self, status):
-        self.month.status = status
-        self.month.save(update_fields=["status"])
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+        self.month.refresh_from_db()
 
     def test_closed_month_allows_pending_review_but_blocks_configuration(self):
-        self.set_status(ChallengeMonth.Status.CLOSED)
+        self.set_status(ChallengeMonth.Status.FINALIZING)
         self.client.force_login(self.owner)
         review = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.submission.pk}))
         self.assertEqual(review.status_code, 200)
@@ -786,7 +919,7 @@ class MonthLifecycleEnforcementTests(TestCase):
         self.assertFalse(Team.objects.filter(month=self.month, name="Late Team").exists())
 
     def test_finalized_month_blocks_reviews_and_roster_changes(self):
-        self.set_status(ChallengeMonth.Status.FINALIZED)
+        self.set_status(ChallengeMonth.Status.COMPLETED)
         self.client.force_login(self.owner)
         review = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.submission.pk}))
         self.assertRedirects(review, self.month.get_absolute_url())
@@ -797,36 +930,33 @@ class MonthLifecycleEnforcementTests(TestCase):
     def test_archived_month_cannot_be_reopened(self):
         self.set_status(ChallengeMonth.Status.ARCHIVED)
         self.client.force_login(self.owner)
-        response = self.client.post(reverse("month-edit", kwargs={"group_slug": self.group.slug, "pk": self.month.pk}), {
-            "name": self.month.name,
-            "starts_on": "2026-09-01",
-            "ends_on": "2026-09-30",
-            "late_entry_deadline": "",
-            "status": ChallengeMonth.Status.OPEN,
-            "announcement_mode": ChallengeMonth.AnnouncementMode.INHERIT,
-            "announcement": "",
-        })
+        response = self.client.post(reverse("challenge-lifecycle-transition", kwargs={
+            "group_slug": self.group.slug,
+            "pk": self.month.pk,
+            "target_status": ChallengeMonth.Status.COMPLETED,
+        }))
         self.assertRedirects(response, self.month.get_absolute_url())
         self.month.refresh_from_db()
         self.assertEqual(self.month.status, ChallengeMonth.Status.ARCHIVED)
 
-    def test_finalized_month_can_only_advance_to_archived(self):
-        self.set_status(ChallengeMonth.Status.FINALIZED)
+    def test_completed_month_can_advance_to_archived(self):
+        self.set_status(ChallengeMonth.Status.COMPLETED)
         self.client.force_login(self.owner)
-        response = self.client.post(reverse("month-edit", kwargs={"group_slug": self.group.slug, "pk": self.month.pk}), {
-            "status": ChallengeMonth.Status.ARCHIVED,
-            "announcement_mode": ChallengeMonth.AnnouncementMode.INHERIT,
-        })
+        response = self.client.post(reverse("challenge-lifecycle-transition", kwargs={
+            "group_slug": self.group.slug,
+            "pk": self.month.pk,
+            "target_status": ChallengeMonth.Status.ARCHIVED,
+        }))
         self.assertRedirects(response, self.month.get_absolute_url())
         self.month.refresh_from_db()
         self.assertEqual(self.month.status, ChallengeMonth.Status.ARCHIVED)
 
     def test_closed_month_catalog_lookup_is_blocked_before_api_use(self):
-        self.set_status(ChallengeMonth.Status.CLOSED)
+        self.set_status(ChallengeMonth.Status.FINALIZING)
         self.client.force_login(self.reader)
         response = self.client.post(reverse("submission-catalog", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"action": "search", "query": "Book"})
         self.assertEqual(response.status_code, 409)
-        self.assertJSONEqual(response.content, {"ok": False, "message": "This challenge month is not open for submissions."})
+        self.assertJSONEqual(response.content, {"ok": False, "message": "This Challenge is not Active for submissions."})
 
 
 class SubmissionPrivacyTests(TestCase):
@@ -839,7 +969,7 @@ class SubmissionPrivacyTests(TestCase):
         self.membership_one = Membership.objects.create(group=self.group, user=self.reader_one, role=Membership.Role.MEMBER, display_name="Reader One")
         self.membership_two = Membership.objects.create(group=self.group, user=self.reader_two, role=Membership.Role.MEMBER, display_name="Reader Two")
         Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Private Month", starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Private Month", starts_on=date(2026, 10, 1), ends_on=date(2026, 10, 31), status=ChallengeMonth.Status.ACTIVE)
         self.own_submission = BookSubmission.objects.create(month=self.month, participant=self.membership_one, title="My Visible Book", author="Author One", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 10, 5), submitted_pages=210)
         self.other_submission = BookSubmission.objects.create(month=self.month, participant=self.membership_two, title="Other Secret Book", author="Author Two", book_format=BookSubmission.Format.PAPERBACK, completed_on=date(2026, 10, 6), submitted_pages=987)
 
@@ -1934,7 +2064,7 @@ class OwnerRemovalTests(TestCase):
         self.group = ReadingGroup.objects.create(name="Owner Group", slug="owner-group")
         self.owner_membership = Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
         self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.owner_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.submission = BookSubmission.objects.create(month=self.month, participant=self.reader_membership, title="Removable Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 10), submitted_pages=200, approved_pages=200, status=BookSubmission.Status.APPROVED)
 
@@ -2063,7 +2193,7 @@ class RegistrationAndGroupAccessTests(TestCase):
         self.assertEqual(len(group.join_code), 6)
 
 
-class TeamStatsVisibilityTests(TestCase):
+class CompetitionVisibilityTests(TestCase):
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user("visibility-owner", password="test-password")
@@ -2073,32 +2203,41 @@ class TeamStatsVisibilityTests(TestCase):
         Membership.objects.create(group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner")
         Membership.objects.create(group=self.group, user=self.mod, role=Membership.Role.MODERATOR, display_name="Mod")
         Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Secret Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Secret Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         Team.objects.create(month=self.month, name="Team One", color="#6633cc")
 
     def month_page(self, user):
         self.client.force_login(user)
         return self.client.get(self.month.get_absolute_url())
 
-    def test_owner_only_is_default_and_hides_comparison_from_reader_and_moderator(self):
-        self.assertEqual(self.month.team_stats_visibility, ChallengeMonth.TeamStatsVisibility.OWNER)
+    def test_hosts_only_is_default_and_group_admin_oversight_is_separate(self):
+        self.assertEqual(self.month.team_standings_visibility, ChallengeMonth.CompetitionVisibility.HOSTS)
+        self.assertEqual(self.month.reader_scores_visibility, ChallengeMonth.CompetitionVisibility.HOSTS)
         self.assertNotContains(self.month_page(self.reader), "Team Comparison")
         self.assertNotContains(self.month_page(self.mod), "Team Comparison")
-        self.assertContains(self.month_page(self.owner), "Visibility")
+        self.client.force_login(self.owner)
+        self.assertContains(self.client.get(reverse("challenge-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})), "Manage Visibility")
 
     def test_owner_can_open_visibility_to_everyone(self):
         self.client.force_login(self.owner)
-        response = self.client.post(reverse("team-stats-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"team_stats_visibility": ChallengeMonth.TeamStatsVisibility.EVERYONE})
-        self.assertRedirects(response, self.month.get_absolute_url())
+        response = self.client.post(reverse("challenge-visibility-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {
+            "team_standings_visibility": ChallengeMonth.CompetitionVisibility.EVERYBODY,
+            "reader_scores_visibility": ChallengeMonth.CompetitionVisibility.EVERYBODY,
+        })
+        self.assertRedirects(response, reverse("challenge-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.month.refresh_from_db()
-        self.assertEqual(self.month.team_stats_visibility, ChallengeMonth.TeamStatsVisibility.EVERYONE)
+        self.assertEqual(self.month.team_standings_visibility, ChallengeMonth.CompetitionVisibility.EVERYBODY)
+        self.assertEqual(self.month.reader_scores_visibility, ChallengeMonth.CompetitionVisibility.EVERYBODY)
 
-    def test_staff_visibility_allows_moderator_but_not_reader(self):
-        self.month.team_stats_visibility = ChallengeMonth.TeamStatsVisibility.STAFF
-        self.month.save(update_fields=["team_stats_visibility"])
+    def test_delegated_moderator_oversight_is_not_a_selectable_audience(self):
+        self.month.team_standings_visibility = ChallengeMonth.CompetitionVisibility.HOSTS
+        self.month.save(update_fields=["team_standings_visibility"])
         self.client.force_login(self.reader)
         reader_teams = self.client.get(reverse("team-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.assertContains(reader_teams, "Page totals hidden")
+        membership = Membership.objects.get(group=self.group, user=self.mod)
+        membership.permission_overrides = {"manage_months": True}
+        membership.save(update_fields=["permission_overrides"])
         self.client.force_login(self.mod)
         mod_teams = self.client.get(reverse("team-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.assertNotContains(mod_teams, "Page totals hidden")
@@ -2120,13 +2259,19 @@ class MonthEnrollmentTests(TestCase):
             permission_overrides={"manage_participants": True, "manage_teams": True},
         )
         self.reader_membership = Membership.objects.create(group=self.group, user=self.reader, role=Membership.Role.MEMBER, display_name="Reader")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Enrollment Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Enrollment Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=admin_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.team = Team.objects.create(month=self.month, name="Enrollment Team")
 
-    def test_team_assignment_automatically_enrolls_participant(self):
-        TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.reader_membership)
-        self.assertTrue(MonthEnrollment.objects.filter(month=self.month, participant=self.reader_membership).exists())
+    def test_staff_team_assignment_explicitly_creates_participation(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("team-assignment-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
+            {"participant": self.reader_membership.pk, "team": self.team.pk},
+        )
+        self.assertRedirects(response, self.month.get_absolute_url())
+        enrollment = MonthEnrollment.objects.get(month=self.month, participant=self.reader_membership)
+        self.assertEqual(enrollment.origin, MonthEnrollment.Origin.STAFF)
 
     def test_unenrolled_reader_cannot_submit(self):
         self.client.force_login(self.reader)
@@ -2165,10 +2310,11 @@ class MonthEnrollmentTests(TestCase):
 
         self.client.post(edit_url, {"team": second_team.pk})
         self.assertTrue(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, team=second_team).exists())
-        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, team=self.team).exists())
+        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, team=self.team, ended_at__isnull=True).exists())
+        self.assertTrue(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, team=self.team, ended_at__isnull=False).exists())
 
         self.client.post(edit_url, {"team": ""})
-        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership).exists())
+        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, ended_at__isnull=True).exists())
         self.assertTrue(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
 
     def test_host_removes_reader_from_month_but_preserves_submission(self):
@@ -2179,8 +2325,11 @@ class MonthEnrollmentTests(TestCase):
 
         response = self.client.post(reverse("month-participant-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": enrollment.pk}))
         self.assertRedirects(response, reverse("month-participant-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
-        self.assertFalse(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
-        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership).exists())
+        enrollment.refresh_from_db()
+        self.assertFalse(enrollment.is_active)
+        self.assertEqual(enrollment.inactive_reason, MonthEnrollment.InactiveReason.REMOVED)
+        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, ended_at__isnull=True).exists())
+        self.assertTrue(TeamAssignment.objects.filter(month=self.month, participant=self.reader_membership, ended_at__isnull=False).exists())
         self.assertTrue(BookSubmission.objects.filter(pk=submission.pk).exists())
 
 
@@ -2200,18 +2349,16 @@ class MonthLifecycleTests(TestCase):
         )
         self.month = ChallengeMonth.objects.create(group=self.group, name="Draft Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.DRAFT)
 
-    def test_admin_can_change_draft_to_open(self):
+    def test_admin_can_change_draft_to_open_registration(self):
         self.client.force_login(self.admin)
-        response = self.client.post(reverse("month-edit", kwargs={"group_slug": self.group.slug, "pk": self.month.pk}), {
-            "name": "Draft Month",
-            "starts_on": "2026-09-01",
-            "ends_on": "2026-09-30",
-            "late_entry_deadline": "",
-            "status": ChallengeMonth.Status.OPEN,
-        })
+        response = self.client.post(reverse("challenge-lifecycle-transition", kwargs={
+            "group_slug": self.group.slug,
+            "pk": self.month.pk,
+            "target_status": ChallengeMonth.Status.UPCOMING,
+        }))
         self.assertRedirects(response, self.month.get_absolute_url())
         self.month.refresh_from_db()
-        self.assertEqual(self.month.status, ChallengeMonth.Status.OPEN)
+        self.assertEqual(self.month.status, ChallengeMonth.Status.UPCOMING)
 
     def test_owner_can_delete_draft(self):
         self.client.force_login(self.owner)
@@ -2227,16 +2374,16 @@ class MonthLifecycleTests(TestCase):
         self.assertContains(edit_page, "Delete Draft")
 
     def test_open_month_cannot_be_deleted(self):
-        self.month.status = ChallengeMonth.Status.OPEN
-        self.month.save(update_fields=["status"])
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status=ChallengeMonth.Status.ACTIVE)
+        self.month.refresh_from_db()
         self.client.force_login(self.owner)
         response = self.client.post(reverse("month-delete", kwargs={"group_slug": self.group.slug, "pk": self.month.pk}))
         self.assertRedirects(response, self.month.get_absolute_url())
         self.assertTrue(ChallengeMonth.objects.filter(pk=self.month.pk).exists())
 
     def test_archived_month_is_hidden_until_archive_is_selected(self):
-        self.month.status = ChallengeMonth.Status.ARCHIVED
-        self.month.save(update_fields=["status"])
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status=ChallengeMonth.Status.ARCHIVED)
+        self.month.refresh_from_db()
         self.client.force_login(self.owner)
 
         group_page = self.client.get(reverse("group-detail", kwargs={"group_slug": self.group.slug}))
@@ -2248,7 +2395,7 @@ class MonthLifecycleTests(TestCase):
 
         archive = self.client.get(reverse("month-list", kwargs={"group_slug": self.group.slug}) + "?archive=1")
         self.assertContains(archive, self.month.name)
-        self.assertContains(archive, "View Active Months")
+        self.assertContains(archive, "View Active Challenges")
 
 
 class TeamManagementTests(TestCase):
@@ -2310,6 +2457,7 @@ class TeamManagementTests(TestCase):
         self.assertFalse(Team.objects.filter(pk=self.team.pk).exists())
 
     def test_assigned_or_non_draft_team_is_protected_from_deletion(self):
+        MonthEnrollment.objects.create(month=self.month, participant=self.reader_membership)
         TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.reader_membership)
         self.client.force_login(self.admin)
         delete_url = reverse("team-delete", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk})
@@ -2318,8 +2466,8 @@ class TeamManagementTests(TestCase):
         self.assertTrue(Team.objects.filter(pk=self.team.pk).exists())
 
         TeamAssignment.objects.filter(team=self.team).delete()
-        self.month.status = ChallengeMonth.Status.OPEN
-        self.month.save(update_fields=["status"])
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status=ChallengeMonth.Status.ACTIVE)
+        self.month.refresh_from_db()
         response = self.client.post(delete_url)
         self.assertRedirects(response, reverse("team-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team.pk}))
         self.assertTrue(Team.objects.filter(pk=self.team.pk).exists())
@@ -2335,8 +2483,9 @@ class ReaderProfileTests(TestCase):
         self.profile_membership = Membership.objects.create(group=self.group, user=self.profile_user, role=Membership.Role.MEMBER, display_name="Profile Reader")
         Membership.objects.create(group=self.group, user=self.other_reader, role=Membership.Role.MEMBER, display_name="Other Reader")
         moderator_membership = Membership.objects.create(group=self.group, user=self.moderator, role=Membership.Role.MODERATOR, display_name="Moderator")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Profile Month", starts_on=date(2026, 12, 1), ends_on=date(2026, 12, 31), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Profile Month", starts_on=date(2026, 12, 1), ends_on=date(2026, 12, 31), status=ChallengeMonth.Status.ACTIVE)
         self.team = Team.objects.create(month=self.month, name="Profile Team", color="#445566")
+        MonthEnrollment.objects.create(month=self.month, participant=self.profile_membership)
         TeamAssignment.objects.create(month=self.month, team=self.team, participant=self.profile_membership)
         BookSubmission.objects.create(month=self.month, participant=self.profile_membership, title="Private Profile Book", author="Author", book_format=BookSubmission.Format.HARDCOVER, completed_on=date(2026, 12, 5), submitted_pages=321, approved_pages=300, status=BookSubmission.Status.APPROVED)
         BookSubmission.objects.create(month=self.month, participant=self.profile_membership, title="Pending Profile Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 12, 6), submitted_pages=200, status=BookSubmission.Status.PENDING)
@@ -2388,7 +2537,7 @@ class AnnouncementTests(TestCase):
             name="Announcement Month",
             starts_on=date(2026, 8, 1),
             ends_on=date(2026, 8, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         ChallengeStaffAssignment.objects.create(month=self.month, membership=moderator_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.client.force_login(self.owner)
@@ -2398,22 +2547,24 @@ class AnnouncementTests(TestCase):
         self.assertContains(response, "Group-wide news")
         self.assertLess(response.content.index(b"Group-wide news"), response.content.index(b"Participants"))
 
-    def test_month_can_inherit_or_hide_group_announcement(self):
-        inherited = self.client.get(self.month.get_absolute_url())
-        self.assertContains(inherited, "Group-wide news")
+    def test_group_announcement_is_independent_of_challenge_announcement_mode(self):
+        initial = self.client.get(self.month.get_absolute_url())
+        self.assertContains(initial, "Group-wide news")
         self.month.announcement_mode = ChallengeMonth.AnnouncementMode.NONE
         self.month.save(update_fields=["announcement_mode"])
-        hidden = self.client.get(self.month.get_absolute_url())
-        self.assertNotContains(hidden, "Group-wide news")
+        still_visible = self.client.get(self.month.get_absolute_url())
+        self.assertContains(still_visible, "Group-wide news")
 
-    def test_month_custom_announcement_overrides_group_announcement(self):
+    def test_challenge_and_group_announcements_render_separately(self):
         self.month.announcement_mode = ChallengeMonth.AnnouncementMode.CUSTOM
         self.month.announcement = "Month-specific news"
         self.month.full_clean()
         self.month.save()
         response = self.client.get(self.month.get_absolute_url())
         self.assertContains(response, "Month-specific news")
-        self.assertNotContains(response, "Group-wide news")
+        self.assertContains(response, "Group-wide news")
+        self.assertContains(response, "Group Announcement")
+        self.assertContains(response, "Challenge Announcement")
 
     def test_moderator_host_can_edit_group_and_challenge_announcements(self):
         self.client.force_login(self.moderator)
@@ -2426,7 +2577,7 @@ class AnnouncementTests(TestCase):
         self.month.announcement = "Old month news"
         self.month.save(update_fields=["announcement_mode", "announcement"])
         month_response = self.client.post(reverse("month-announcement-update", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"announcement": "Updated month news"})
-        self.assertRedirects(month_response, self.month.get_absolute_url())
+        self.assertRedirects(month_response, reverse("challenge-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.month.refresh_from_db()
         self.assertEqual(self.month.announcement, "Updated month news")
 

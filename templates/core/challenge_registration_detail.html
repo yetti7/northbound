@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Registration · {{ enrollment.participant.display_name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'month-participant-list' month.group.slug month.pk %}">{{ month.name }} Participants</a></p><h1>{{ enrollment.participant.display_name }} Registration</h1><p class="lede">Submitted {{ enrollment.enrolled_at|date:"M j, Y g:i a" }} · {% if enrollment.is_active %}Active Reader{% else %}{{ enrollment.get_inactive_reason_display }}{% endif %}</p></div></div>
+{% if correction_form %}<section class="form-card"><h2>Administrative correction</h2><p class="muted">Platform Owner corrections update stored answers without changing participation, teams, staffing, or the Reader's editing deadline.</p><form method="post" class="stacked-form">{% csrf_token %}{{ correction_form.as_p }}<button class="button primary">Save Administrative Correction</button></form></section>{% else %}
+<section><div class="section-heading"><h2>Registration responses</h2></div><dl class="details">{% for row in rows %}<dt>{{ row.question.wording }}</dt><dd>{{ row.value|default:"Not provided" }}</dd>{% empty %}<dt>Custom Questions</dt><dd>This Challenge has no custom signup questions.</dd>{% endfor %}</dl></section>{% endif %}
+{% endblock %}

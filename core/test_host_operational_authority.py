@@ -49,6 +49,7 @@ class HostOperationalAuthorityTests(TestCase):
         self.other_month = ChallengeMonth.objects.create(group=self.group, name="Other Operations Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.DRAFT)
         self.team_one = Team.objects.create(month=self.month, name="Team One", color="#112233")
         self.team_two = Team.objects.create(month=self.month, name="Team Two", color="#445566")
+        MonthEnrollment.objects.create(month=self.month, participant=self.leader, enrolled_by=self.owner_user)
         TeamAssignment.objects.create(month=self.month, participant=self.leader, team=self.team_one)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader, team=self.team_one, role=ChallengeStaffAssignment.Role.TEAM_LEADER, assigned_by=self.host_user)
@@ -60,7 +61,10 @@ class HostOperationalAuthorityTests(TestCase):
     def test_host_can_create_edit_archive_restore_and_delete_unused_teams(self):
         self.client.force_login(self.host_user)
         create_url = reverse("team-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})
-        self.assertRedirects(self.client.post(create_url, {"name": "Created Team", "color": "#778899"}), self.month.get_absolute_url())
+        self.assertRedirects(
+            self.client.post(create_url, {"name": "Created Team", "color": "#778899"}),
+            reverse("team-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
+        )
         created = Team.objects.get(month=self.month, name="Created Team")
         edit_url = reverse("team-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": created.pk})
         self.assertRedirects(self.client.post(edit_url, {"name": "Edited Team", "color": "#abcdef"}), reverse("team-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
@@ -85,14 +89,18 @@ class HostOperationalAuthorityTests(TestCase):
         edit_url = reverse("month-participant-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": enrollment.pk})
         self.client.post(edit_url, {"team": self.team_two.pk})
         assignment.refresh_from_db()
+        self.assertIsNotNone(assignment.ended_at)
+        assignment = TeamAssignment.objects.get(month=self.month, participant=self.reader, ended_at__isnull=True)
         self.assertEqual(assignment.team, self.team_two)
         remove_team_url = reverse("team-assignment-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": assignment.pk})
         self.client.post(remove_team_url, {"reason": "Roster change"})
-        self.assertFalse(TeamAssignment.objects.filter(pk=assignment.pk).exists())
+        assignment.refresh_from_db()
+        self.assertIsNotNone(assignment.ended_at)
         self.assertTrue(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
         remove_enrollment_url = reverse("month-participant-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": enrollment.pk})
         self.client.post(remove_enrollment_url)
-        self.assertFalse(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
+        enrollment.refresh_from_db()
+        self.assertFalse(enrollment.is_active)
 
     def test_host_can_manage_hidden_themes_and_challenge_announcement(self):
         self.client.force_login(self.host_user)
@@ -135,7 +143,8 @@ class HostOperationalAuthorityTests(TestCase):
                 with self.subTest(user=user.username, url=url):
                     self.assertEqual(self.client.get(url).status_code, 403)
             announcement_url = reverse("month-announcement-update", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})
-            self.assertEqual(self.client.post(announcement_url, {"announcement": "Unauthorized"}).status_code, 403)
+            expected = 302 if user in {self.owner_user, self.moderator_user} else 403
+            self.assertEqual(self.client.post(announcement_url, {"announcement": "Authority check"}).status_code, expected)
 
     def test_ended_host_loses_operational_authority_immediately(self):
         assignment = ChallengeStaffAssignment.objects.get(month=self.month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST)
@@ -154,10 +163,10 @@ class HostOperationalAuthorityTests(TestCase):
         self.assertEqual(self.client.get(reverse("month-delete", kwargs={"group_slug": self.group.slug, "pk": self.month.pk})).status_code, 200)
         self.assertEqual(self.client.get(reverse("challenge-host-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 200)
         self.assertEqual(self.client.post(reverse("group-announcement-update", kwargs={"group_slug": self.group.slug}), {"announcement": "Updated group announcement"}).status_code, 302)
-        self.assertEqual(self.client.get(reverse("team-stats-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 200)
+        self.assertEqual(self.client.get(reverse("challenge-visibility-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 200)
         self.client.force_login(self.host_user)
         self.assertEqual(self.client.get(reverse("member-create", kwargs={"group_slug": self.group.slug})).status_code, 403)
         self.assertEqual(self.client.get(reverse("month-create", kwargs={"group_slug": self.group.slug})).status_code, 403)
         self.assertEqual(self.client.get(reverse("month-edit", kwargs={"group_slug": self.group.slug, "pk": self.month.pk})).status_code, 403)
         self.assertEqual(self.client.get(reverse("month-delete", kwargs={"group_slug": self.group.slug, "pk": self.month.pk})).status_code, 403)
-        self.assertEqual(self.client.get(reverse("team-stats-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 403)
+        self.assertEqual(self.client.get(reverse("challenge-visibility-settings", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 200)

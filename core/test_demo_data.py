@@ -216,8 +216,8 @@ class DemoDataSeederTests(TestCase):
                 self.assertTrue(memberships.filter(role=role).exists(), f"{group_key} is missing {role}")
             months = ChallengeMonth.objects.filter(group__slug=spec["slug"])
             self.assertEqual(months.count(), 2)
-            self.assertEqual(months.filter(status=ChallengeMonth.Status.OPEN).count(), 1)
-            self.assertEqual(months.filter(status__in=[ChallengeMonth.Status.FINALIZED, ChallengeMonth.Status.ARCHIVED]).count(), 1)
+            self.assertEqual(months.filter(status=ChallengeMonth.Status.ACTIVE).count(), 1)
+            self.assertEqual(months.filter(status__in=[ChallengeMonth.Status.COMPLETED, ChallengeMonth.Status.ARCHIVED]).count(), 1)
 
         self.assertEqual(Membership.objects.get(group__slug="lantern-leaf-society", user__username="nora.kim").role, Membership.Role.MEMBER)
         self.assertEqual(Membership.objects.get(group__slug="midnight-quill-guild", user__username="nora.kim").role, Membership.Role.MEMBER)
@@ -233,8 +233,10 @@ class DemoDataSeederTests(TestCase):
                 self.assertEqual(assignment.participant.group_id, month.group_id)
                 self.assertTrue(MonthEnrollment.objects.filter(month=month, participant=assignment.participant).exists())
 
-        for month in ChallengeMonth.objects.filter(group__slug__in=demo_slugs, status=ChallengeMonth.Status.OPEN):
-            self.assertEqual(month.enrollments.count() - month.team_assignments.count(), 1)
+        for month in ChallengeMonth.objects.filter(group__slug__in=demo_slugs, status=ChallengeMonth.Status.ACTIVE):
+            active_enrollments = month.enrollments.filter(is_active=True).count()
+            current_assignments = month.team_assignments.filter(ended_at__isnull=True).count()
+            self.assertEqual(active_enrollments - current_assignments, 1)
             self.assertTrue(month.submissions.filter(status=BookSubmission.Status.PENDING).exists())
             self.assertTrue(ThemeClaim.objects.filter(submission__month=month, status=ThemeClaim.Status.PENDING).exists())
 
@@ -245,6 +247,20 @@ class DemoDataSeederTests(TestCase):
             month__name="Stories Under the Stars", participant__user__username="nora.kim"
         ).team.name
         self.assertNotEqual(lantern_history_team, lantern_current_team)
+
+        withdrawn = MonthEnrollment.objects.get(
+            month__name="Stories Under the Stars",
+            participant__user__username="jonah.vale",
+        )
+        self.assertFalse(withdrawn.is_active)
+        self.assertEqual(withdrawn.inactive_reason, MonthEnrollment.InactiveReason.WITHDRAWN)
+        self.assertTrue(
+            TeamAssignment.objects.filter(
+                month=withdrawn.month,
+                participant=withdrawn.participant,
+                ended_at__isnull=False,
+            ).exists()
+        )
 
         approved = BookSubmission.objects.filter(month__group__slug__in=demo_slugs, status=BookSubmission.Status.APPROVED)
         pending = BookSubmission.objects.filter(month__group__slug__in=demo_slugs, status=BookSubmission.Status.PENDING)
@@ -267,7 +283,7 @@ class DemoDataSeederTests(TestCase):
     def test_representative_reader_owner_and_moderator_pages_load(self):
         self.seed()
         lantern = ReadingGroup.objects.get(slug="lantern-leaf-society")
-        current = lantern.challenge_months.get(status=ChallengeMonth.Status.OPEN)
+        current = lantern.challenge_months.get(status=ChallengeMonth.Status.ACTIVE)
 
         self.assertTrue(self.client.login(username="nora.kim", password=DEMO_PASSWORD))
         self.assertEqual(self.client.get(reverse("dashboard")).status_code, 200)

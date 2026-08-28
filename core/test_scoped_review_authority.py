@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .models import AuditEvent, BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim
-from .permissions import can_review_challenge, can_view_team_stats
+from .permissions import can_review_challenge, can_view_team_standings
 
 
 class ScopedReviewAuthorityTests(TestCase):
@@ -38,11 +38,12 @@ class ScopedReviewAuthorityTests(TestCase):
         self.reader_two = member(self.reader_two_user, "Reader Two")
         self.other_host = member(self.other_host_user, "Other Host")
         self.ended = member(self.ended_user, "Ended Staff")
-        self.month = ChallengeMonth.objects.create(group=self.group, name="Scope Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.OPEN)
-        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Other Scope Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.OPEN)
+        self.month = ChallengeMonth.objects.create(group=self.group, name="Scope Month", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE)
+        self.other_month = ChallengeMonth.objects.create(group=self.group, name="Other Scope Month", starts_on=date(2026, 9, 1), ends_on=date(2026, 9, 30), status=ChallengeMonth.Status.ACTIVE)
         self.team_one = Team.objects.create(month=self.month, name="North Team")
         self.team_two = Team.objects.create(month=self.month, name="South Team")
         for participant, team in ((self.leader_one, self.team_one), (self.leader_two, self.team_one), (self.reader_one, self.team_one), (self.reader_two, self.team_two)):
+            MonthEnrollment.objects.create(month=self.month, participant=participant, enrolled_by=self.owner_user)
             TeamAssignment.objects.create(month=self.month, participant=participant, team=team)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader_one, team=self.team_one, role=ChallengeStaffAssignment.Role.TEAM_LEADER, assigned_by=self.host_user)
@@ -129,7 +130,7 @@ class ScopedReviewAuthorityTests(TestCase):
         self.assertEqual(self.submission_two.reviewed_by, self.floater_user)
         self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=self.floater).exists())
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.floater).exists())
-        self.assertFalse(can_view_team_stats(self.floater_user, self.month))
+        self.assertFalse(can_view_team_standings(self.floater_user, self.month))
         self.assertEqual(self.client.post(reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"membership": self.owner.pk}).status_code, 403)
         self.assertEqual(self.client.get(reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 302)
 

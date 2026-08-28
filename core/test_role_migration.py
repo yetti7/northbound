@@ -161,7 +161,7 @@ class GroupRoleMigrationTests(TransactionTestCase):
             self.assertTrue(membership_has_capability(admin, capability))
         self.assertTrue(membership_has_capability(admin, "manage_announcements"))
         self.assertFalse(membership_has_capability(admin, "review_submissions"))
-        self.assertTrue(membership_has_capability(admin, "view_hidden_stats"))
+        self.assertFalse(membership_has_capability(admin, "view_hidden_stats"))
         self.assertFalse(membership_has_capability(admin, "manage_teams"))
         self.assertFalse(membership_has_capability(admin, "remove_content"))
         self.assertFalse(membership_has_capability(admin, "manage_permissions"))

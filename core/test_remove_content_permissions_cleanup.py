@@ -60,7 +60,11 @@ class RemoveContentPermissionsCleanupTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("remove_content", response.context["form"].fields)
         self.assertNotContains(response, "Delete Draft Months and manage legacy team-stat visibility")
-        self.assertIn("view_hidden_stats", response.context["form"].fields)
+        self.assertNotIn("view_hidden_stats", response.context["form"].fields)
+        self.assertNotContains(response, "View team statistics when they are restricted")
+        self.assertContains(response, "Group Permissions")
+        self.assertContains(response, "Persistent Group Role")
+        self.assertContains(response, "Delegated Group Permissions")
 
     def test_permissions_save_preserves_remove_content_and_unknown_overrides(self):
         self.remove_only.permission_overrides = {
@@ -120,25 +124,29 @@ class RemoveContentPermissionsCleanupTests(TestCase):
         self.assertFalse(ChallengeStaffAssignment.objects.filter(membership__user=self.platform_owner).exists())
 
     def test_non_draft_deletion_restriction_is_unchanged(self):
-        month = self.make_month("Open Month", ChallengeMonth.Status.OPEN)
+        month = self.make_month("Open Month", ChallengeMonth.Status.ACTIVE)
         self.client.force_login(self.month_manager_user)
         response = self.client.post(self.delete_url(month))
         self.assertRedirects(response, month.get_absolute_url())
         self.assertTrue(ChallengeMonth.objects.filter(pk=month.pk).exists())
 
-    def test_remove_content_still_controls_legacy_visibility_configuration(self):
-        month = self.make_month("Visibility Month", ChallengeMonth.Status.OPEN)
+    def test_remove_content_does_not_control_competition_visibility_configuration(self):
+        month = self.make_month("Visibility Month", ChallengeMonth.Status.ACTIVE)
         Team.objects.create(month=month, name="Visibility Team")
         url = reverse("team-stats-settings", kwargs={"group_slug": self.group.slug, "month_pk": month.pk})
         self.client.force_login(self.remove_only_user)
-        response = self.client.post(url, {"team_stats_visibility": ChallengeMonth.TeamStatsVisibility.EVERYONE})
-        self.assertRedirects(response, month.get_absolute_url())
-        month.refresh_from_db()
-        self.assertEqual(month.team_stats_visibility, ChallengeMonth.TeamStatsVisibility.EVERYONE)
+        response = self.client.get(url)
+        self.assertRedirects(
+            response,
+            reverse("challenge-visibility-settings", kwargs={"group_slug": self.group.slug, "month_pk": month.pk}),
+            fetch_redirect_response=False,
+        )
+        new_url = reverse("challenge-visibility-settings", kwargs={"group_slug": self.group.slug, "month_pk": month.pk})
+        self.assertEqual(self.client.get(new_url).status_code, 403)
 
         self.remove_only.permission_overrides["remove_content"] = False
         self.remove_only.save(update_fields=["permission_overrides"])
-        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.get(new_url).status_code, 403)
 
         self.client.force_login(self.platform_owner)
-        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertEqual(self.client.get(new_url).status_code, 200)

@@ -57,7 +57,7 @@ class PlatformOwnerChallengeOverrideTests(TestCase):
             name="Override Open",
             starts_on=date(2026, 12, 1),
             ends_on=date(2026, 12, 31),
-            status=ChallengeMonth.Status.OPEN,
+            status=ChallengeMonth.Status.ACTIVE,
         )
         self.team_one = Team.objects.create(month=self.draft, name="Team One", color="#112233")
         self.team_two = Team.objects.create(month=self.draft, name="Team Two", color="#445566")
@@ -115,6 +115,41 @@ class PlatformOwnerChallengeOverrideTests(TestCase):
         self.assertTrue(can_manage_challenge_hosts(self.platform_owner, self.group))
         self.assert_platform_owner_has_no_identity_records()
 
+    def test_platform_owner_can_correct_challenge_configuration_and_lifecycle_with_audit(self):
+        edit_url = reverse("month-edit", kwargs={"group_slug": self.group.slug, "pk": self.draft.pk})
+        response = self.client.post(edit_url, {
+            "name": "Corrected Override Draft",
+            "description": "Administrative correction",
+            "registration_opens_at": "2026-10-01T09:00",
+            "registration_closes_at": "2026-10-20T17:00",
+            "starts_at": "2026-11-01T08:00",
+            "ends_at": "2026-11-30T20:00",
+            "final_announcement_at": "2026-12-01T10:00",
+            "auto_open_registration": "on",
+            "auto_close_registration": "on",
+            "auto_start_challenge": "on",
+            "auto_end_challenge": "on",
+            "announcement_mode": ChallengeMonth.AnnouncementMode.CUSTOM,
+            "announcement": "Old challenge announcement",
+        })
+        self.assertRedirects(response, self.draft.get_absolute_url())
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.name, "Corrected Override Draft")
+        transition_url = reverse("challenge-lifecycle-transition", kwargs={
+            "group_slug": self.group.slug,
+            "pk": self.draft.pk,
+            "target_status": ChallengeMonth.Status.UPCOMING,
+        })
+        self.client.post(transition_url)
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, ChallengeMonth.Status.UPCOMING)
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.platform_owner,
+            action="challenge.lifecycle_changed",
+            object_id=str(self.draft.pk),
+        ).exists())
+        self.assert_platform_owner_has_no_identity_records()
+
     def test_platform_owner_can_create_edit_archive_restore_and_delete_teams(self):
         create_url = reverse("team-create", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk})
         self.client.post(create_url, {"name": "Temporary Team", "color": "#778899"})
@@ -143,16 +178,21 @@ class PlatformOwnerChallengeOverrideTests(TestCase):
         edit_url = reverse("month-participant-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk, "pk": enrollment.pk})
         self.client.post(edit_url, {"team": self.team_two.pk})
         assignment.refresh_from_db()
+        self.assertIsNotNone(assignment.ended_at)
+        assignment = TeamAssignment.objects.get(month=self.draft, participant=self.reader, ended_at__isnull=True)
         self.assertEqual(assignment.team, self.team_two)
         self.client.post(edit_url, {"team": ""})
-        self.assertFalse(TeamAssignment.objects.filter(pk=assignment.pk).exists())
+        assignment.refresh_from_db()
+        self.assertIsNotNone(assignment.ended_at)
         self.client.post(edit_url, {"team": self.team_one.pk})
-        assignment = TeamAssignment.objects.get(month=self.draft, participant=self.reader)
+        assignment = TeamAssignment.objects.get(month=self.draft, participant=self.reader, ended_at__isnull=True)
         self.client.post(reverse("team-assignment-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk, "pk": assignment.pk}), {"reason": "Administrative change"})
-        self.assertFalse(TeamAssignment.objects.filter(pk=assignment.pk).exists())
+        assignment.refresh_from_db()
+        self.assertIsNotNone(assignment.ended_at)
         self.client.post(reverse("month-participant-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk, "pk": enrollment.pk}), {"reason": "Administrative removal"})
-        self.assertFalse(MonthEnrollment.objects.filter(pk=enrollment.pk).exists())
-        self.assertTrue(AuditEvent.objects.filter(actor=self.platform_owner, action="month.participant_removed").exists())
+        enrollment.refresh_from_db()
+        self.assertFalse(enrollment.is_active)
+        self.assertTrue(AuditEvent.objects.filter(actor=self.platform_owner, action="participation.staff_removed").exists())
         self.assert_platform_owner_has_no_identity_records()
 
     def test_platform_owner_can_manage_themes_announcement_and_submission_removal(self):
