@@ -4,10 +4,10 @@ Northbound is a self-hosted reading challenge application for reading Groups and
 their Readers. It replaces scattered submission forms and score spreadsheets with
 shared Challenges, review workflows and durable reading records.
 
-**V1 reading history is Challenge-generated.** Northbound is not a general personal
+**Northbound reading history is Challenge-generated.** Northbound is not a general personal
 reading tracker and does not import personal reading history.
 
-## What V1 supports
+## Features
 
 - Accounts and multiple Groups with Group Owner, Moderator and Member authority.
 - Challenge registration and lifecycle, teams, Hosts, Team Leaders and Floaters.
@@ -58,9 +58,9 @@ curl --fail --silent --show-error http://127.0.0.1:8000/health/
 ```
 
 Compose creates persistent storage on first start and selects
-`ghcr.io/yetti7/northbound:latest`; it does not build the checkout. Registry access
-and your intended image/version must be available—an unpublished checkout is not
-necessarily in that image. The healthy response is plain `OK`. Adjust the probe
+`ghcr.io/yetti7/northbound:latest`; it does not build local source. Ensure you can
+access the registry and that the selected image tag matches the version you intend
+to run. The healthy response is plain `OK`. Adjust the probe
 address if you changed the bind address or host port.
 
 Open `/setup/` at your configured address and create the first Platform Owner.
@@ -103,7 +103,7 @@ See [Hardcover setup and operations](docs/HARDCOVER.md).
 | Manage your Group and oversee Challenges | [Group Owner Guide](docs/GROUP_OWNER_GUIDE.md) |
 | Configure and run a Challenge | [Host Guide](docs/HOST_GUIDE.md) |
 | Register, submit books and follow your reading | [Reader Guide](docs/READER_GUIDE.md) |
-| Install, configuration, first run, upgrades, development | [Self-hosting](docs/SELF_HOSTING.md) |
+| Installation, configuration, first run, upgrades, source builds | [Self-hosting](docs/SELF_HOSTING.md) |
 | Backups, restore, rollback and restored sync safety | [Backup and restore](docs/BACKUP_RESTORE.md) |
 | Public origins, proxy headers and HTTPS | [Reverse proxies](docs/REVERSE_PROXY.md) |
 | Credentials, OAuth and sync | [Hardcover](docs/HARDCOVER.md) |
