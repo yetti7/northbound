@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Apply Reward · {{ game.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ month.name }} · {{ game.name }}</p><h1>Apply Reward</h1><p class="lede">Maximum: {{ game.advertised_bonus_pages }} pages</p>
+{% if unavailable_reason %}<div class="notice">{{ unavailable_reason }}</div><div class="action-row"><a class="button" href="{% url 'game-detail' month.group.slug month.pk game.pk %}">Back to Game</a></div>
+{% else %}<form method="post" class="stacked-form standard-form" data-game-reward-form>{% csrf_token %}{{ form.idempotency_key }}{{ form.non_field_errors }}
+<p>{{ form.amount.label_tag }}{{ form.amount }}{{ form.amount.errors }}</p>
+<p>{{ form.target_type.label_tag }}{{ form.target_type }}{{ form.target_type.errors }}</p>
+<p data-target-reader>{{ form.target_participant.label_tag }}{{ form.target_participant }}{{ form.target_participant.errors }}</p>
+<p data-target-team>{{ form.target_team.label_tag }}{{ form.target_team }}{{ form.target_team.errors }}</p>
+<p>{{ form.reason.label_tag }}{{ form.reason }}{{ form.reason.errors }}</p>
+<div class="form-actions"><button class="button primary" type="submit" name="step" value="preview">Review Recipients</button><a class="button secondary" href="{% url 'game-detail' month.group.slug month.pk game.pk %}">Cancel</a></div></form>{% endif %}</section>
+{% if not unavailable_reason %}<script>document.addEventListener("DOMContentLoaded",()=>{const f=document.querySelector("[data-game-reward-form]");if(!f)return;const s=f.querySelector("[name=target_type]");const r=f.querySelector("[data-target-reader]");const t=f.querySelector("[data-target-team]");const sync=()=>{r.hidden=s.value!=="reader";t.hidden=s.value!=="team";};s.addEventListener("change",sync);sync();});</script>{% endif %}
+{% endblock %}

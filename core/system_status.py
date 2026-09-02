@@ -119,7 +119,7 @@ def _backup_status(warnings):
         schedule = "No automatic backups scheduled"
         warnings.append(_warning(
             "Automatic backups are disabled",
-            "Create backups manually or enable an automatic schedule from Settings → Backups.",
+            "Create backups manually or enable an automatic schedule from Platform Administration → Backups.",
         ))
 
     failure_is_latest = bool(
@@ -130,11 +130,11 @@ def _backup_status(warnings):
         )
     )
     if failure_is_latest:
-        last_result = "Failed — review Settings → Backups"
+        last_result = "Failed — review Platform Administration → Backups"
         last_result_at = backup_settings.last_failure_at
         warnings.append(_warning(
             "The latest automatic backup failed",
-            "Review the failure details on Settings → Backups and confirm the backup location is writable with sufficient free space.",
+            "Review the failure details in Platform Administration → Backups and confirm the backup location is writable with sufficient free space.",
         ))
     elif backup_settings.last_success_at:
         last_result = "Successful"
@@ -151,7 +151,7 @@ def _backup_status(warnings):
     if pending_restore_path().exists():
         warnings.append(_warning(
             "A restore is staged",
-            "A validated restore is waiting to be applied or canceled. Review Settings → Backups before restarting Northbound.",
+            "A validated restore is waiting to be applied or canceled. Review Platform Administration → Backups before restarting Northbound.",
         ))
     return {
         "scheduler": scheduler,

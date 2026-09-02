@@ -3,11 +3,14 @@ set -eu
 
 python manage.py restore_pending_backup
 python manage.py migrate --noinput
+python manage.py safeguard_restored_hardcover_sync
 
 python manage.py run_backup_scheduler &
 backup_scheduler_pid=$!
 python manage.py run_challenge_scheduler &
 challenge_scheduler_pid=$!
+python manage.py run_hardcover_sync_worker &
+hardcover_sync_worker_pid=$!
 gunicorn_pid=""
 
 shutdown_processes() {
@@ -16,11 +19,13 @@ shutdown_processes() {
     fi
     kill "$backup_scheduler_pid" 2>/dev/null || true
     kill "$challenge_scheduler_pid" 2>/dev/null || true
+    kill "$hardcover_sync_worker_pid" 2>/dev/null || true
     if [ -n "$gunicorn_pid" ]; then
         wait "$gunicorn_pid" 2>/dev/null || true
     fi
     wait "$backup_scheduler_pid" 2>/dev/null || true
     wait "$challenge_scheduler_pid" 2>/dev/null || true
+    wait "$hardcover_sync_worker_pid" 2>/dev/null || true
 }
 trap shutdown_processes EXIT INT TERM
 
@@ -29,6 +34,7 @@ gunicorn reading_challenge.wsgi:application \
     --bind "0.0.0.0:${PORT:-8000}" \
     --workers "${WEB_CONCURRENCY:-2}" \
     --access-logfile - \
+    --access-logformat '%(h)s %(t)s "%(m)s %(U)s %(H)s" %(s)s %(b)s' \
     --error-logfile - &
 gunicorn_pid=$!
 wait "$gunicorn_pid"

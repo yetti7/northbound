@@ -3,7 +3,7 @@
 {% block title %}Storage &amp; Maintenance · Northbound{% endblock %}
 {% block content %}
 {% timezone platform_timezone %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'platform-settings' %}">Settings</a></p><h1>Storage &amp; Maintenance</h1><p class="lede">Understand storage usage and run separate, explicit maintenance operations.</p></div></div>
+<div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Platform Administration</a></p><h1>Storage &amp; Maintenance</h1><p class="lede">Understand storage usage and run separate, explicit maintenance operations.</p></div></div>
 
 {% if restore_pending %}<div class="notice error"><strong>A restore is staged.</strong><br>Maintenance actions are unavailable until the staged restore is completed or canceled.</div>{% endif %}
 
@@ -27,17 +27,17 @@
       <p>Removes only files inside Northbound’s reserved, reproducible cache category. Uploaded avatars, source media, unknown files, Stored Backups, rollback data, and staged restores are never eligible.</p>
       <p><strong>{{ cache_usage.count }} file{{ cache_usage.count|pluralize }}</strong> · {{ cache_usage.size|filesizeformat }} reclaimable</p>
       <p class="muted">The cleanup is irreversible, but eligible files are safe to regenerate. Northbound currently creates no derived cache files unless a feature explicitly uses the reserved cache category.</p>
-      {% if cache_usage.count and not restore_pending %}<a class="button danger-button" href="{% url 'platform-cache-cleanup' %}">Review Cache Cleanup</a>{% else %}<span class="pill">Nothing Eligible</span>{% endif %}
+      {% if cache_usage.count and not restore_pending %}<a class="button danger" href="{% url 'platform-cache-cleanup' %}">Review Cache Cleanup</a>{% else %}<span class="pill status-badge status-inactive">Nothing Eligible</span>{% endif %}
     </article>
     <article class="card maintenance-operation-card">
       <p class="eyebrow">Persistent History</p><h2>Audit History Pruning</h2>
       <p>Permanently deletes audit events older than the selected retention age. Accounts, groups, and newer audit history are not deleted.</p>
       <p class="muted">Deleted history is recoverable only from an appropriate backup. Approximate per-event disk usage is not shown because audit records share database pages and a separate estimate would be misleading.</p>
-      <form method="get" action="{% url 'platform-audit-prune' %}" class="stacked-form maintenance-inline-form"><p><label for="audit-retention">Keep Audit History For</label><select id="audit-retention" name="years">{% for years in audit_retention_years %}<option value="{{ years }}">{{ years }} year{{ years|pluralize }}</option>{% endfor %}</select></p><button class="button danger-button"{% if restore_pending %} disabled{% endif %}>Review Audit Pruning</button></form>
+      <form method="get" action="{% url 'platform-audit-prune' %}" class="stacked-form maintenance-inline-form"><p><label for="audit-retention">Keep Audit History For</label><select id="audit-retention" name="years">{% for years in audit_retention_years %}<option value="{{ years }}">{{ years }} year{{ years|pluralize }}</option>{% endfor %}</select></p><button class="button danger"{% if restore_pending %} disabled{% endif %}>Review Audit Pruning</button></form>
     </article>
     <article class="card maintenance-operation-card">
       <p class="eyebrow">Database Compaction</p><h2>Optimize Database</h2>
-      {% if is_sqlite %}<p>Returns unused SQLite pages to the filesystem after substantial deletions. Ordinary deletions already make space internally reusable, so routine optimization is unnecessary.</p><p class="muted">This preserves live data but may briefly require exclusive database access.</p>{% if not restore_pending %}<a class="button" href="{% url 'platform-sqlite-optimize' %}">Review Optimization</a>{% endif %}{% else %}<p>Northbound does not run PostgreSQL maintenance commands. Use PostgreSQL-native administration tooling for database sizing, VACUUM, and related operations.</p><span class="pill">Managed Externally</span>{% endif %}
+      {% if is_sqlite %}<p>Returns unused SQLite pages to the filesystem after substantial deletions. Ordinary deletions already make space internally reusable, so routine optimization is unnecessary.</p><p class="muted">This preserves live data but may briefly require exclusive database access.</p>{% if not restore_pending %}<a class="button secondary" href="{% url 'platform-sqlite-optimize' %}">Review Optimization</a>{% endif %}{% else %}<p>Northbound does not run PostgreSQL maintenance commands. Use PostgreSQL-native administration tooling for database sizing, VACUUM, and related operations.</p><span class="pill status-badge status-neutral">Managed Externally</span>{% endif %}
     </article>
   </div>
 </section>

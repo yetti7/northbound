@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}General Settings · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'platform-settings' %}">Settings</a></p><h1>General Settings</h1><p class="lede">Runtime-safe configuration for this Northbound installation.</p></div></div>
+<div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow"><a href="{% url 'config-dashboard' %}">Platform Administration</a></p><h1>General Settings</h1><p class="lede">Runtime-safe configuration for this Northbound installation.</p></div></div>
 <div class="split-layout settings-layout">
-  <section class="form-card">
+  <section class="form-card task-card">
     <p class="eyebrow">Application Settings</p>
     <h2>Platform Configuration</h2>
-    <form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save General Settings</button></form>
+    <form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="action-row form-actions"><button class="button primary">Save General Settings</button></div></form>
   </section>
-  <aside class="card settings-boundary-card">
+  <aside class="card summary-card settings-boundary-card">
     <p class="eyebrow">Deployment Boundary</p>
     <h2>Managed Outside Northbound</h2>
     <p>Ports, bind addresses, database credentials, secret keys, proxy trust, container configuration, filesystem paths, API tokens, and raw environment variables remain deployment configuration.</p>

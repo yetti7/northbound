@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}My Account · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">Personal Settings</p><h1>My Account</h1><p class="lede">Update your sign-in and recovery information. Your email address is private and is not shown in group rosters.</p></div><div class="action-row">{% if not user.is_superuser %}<a class="button" href="{% url 'my-stats' %}">My Stats</a>{% endif %}<a class="button" href="{% url 'password-change' %}">Change Password</a></div></div>
+<div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow">Personal Settings</p><h1>My Account</h1><p class="lede">Update your sign-in and recovery information. Your email address is private and is not shown in Group rosters.</p></div><div class="page-actions">{% if not user.is_superuser %}<a class="button secondary" href="{% url 'my-stats' %}">My Stats</a>{% endif %}<a class="button secondary" href="{% url 'password-change' %}">Change Password</a></div></div>
 <section class="form-card">
 {% if user.northbound_profile.avatar_url %}<div class="profile-picture-preview"><img class="profile-picture profile-picture-large" src="{{ user.northbound_profile.avatar_url }}" alt="{{ user.username }} profile picture"></div>{% endif %}
-<form method="post" enctype="multipart/form-data" class="stacked-form">{% csrf_token %}
+<form method="post" enctype="multipart/form-data" class="stacked-form standard-form">{% csrf_token %}
   {{ form.non_field_errors }}
   <p>{{ form.username.label_tag }}{{ form.username }}{{ form.username.errors }}</p>
   <p>{{ form.first_name.label_tag }}{{ form.first_name }}{{ form.first_name.errors }}</p>
@@ -13,7 +13,77 @@
   <p>{{ form.discord_username.label_tag }}{{ form.discord_username }}{{ form.discord_username.errors }}{% if form.discord_username.help_text %}<span class="helptext">{{ form.discord_username.help_text }}</span>{% endif %}</p>
   <p>{{ form.discord_username_is_public }} {{ form.discord_username_is_public.label_tag }}{{ form.discord_username_is_public.errors }}{% if form.discord_username_is_public.help_text %}<span class="helptext">{{ form.discord_username_is_public.help_text }}</span>{% endif %}</p>
   {% include "core/includes/avatar_fields.html" %}
-  <button class="button primary">Save Account</button>
+  <div class="form-actions"><button class="button primary">Save Account</button></div>
 </form>
+</section>
+<section class="form-card">
+  <p class="eyebrow">Personal Integration</p>
+  <h2>Personal Hardcover Connection</h2>
+  <p>This connection belongs only to your Northbound account. It is separate from every Reading Group's Hardcover connection.</p>
+  {% if reader_hardcover_connection %}
+    <div class="notice {% if reader_hardcover_connection.is_valid %}success{% else %}warning{% endif %}">
+      <strong>{% if reader_hardcover_connection.is_valid %}Connected{% else %}Reconnect needed{% endif %}</strong>
+      <span> · {{ reader_hardcover_connection.get_connection_method_display }}</span>
+      {% if reader_hardcover_connection.connection_method == "api_key" and reader_hardcover_connection.token_hint %}<span> · Token ending in ••••{{ reader_hardcover_connection.token_hint }}</span>{% endif %}
+      {% if reader_hardcover_connection.tested_at %}<span> · Last tested {{ reader_hardcover_connection.tested_at|date:"M j, Y g:i A" }}</span>{% endif %}
+      {% if reader_hardcover_connection.connection_method == "oauth" and reader_hardcover_connection.granted_scopes %}<p>Granted permissions: {{ reader_hardcover_connection.granted_scopes|join:", " }}</p>{% endif %}
+      {% if reader_hardcover_connection.connection_method == "oauth" and reader_hardcover_connection.access_expires_at %}<p>Authorization refresh due {{ reader_hardcover_connection.access_expires_at|date:"M j, Y g:i A" }}. Northbound refreshes it automatically when needed; an interrupted refresh may require reconnect.</p>{% endif %}
+      {% if reader_hardcover_connection.last_error %}<p>{{ reader_hardcover_connection.last_error }}</p>{% endif %}
+    </div>
+  {% else %}
+    <p><strong>Not connected.</strong> Connect your own account with OAuth or a personal scoped API key below.</p>
+  {% endif %}
+  {% if reader_hardcover_oauth_available %}
+    <div class="notice info">
+      <strong>Recommended: Connect with Hardcover OAuth</strong>
+      <p>Hardcover will ask you to approve catalog and personal-library permissions. Connecting does not enable synchronization or change your Hardcover library.</p>
+      {% if reader_hardcover_connection %}<p>Your current {{ reader_hardcover_connection.get_connection_method_display }} remains active unless the new OAuth connection completes successfully.</p>{% endif %}
+      <form method="post" action="{% url 'reader-hardcover-oauth-start' %}">{% csrf_token %}<button class="button primary">{% if reader_hardcover_connection.connection_method == "oauth" %}Reconnect / Update Permissions{% elif reader_hardcover_connection %}Switch to OAuth{% else %}Connect with Hardcover{% endif %}</button></form>
+    </div>
+  {% else %}
+    <div class="notice neutral"><strong>OAuth is currently unavailable.</strong><p>You can still use a scoped API key below.</p></div>
+  {% endif %}
+  <details class="integration-advanced"{% if reader_hardcover_form.errors %} open{% endif %}>
+    <summary>Advanced: scoped API key</summary>
+    <p>Use a personal scoped API key instead of OAuth. Switching is explicit, and your current connection remains active if validation fails. Northbound does not inspect this key's scopes or expiry; replace it here if it expires or permissions change.</p>
+    <form method="post" action="{% url 'reader-hardcover-connect' %}" class="stacked-form standard-form">{% csrf_token %}
+      {{ reader_hardcover_form.non_field_errors }}
+      <p>{{ reader_hardcover_form.api_token.label_tag }}{{ reader_hardcover_form.api_token }}{{ reader_hardcover_form.api_token.errors }}{% if reader_hardcover_form.api_token.help_text %}<span class="helptext">{{ reader_hardcover_form.api_token.help_text }}</span>{% endif %}</p>
+      <div class="form-actions"><button class="button">{% if reader_hardcover_connection.connection_method == "oauth" %}Switch to Scoped API Key{% elif reader_hardcover_connection %}Replace Scoped API Key{% else %}Connect with Scoped API Key{% endif %}</button></div>
+    </form>
+  </details>
+  {% if reader_hardcover_connection %}
+    <div class="action-row">
+      <form method="post" action="{% url 'reader-hardcover-test' %}">{% csrf_token %}<button class="button">Test Saved Connection</button></form>
+      <form method="post" action="{% url 'reader-hardcover-disconnect' %}">{% csrf_token %}<button class="button danger">Disconnect</button></form>
+    </div>
+  {% endif %}
+</section>
+<section class="form-card">
+  <p class="eyebrow">Reader Consent</p>
+  <h2>Hardcover Synchronization</h2>
+  <p>Northbound will not write to Hardcover unless you explicitly enable synchronization here. Connecting Hardcover alone does not enable it.</p>
+  <p>These settings affect only your signed-in Reader account. Platform and Group roles cannot change them for you.</p>
+  {% if not reader_hardcover_sync_write_available %}
+    <div class="notice warning"><strong>Synchronization unavailable</strong><p>{{ reader_hardcover_sync_unavailable_reason }}</p></div>
+  {% elif reader_hardcover_connection.connection_method == "api_key" %}
+    <div class="notice info"><strong>Scoped API key permission</strong><p>Northbound cannot inspect PAT scope metadata. Enable synchronization only if this token was created with <code>write:library</code>; future provider permission failures will stop safely without using a Group credential.</p></div>
+  {% endif %}
+  <form method="post" action="{% url 'reader-hardcover-sync-preferences' %}" class="stacked-form standard-form" data-hardcover-sync-preferences>{% csrf_token %}
+    {{ reader_hardcover_sync_form.non_field_errors }}
+    <p>{{ reader_hardcover_sync_form.sync_completed_books }} {{ reader_hardcover_sync_form.sync_completed_books.label_tag }}{{ reader_hardcover_sync_form.sync_completed_books.errors }}<span class="helptext">Future eligible approved completions only. Previously approved Northbound history stays Northbound-only; historical synchronization is not supported.</span></p>
+    <p data-completion-date-preference>{{ reader_hardcover_sync_form.sync_completion_dates }} {{ reader_hardcover_sync_form.sync_completion_dates.label_tag }}{{ reader_hardcover_sync_form.sync_completion_dates.errors }}<span class="helptext">Available only while completed-book synchronization is enabled.</span></p>
+    <div class="form-actions"><button class="button primary">Save Synchronization Preferences</button></div>
+  </form>
+  {% with health=reader_hardcover_sync_health %}
+    <div class="notice neutral">
+      <strong>Synchronization health</strong>
+      <p>Pending: {{ health.pending }} · Retry scheduled: {{ health.retry_scheduled }} · Reconnect required: {{ health.reconnect_required }} · Reconciliation required: {{ health.reconciliation_required }} · Recovery review: {{ health.recovery_required }}</p>
+      {% if health.reconciliation_required or health.recovery_required %}<p>Some existing work needs an operator's review. Sync Now will not repeat uncertain writes or release restored work.</p>{% endif %}
+      {% if health.last_success %}<p>Last success: {{ health.last_success.created_at|date:"M j, Y g:i A" }} · {{ health.last_success.result_detail|default:"Completed" }}</p>{% endif %}
+      {% if health.last_failure %}<p>Last safe issue: {{ health.last_failure.created_at|date:"M j, Y g:i A" }} · {{ health.last_failure.error_classification|default:health.last_failure.result_detail }}</p>{% endif %}
+    </div>
+    <form method="post" action="{% url 'reader-hardcover-sync-now' %}">{% csrf_token %}<button class="button secondary">Sync Now</button><span class="helptext">Processes only synchronization events already queued from eligible future approvals. It never scans or queues existing Northbound history.</span></form>
+  {% endwith %}
 </section>
 {% endblock %}

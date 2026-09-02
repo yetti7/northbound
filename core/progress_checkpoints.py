@@ -1,16 +1,15 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
 from django.utils import timezone
 
 from .models import (
-    BookSubmission,
     ChallengeMonth,
     ProgressCheckpoint,
     ProgressCheckpointResult,
 )
 from .reader_planning import historical_reader_planning_data
+from .score_aggregation import challenge_score_totals
 
 
 PAST_COMPETITION_STATUSES = {
@@ -24,6 +23,7 @@ def due_progress_checkpoint_ids(*, now):
     return list(
         ProgressCheckpoint.objects.filter(
             evaluation_state=ProgressCheckpoint.EvaluationState.PENDING,
+            recovery_hold=False,
             scheduled_at__lte=now,
             month__status__in=(ChallengeMonth.Status.ACTIVE, *PAST_COMPETITION_STATUSES),
         ).values_list("pk", flat=True)
@@ -35,21 +35,18 @@ def evaluate_progress_checkpoint(checkpoint, *, now):
         checkpoint.month.enrollments.filter(is_active=True).select_related("participant")
     )
     participant_ids = [enrollment.participant_id for enrollment in enrollments]
-    progress_field = (
-        "approved_pages"
+    scores = challenge_score_totals(
+        month=checkpoint.month,
+        participant_ids=participant_ids,
+    )
+    score_key = (
+        "base_pages"
         if checkpoint.progress_basis == ProgressCheckpoint.ProgressBasis.BASE
-        else "final_scored_pages"
+        else "total_pages"
     )
     progress_by_participant = {
-        row["participant_id"]: row["pages"] or 0
-        for row in BookSubmission.objects.filter(
-            month=checkpoint.month,
-            participant_id__in=participant_ids,
-            status=BookSubmission.Status.APPROVED,
-            is_removed=False,
-        )
-        .values("participant_id")
-        .annotate(pages=Sum(progress_field))
+        participant_id: score[score_key]
+        for participant_id, score in scores.items()
     }
     planning = {}
     if checkpoint.target_basis == ProgressCheckpoint.TargetBasis.PREVIOUS_AVERAGE:

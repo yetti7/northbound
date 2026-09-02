@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Confirm Reward · {{ game.name }}{% endblock %}
+{% block content %}<section class="form-card"><p class="eyebrow">{{ month.name }} · {{ game.name }}</p><h1>Confirm Reward</h1><p class="lede">This will immediately add Modifier Pages for the frozen recipients below.</p>
+<dl class="details"><dt>Game</dt><dd>{{ game.name }}</dd><dt>Amount</dt><dd>{{ form.cleaned_data.amount }} pages</dd><dt>Apply To</dt><dd>{{ target_type_label }}</dd><dt>Target</dt><dd>{{ target_label }}</dd><dt>Reason</dt><dd>{{ form.cleaned_data.reason }}</dd><dt>Resolved Recipients</dt><dd>{{ recipients|length }}</dd></dl>
+<div class="card"><h2>Recipients</h2><ul class="responsive-name-list">{% for recipient in recipients %}<li>{{ recipient.display_name }}</li>{% endfor %}</ul></div>
+<form method="post">{% csrf_token %}{{ form.amount.as_hidden }}{{ form.target_type.as_hidden }}{{ form.target_participant.as_hidden }}{{ form.target_team.as_hidden }}{{ form.reason.as_hidden }}{{ form.idempotency_key.as_hidden }}<div class="action-row"><button class="button primary" type="submit" name="step" value="apply">Confirm and Apply Reward</button><a class="button" href="{% url 'game-reward-apply' month.group.slug month.pk game.pk %}">Back</a></div></form></section>{% endblock %}

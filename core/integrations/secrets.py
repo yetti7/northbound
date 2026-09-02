@@ -26,5 +26,5 @@ def encrypt_token(token):
 def decrypt_token(encrypted_token):
     try:
         return _fernet().decrypt(encrypted_token.encode("ascii")).decode("utf-8")
-    except (InvalidToken, ValueError) as exc:
+    except (InvalidToken, ValueError, UnicodeError) as exc:
         raise TokenDecryptionError("The saved token could not be decrypted with the configured encryption key.") from exc

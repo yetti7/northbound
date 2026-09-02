@@ -1,10 +1,74 @@
-.DS_Store
-.env
-.venv/
+# V1 public source excludes development validation; files stay runnable locally.
+# Tracked files need a later, separately approved index-only removal.
+/core/test_*.py
+/core/tests.py
+/reading_challenge/tests.py
+/static/js/*.test.js
+/tests/
+/test-fixtures/
+/core/demo_data.py
+/core/management/commands/seed_demo_data.py
+/compose.restore-test.yaml
+/scripts/docker_restore_e2e.sh
+/docs/DEMO_DATA.md
+/docs/DEEPNORTH_RESET.md
+/.dev/
+
+# Python caches, coverage and build output
 __pycache__/
 *.py[cod]
-*.sqlite3
-media/
-staticfiles/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
 
+# Local Python environments
+.venv/
+venv/
+env/
+
+# Local credentials; keep intentional configuration examples
+.env
+.env.*
+!.env.example
+!.env.*.example
+/secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local Django data and recoverable operational artifacts (not source)
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+/db.sqlite3.*
+/media/
+/staticfiles/
+/backups/
+/pre-restore-*/
+/.northbound-maintenance.lock
+*.log
+/logs/
+/test-results/
+/playwright-report/
+
+# macOS and local editor state
+.DS_Store
+._*
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo

@@ -4,6 +4,25 @@ from django.http import HttpResponse
 from django.shortcuts import redirect
 
 from .models import UserProfile
+from .health import health_response
+
+
+class InternalHealthCheckMiddleware:
+    """Handle only same-container health probes before normal host validation."""
+
+    LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if (
+            request.method in {"GET", "HEAD"}
+            and request.path == "/health/"
+            and request.META.get("REMOTE_ADDR") in self.LOOPBACK_ADDRESSES
+        ):
+            return health_response()
+        return self.get_response(request)
 
 
 class RequestSizeLimitMiddleware:
@@ -49,6 +68,8 @@ class RequirePasswordChangeMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        if request.path == "/health/":
+            return self.get_response(request)
         if request.user.is_authenticated and not request.user.is_superuser:
             profile, _ = UserProfile.objects.get_or_create(user=request.user)
             if profile.must_change_password and not request.path.startswith(self.EXEMPT_PREFIXES):

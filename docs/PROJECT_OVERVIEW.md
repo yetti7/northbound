@@ -1,44 +1,37 @@
 # Project overview
 
-## Product direction
+A concise architecture reference, not installation instructions or a release history.
+Start with the [README](../README.md); use [Self-hosting](SELF_HOSTING.md) for deployment.
 
-Northbound is a durable replacement for monthly Google Forms and formula-heavy team spreadsheets. It keeps verified reading activity separate from game bonuses so historical reading totals remain trustworthy.
+## Product and data boundaries
 
-## Macro domains
+Northbound coordinates reading Groups and their Challenges. V1 reading history is
+generated through Challenge participation and approved submissions, not a standalone
+personal diary or imported provider history.
 
-1. **Platform operations** — equal platform owners, group provisioning, audit history, backups, and upgrades.
-2. **Groups and people** — group owners, moderators, members, and historical membership.
-3. **Monthly lifecycle** — draft, open, closed, finalized, and archived challenge months.
-4. **Reading records** — book/edition selection, submitted pages, metadata pages, approved pages, and review decisions.
-5. **Challenges** — TBR, BOTM, prompt lists, date-based themes, and manual claims.
-6. **Visual trackers** — browser-rendered boss progress, team races, and uploaded manual-game boards.
-7. **Reporting** — personal progress, team totals, Reader Rumble, audit reports, and spreadsheet exports.
+- Accounts and reusable Reader profile data are installation-wide; Group membership,
+  Challenge registration, staffing and team assignment are separate relationships.
+- Group Owner/Moderator/Member authority is separate from Challenge Hosts, Team
+  Leaders and Floaters. Platform Administration does not create participation.
+- Original submission values, approved base pages and reward adjustments are distinct.
+  Themes, BOTM, Personal TBR, Manual Rewards / Games and checkpoints contribute through
+  their defined workflows rather than arbitrary score edits.
+- Team/participant reports use the appropriate scoring or historical planning data
+  for their purpose; visibility depends on the configured authority and privacy rules.
+- Audit and recovery records preserve operational history. There is no generic
+  credential fallback or Reader impersonation path for Hardcover synchronization.
 
-## Source-of-truth rules
+## Runtime
 
-- The configured production database is the source of truth: SQLite for the standard single-container installation or PostgreSQL for advanced and hosted deployments.
-- A submission's original values are retained after review.
-- Verified reading pages are not modified by bonuses, deductions, steals, or multipliers.
-- Monthly team membership never overwrites historical team membership.
-- Finalized months are read-only unless an authorized user reopens them with a recorded reason.
-- Support impersonation and exceptional data repairs must be conspicuous and audited.
-- Publicly registered accounts may create a group or join one with its private access code.
-- Groups receive a unique six-character access code that owners can regenerate; successful joins always begin with the reader role.
+A Django application serves browser pages and uploaded media. SQLite with persistent
+local storage is the normal single-container installation; PostgreSQL is optional.
+Container startup restores staged SQLite backups, migrates, safeguards restored sync,
+then starts the web server, backup/Challenge schedulers and Hardcover worker.
 
-## First usable milestone
+Database records hold queued Reader sync work, provider mappings and attempt history.
+The worker is bounded and consent-aware; its local lock does not support distributed
+application replicas. External provider availability is separate from local approval,
+scoring and database health.
 
-1. A platform operator completes first-run setup.
-2. A group owner creates an August challenge month.
-3. Readers are assigned to teams for that month.
-4. A reader submits a completed book.
-5. A moderator approves or corrects its page count.
-6. Personal and team totals update from approved submissions.
-7. The month can later be finalized and exported.
-
-## Deliberate non-goals for milestone one
-
-- generalized game-rule engine;
-- automatic Amazon integration;
-- live Google Sheets synchronization;
-- arbitrary code or SQL execution through the super-admin interface;
-- native mobile applications.
+See [Hardcover](HARDCOVER.md) for credential ownership and forward-only synchronization,
+and [Backup and restore](BACKUP_RESTORE.md) for why restored external work is quarantined.

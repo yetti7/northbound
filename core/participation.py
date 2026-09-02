@@ -52,6 +52,10 @@ def activate_participation(*, month, participant, actor, origin):
             object_id=str(enrollment.pk),
             summary=f"{verb} {participant.display_name} for {month.name}.",
         )
+        from .botm_matching import synchronize_reader
+        synchronize_reader(month=month, participant=participant)
+        from .personal_tbr_matching import synchronize_reader as synchronize_personal_tbr_reader
+        synchronize_personal_tbr_reader(month=month, participant=participant)
     return enrollment, created, reactivated
 
 
@@ -130,6 +134,10 @@ def deactivate_participation(*, enrollment, actor, reason, note=""):
         object_id=str(enrollment.pk),
         summary=summary,
     )
+    from .botm_matching import synchronize_reader
+    synchronize_reader(month=enrollment.month, participant=enrollment.participant)
+    from .personal_tbr_matching import synchronize_reader as synchronize_personal_tbr_reader
+    synchronize_personal_tbr_reader(month=enrollment.month, participant=enrollment.participant)
     return enrollment, True
 
 

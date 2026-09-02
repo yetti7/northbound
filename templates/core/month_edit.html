@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Edit {{ month.name }} · Northbound{% endblock %}
 {% block content %}
-<section class="form-card"><p class="eyebrow">{{ month.group.name }}</p><h1>Edit Challenge</h1><p class="muted">Challenge schedule date/times use {{ month.group.timezone }}. Lifecycle changes are managed from the Challenge page.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Save</button></form></section>
+<section class="form-card task-card"><p class="eyebrow">{{ month.group.name }}</p><h1>Edit Challenge</h1><p class="muted">Challenge schedule date/times use {{ month.group.timezone }}. Lifecycle changes are managed from the Challenge page.</p><form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Save Challenge</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
 {% if can_delete_draft %}<section class="form-card danger-zone"><h2>Delete Draft</h2><p class="muted">Permanently remove this draft and its prepared teams and enrollments.</p><a class="button danger-button" href="{% url 'month-delete' month.group.slug month.pk %}">Delete Draft</a></section>{% endif %}
 {% endblock %}

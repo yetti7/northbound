@@ -1,8 +1,172 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{% if editing %}Edit Registration{% else %}Register{% endif %} · {{ month.name }}{% endblock %}
 {% block content %}
 <section class="form-card"><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>{% if editing %}Edit Registration{% elif is_reregistration %}Register Again{% else %}Register{% endif %}</h1>
 {% if is_reregistration %}<p class="lede">Your preserved registration information is shown below. Re-registering restores participation without creating a duplicate registration.</p>{% else %}<p class="lede">Confirm your registration{% if form.questions %} and provide the Challenge planning information below{% endif %}.</p>{% endif %}
 {% if not answers_editable %}<p class="muted">Your preserved registration responses are locked under this Challenge's editing policy. Re-registering will not reset that policy or deadline.</p>{% endif %}
-<form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">{% if editing %}Save Registration{% elif is_reregistration %}Submit Re-registration{% else %}Submit Registration{% endif %}</button><a class="button" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+<form method="post" class="stacked-form" data-tbr-registration>{% csrf_token %}{{ form.as_p }}
+{% if tbr_enabled %}
+  <section class="tbr-registration-section"><div class="tbr-registration-heading"><div><h2>Personal TBR</h2><p>Optional. Add up to 9 books.<br>You can edit your list until you confirm your registration.</p></div>{% if not locked_tbr %}<strong data-tbr-count>0 / 9 books selected</strong>{% endif %}</div>
+  {% if tbr_feature_enabled and month.tbr_book_bonus_pages or tbr_feature_enabled and month.tbr_completion_bonus_pages %}<div class="tbr-incentives" aria-label="Personal TBR bonuses">{% if month.tbr_book_bonus_pages %}<p><strong>+{{ month.tbr_book_bonus_pages }}</strong> bonus pages per qualifying TBR book</p>{% endif %}{% if month.tbr_completion_bonus_pages %}<p><strong>+{{ month.tbr_completion_bonus_pages }}</strong> bonus pages for completing all 9</p>{% endif %}</div>{% endif %}
+  {% if locked_tbr %}
+    <p class="notice"><strong>Your Personal TBR is already confirmed and locked.</strong> Re-registration reuses this selection.</p>
+    <ol>{% for book in locked_tbr.books.all %}<li><strong>{{ book.title_snapshot }}</strong> by {{ book.author_snapshot }}</li>{% empty %}<li>No Personal TBR books were registered.</li>{% endfor %}</ol>
+  {% else %}
+    <div class="tbr-entry-method"><h3>Search Hardcover</h3>{% if reader_hardcover_available %}<div class="tbr-catalog-tools" data-tbr-catalog data-catalog-url="{% url 'personal-tbr-catalog' month.group.slug month.pk %}"><p><label for="tbr-catalog-search">Search Hardcover</label><input id="tbr-catalog-search" type="search" placeholder="Title, Author, ISBN, or Hardcover Link" aria-describedby="tbr-catalog-help"><span class="helptext" id="tbr-catalog-help">Search by title, author, ISBN, or paste a Hardcover link.</span><button class="button" type="button" data-tbr-search>Search</button> <button class="button" type="button" data-tbr-cancel-target hidden>Cancel row replacement</button></p><p class="muted" data-tbr-catalog-status aria-live="polite">The selected edition will be added as a new Personal TBR book.</p><div class="card-grid" data-tbr-catalog-results></div></div>{% else %}<p class="muted">Connect your personal Hardcover account in <a href="{% url 'account' %}">My Account</a> to use search. You can still enter every book manually below.</p>{% endif %}</div>
+    <div class="tbr-entry-method"><h3>Enter manually</h3><p>Use the Title and Author fields below. Page Count is optional.</p></div>
+    {{ tbr_formset.management_form }}{{ tbr_formset.non_form_errors }}
+    <div class="stacked-form" data-tbr-list>{% for book_form in tbr_formset %}<div class="card" data-tbr-book{% if not book_form.title_snapshot.value and not book_form.author_snapshot.value and not book_form.page_count_snapshot.value and not book_form.errors and forloop.counter != 1 %} hidden{% endif %}>{{ book_form.catalog_selection }}{{ book_form.ORDER }}{{ book_form.DELETE }}{{ book_form.non_field_errors }}<h3>Book <span data-tbr-number>{{ forloop.counter }}</span></h3><p>{{ book_form.title_snapshot.label_tag }}{{ book_form.title_snapshot }}{{ book_form.title_snapshot.errors }}</p><p>{{ book_form.author_snapshot.label_tag }}{{ book_form.author_snapshot }}{{ book_form.author_snapshot.errors }}</p><p>{{ book_form.page_count_snapshot.label_tag }}{{ book_form.page_count_snapshot }}{{ book_form.page_count_snapshot.errors }}</p><div class="action-row">{% if reader_hardcover_available %}<button class="button" type="button" data-tbr-search-target>Search Hardcover for this book</button>{% endif %}<button class="button" type="button" data-tbr-up>Move Up</button><button class="button" type="button" data-tbr-down>Move Down</button><button class="button danger-link" type="button" data-tbr-remove>Remove</button></div></div>{% endfor %}</div>
+    <button class="button" type="button" data-tbr-add>Add Book</button>
+  {% endif %}
+  </section>
+{% endif %}
+<div class="action-row"><button class="button primary">{% if editing %}Save Registration{% else %}Review Registration{% endif %}</button><a class="button" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+{% if tbr_formset and not locked_tbr %}<script src="{% static 'js/personal_tbr_registration_helpers.js' %}?v=1"></script><script>
+(function () {
+  const root = document.querySelector('[data-tbr-registration]');
+  const list = root?.querySelector('[data-tbr-list]');
+  if (!root || !list) return;
+  const cards = () => [...list.querySelectorAll('[data-tbr-book]:not([hidden])')];
+  const allCards = () => [...list.querySelectorAll('[data-tbr-book]')];
+  const count = root.querySelector('[data-tbr-count]');
+  const add = root.querySelector('[data-tbr-add]');
+  let selectionMode = 'global-add';
+  let target = null;
+  const rowState = (card) => ({
+    occupied: Boolean(card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value),
+    available: !card.hidden && !card.querySelector('input[name$="-DELETE"]').checked,
+    title: card.querySelector('input[name$="-title_snapshot"]').value,
+    author: card.querySelector('input[name$="-author_snapshot"]').value,
+  });
+  function sync() {
+    const active = cards();
+    active.forEach((card, index) => {
+      card.querySelector('[data-tbr-number]').textContent = index + 1;
+      card.querySelector('input[name$="-ORDER"]').value = index + 1;
+      card.querySelector('[data-tbr-up]').disabled = index === 0;
+      card.querySelector('[data-tbr-down]').disabled = index === active.length - 1;
+    });
+    const selected = active.filter((card) => card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value).length;
+    count.textContent = `${selected} / 9 books selected`;
+    add.disabled = selected >= 9;
+    [...list.querySelectorAll('[data-tbr-book][hidden]')].forEach((card) => list.appendChild(card));
+  }
+  add.addEventListener('click', () => {
+    const card = [...list.querySelectorAll('[data-tbr-book][hidden]')][0];
+    if (!card) return;
+    card.hidden = false;
+    card.querySelector('input[name$="-DELETE"]').checked = false;
+    sync();
+    card.querySelector('input[name$="-title_snapshot"]').focus();
+  });
+  list.addEventListener('input', sync);
+  list.addEventListener('click', (event) => {
+    const card = event.target.closest('[data-tbr-book]');
+    if (!card) return;
+    const active = cards();
+    const index = active.indexOf(card);
+    if (event.target.matches('[data-tbr-up]') && index > 0) list.insertBefore(card, active[index - 1]);
+    if (event.target.matches('[data-tbr-down]') && index < active.length - 1) list.insertBefore(active[index + 1], card);
+    if (event.target.matches('[data-tbr-remove]')) {
+      card.querySelector('input[name$="-DELETE"]').checked = true;
+      card.hidden = true;
+    }
+    if (event.target.matches('[data-tbr-search-target]')) {
+      selectionMode = 'row-replace';
+      target = card;
+      const status = root.querySelector('[data-tbr-catalog-status]');
+      const cancelTarget = root.querySelector('[data-tbr-cancel-target]');
+      if (status) status.textContent = `The selected edition will replace Book ${index + 1} only.`;
+      if (cancelTarget) cancelTarget.hidden = false;
+      root.querySelector('[data-tbr-catalog]')?.scrollIntoView({behavior: 'smooth'});
+    }
+    sync();
+  });
+  const catalog = root.querySelector('[data-tbr-catalog]');
+  if (catalog) {
+    const status = catalog.querySelector('[data-tbr-catalog-status]');
+    const results = catalog.querySelector('[data-tbr-catalog-results]');
+    const searchInput = catalog.querySelector('#tbr-catalog-search');
+    const cancelTarget = catalog.querySelector('[data-tbr-cancel-target]');
+    const csrf = root.querySelector('[name=csrfmiddlewaretoken]').value;
+    function resetToGlobal(message) {
+      selectionMode = 'global-add';
+      target = null;
+      cancelTarget.hidden = true;
+      if (message) status.textContent = message;
+    }
+    cancelTarget.addEventListener('click', () => resetToGlobal('The selected edition will be added as a new Personal TBR book.'));
+    async function request(action, values) {
+      const body = new FormData(); body.append('action', action); body.append('csrfmiddlewaretoken', csrf);
+      Object.entries(values || {}).forEach(([key, value]) => body.append(key, value));
+      const response = await fetch(catalog.dataset.catalogUrl, {method: 'POST', body, credentials: 'same-origin'});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Hardcover search failed.');
+      return payload;
+    }
+    function buttonCard(title, details, label, handler) {
+      const card = document.createElement('div'); card.className = 'card';
+      const heading = document.createElement('h3'); heading.textContent = title || 'Untitled';
+      const copy = document.createElement('p'); copy.textContent = details;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label; button.addEventListener('click', handler);
+      card.append(heading, copy, button); return card;
+    }
+    function applyEditionResult(result) {
+      const everyCard = allCards();
+      const targetIndex = target ? everyCard.indexOf(target) : null;
+      const destination = window.NorthboundTbrSelection.resolveSelection(
+        everyCard.map(rowState), selectionMode, targetIndex,
+        {title: result.title || '', author: result.author || ''}
+      );
+      if (destination.error) { status.textContent = destination.message; return; }
+      const destinationCard = everyCard[destination.index];
+      if (destination.kind === 'add') {
+        destinationCard.hidden = false;
+        destinationCard.querySelector('input[name$="-DELETE"]').checked = false;
+      }
+      destinationCard.querySelector('input[name$="-catalog_selection"]').value = result.catalog_selection;
+      destinationCard.querySelector('input[name$="-title_snapshot"]').value = result.title || '';
+      destinationCard.querySelector('input[name$="-author_snapshot"]').value = result.author || '';
+      destinationCard.querySelector('input[name$="-page_count_snapshot"]').value = result.pages || '';
+      results.replaceChildren(); searchInput.value = ''; sync();
+      const position = cards().indexOf(destinationCard) + 1;
+      resetToGlobal(destination.kind === 'add' ? `Hardcover edition added as Book ${position}.` : `Book ${position} updated from Hardcover.`);
+    }
+    async function showEditions(bookId) {
+      const payload = await request('editions', {book_id: bookId}); results.replaceChildren();
+      payload.editions.forEach((edition) => results.append(buttonCard(edition.title, [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · '), 'Use Edition', async () => {
+        try {
+          const selected = await request('edition', {edition_id: edition.edition_id});
+          if (selected.manual_required) { status.textContent = selected.message; return; }
+          applyEditionResult(selected.result);
+        } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }
+      })));
+      status.textContent = payload.editions.length ? 'Select an edition.' : 'No editions found. Manual entry remains available.';
+    }
+    catalog.querySelector('[data-tbr-search]').addEventListener('click', async () => {
+      const query = searchInput.value.trim();
+      if (!query) { status.textContent = 'Enter a title, author, ISBN, or Hardcover link first.'; return; }
+      try {
+        const payload = await request('smart', {input: query}); results.replaceChildren();
+        if (payload.manual_required) {
+          status.textContent = payload.message;
+        } else if (payload.lookup_type === 'book') {
+          status.textContent = 'Hardcover book found. Select an edition.';
+          await showEditions(payload.result.book_id);
+        } else if (payload.lookup_type === 'edition') {
+          const edition = payload.result;
+          const details = [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · ');
+          results.append(buttonCard(edition.title, details, 'Use Edition', () => applyEditionResult(edition)));
+          status.textContent = 'Exact Hardcover edition found. Select Use Edition to continue.';
+        } else {
+          payload.results.forEach((book) => results.append(buttonCard(book.title, book.author || '', 'View Editions', () => showEditions(book.book_id))));
+          status.textContent = payload.results.length ? 'Select a book to view its editions.' : 'No matches found. Manual entry remains available.';
+        }
+      } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }
+    });
+  }
+  sync();
+})();
+</script>{% endif %}
 {% endblock %}

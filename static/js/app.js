@@ -53,6 +53,23 @@ document.querySelectorAll("[data-hardcover-test]").forEach((button) => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  const syncPreferences = document.querySelector("[data-hardcover-sync-preferences]");
+  if (syncPreferences) {
+    const completed = syncPreferences.querySelector("#id_sync_completed_books");
+    const dates = syncPreferences.querySelector("#id_sync_completion_dates");
+    const dateRow = syncPreferences.querySelector("[data-completion-date-preference]");
+    const updateSyncPreferenceDependency = () => {
+      const available = completed && !completed.disabled && completed.checked;
+      if (dates) {
+        dates.disabled = !available;
+        if (!available) dates.checked = false;
+      }
+      if (dateRow) dateRow.classList.toggle("muted", !available);
+    };
+    completed?.addEventListener("change", updateSyncPreferenceDependency);
+    updateSyncPreferenceDependency();
+  }
+
   const mode = document.getElementById("id_announcement_mode");
   const custom = document.getElementById("id_announcement");
   if (mode && custom) {
@@ -296,10 +313,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
 document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
   const submissionForm = document.querySelector("[data-submission-form]");
+  const botmForm = document.querySelector("[data-botm-form]");
+  const bookForm = submissionForm || botmForm;
+  const isBotm = Boolean(botmForm);
   const status = tools.querySelector("[data-catalog-status]");
   const results = tools.querySelector("[data-catalog-results]");
   const entryMode = document.querySelector("[data-entry-mode]");
-  const csrf = submissionForm.querySelector("[name=csrfmiddlewaretoken]").value;
+  const csrf = bookForm.querySelector("[name=csrfmiddlewaretoken]").value;
 
   const request = async (action, values = {}) => {
     const body = new FormData();
@@ -326,17 +346,22 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
 
   const applyEdition = (edition) => {
     document.getElementById("id_catalog_selection").value = edition.catalog_selection || "";
-    document.getElementById("id_title").value = edition.title || "";
-    document.getElementById("id_author").value = edition.author || "";
-    document.getElementById("id_book_format").value = formatValue(edition.format, edition.audio_seconds);
-    document.getElementById("id_submitted_pages").value = edition.pages || "";
-    document.getElementById("id_submitted_pages").readOnly = true;
-    document.getElementById("id_reference_url").value = edition.source_url || "";
+    if (isBotm) document.getElementById("id_entry_mode").value = "catalog";
+    const title = document.getElementById(isBotm ? "id_title_snapshot" : "id_title");
+    const author = document.getElementById(isBotm ? "id_author_snapshot" : "id_author");
+    const pages = document.getElementById(isBotm ? "id_page_count_snapshot" : "id_submitted_pages");
+    const source = document.getElementById(isBotm ? "id_source_url_snapshot" : "id_reference_url");
+    title.value = edition.title || "";
+    author.value = edition.author || "";
+    pages.value = edition.pages || "";
+    pages.readOnly = true;
+    source.value = edition.source_url || "";
+    if (!isBotm) document.getElementById("id_book_format").value = formatValue(edition.format, edition.audio_seconds);
     const scoring = edition.scoring_format && edition.format?.toLowerCase().includes("audio") ? ` Scored using the ${edition.scoring_format} page count.` : "";
     status.textContent = `Edition selected.${scoring}`;
     entryMode.textContent = `${edition.verification_label}: page count locked and automatically verified.`;
     clearResults();
-    document.getElementById("id_title").focus();
+    title.focus();
   };
 
   const makeCard = (title, details, buttonLabel, onClick) => {
@@ -425,17 +450,21 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
 
   const clearToManual = () => {
     document.getElementById("id_catalog_selection").value = "";
-    ["id_title", "id_author", "id_submitted_pages", "id_reference_url"].forEach((id) => { document.getElementById(id).value = ""; });
-    document.getElementById("id_book_format").value = "";
-    document.getElementById("id_submitted_pages").readOnly = false;
+    if (isBotm) document.getElementById("id_entry_mode").value = "manual";
+    const ids = isBotm
+      ? ["id_title_snapshot", "id_author_snapshot", "id_page_count_snapshot", "id_cover_url_snapshot", "id_source_url_snapshot"]
+      : ["id_title", "id_author", "id_submitted_pages", "id_reference_url"];
+    ids.forEach((id) => { document.getElementById(id).value = ""; });
+    if (!isBotm) document.getElementById("id_book_format").value = "";
+    document.getElementById(isBotm ? "id_page_count_snapshot" : "id_submitted_pages").readOnly = false;
     document.getElementById("catalog-search").value = "";
     document.getElementById("catalog-link").value = "";
     clearResults();
     entryMode.textContent = "Manual Entry";
-    document.getElementById("id_title").focus();
+    document.getElementById(isBotm ? "id_title_snapshot" : "id_title").focus();
   };
 
-  document.querySelector("[data-clear-book]").addEventListener("click", () => {
+  document.querySelector("[data-clear-book]")?.addEventListener("click", () => {
     clearToManual();
     status.textContent = "Hardcover selection cleared. Enter the book details manually below.";
   });

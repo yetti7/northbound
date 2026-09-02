@@ -1,78 +1,117 @@
 # Northbound
 
-A self-hosted, browser-based reading challenge manager for long-running groups, monthly teams, verified page counts, configurable challenges, and visual progress trackers.
+Northbound is a self-hosted reading challenge application for reading Groups and
+their Readers. It replaces scattered submission forms and score spreadsheets with
+shared Challenges, review workflows and durable reading records.
 
-## Current State
+**V1 reading history is Challenge-generated.** Northbound is not a general personal
+reading tracker and does not import personal reading history.
 
-Northbound currently includes:
+## What V1 supports
 
-- first-run platform setup;
-- multiple reading groups and role-based memberships;
-- challenge months and historical team assignments;
-- book completion submissions;
-- moderator approval with submitted, approved base, bonus, and final scored pages kept separately;
-- monthly themes and reviewed bonus claims;
-- group roles, per-member capability overrides, and immutable audit events;
-- private reader statistics, announcements, and Hardcover-assisted catalog lookup.
+- Accounts and multiple Groups with Group Owner, Moderator and Member authority.
+- Challenge registration and lifecycle, teams, Hosts, Team Leaders and Floaters.
+- Completed-book submissions and review, Themes, Book of the Month and Personal TBR.
+- Manual Rewards / Games, checkpoints, and team/participant reporting, keeping
+  original submissions, approved base pages and reward adjustments distinct.
+- Platform Administration, audit history, controlled recovery, and SQLite backups/restores.
+- Optional Hardcover catalog lookup and Reader-owned, explicitly consented library sync.
 
-See [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) for the product direction.
+## Normal deployment
 
-## Quick start with Docker
+Run **one Northbound application container**, SQLite, and a persistent `/data`
+volume. SQLite is the normal choice for a small self-hosted installation. The
+container includes its schedulers and Hardcover worker; no Redis, Celery or internal
+proxy container is required. Use an external reverse proxy for public HTTPS.
 
-Northbound's standard self-hosted deployment is one application container with SQLite and uploaded media together in one persistent `/data` volume. It does not require PostgreSQL, an internal Nginx container, or a separate database server.
+[PostgreSQL is optional](docs/SELF_HOSTING.md#optional-postgresql), not a prerequisite.
+Keep one application container even with PostgreSQL.
 
-```bash
+## Quick start
+
+You need Docker Engine with Docker Compose v2, Git, OpenSSL and persistent local
+storage. Obtain the configuration/source files for the version you intend to run:
+
+```sh
+git clone https://github.com/yetti7/northbound.git northbound
+cd northbound
 cp .env.example .env
+chmod 600 .env
 ```
 
-Edit `.env` and set:
+Before starting, edit `.env`:
 
-- `DJANGO_SECRET_KEY` to a random value (for example, from `openssl rand -hex 32`);
-- `NORTHBOUND_URL` to the address people will use; and
-- `NORTHBOUND_PORT` if you do not want the default host port `8000`.
+1. Replace `DJANGO_SECRET_KEY` with a strong random secret; keep `DJANGO_DEBUG=0`.
+2. Set `NORTHBOUND_URL` to the address Readers will use, including scheme and any
+   nonstandard port. The example uses `http://localhost:8000`.
+3. Set `NORTHBOUND_BIND_ADDRESS=127.0.0.1` for same-host private setup. Complete
+   first-run setup before public exposure; use an SSH tunnel or restricted network
+   for initial remote access.
+4. Strongly recommended: configure `NORTHBOUND_TOKEN_ENCRYPTION_KEY` **before saving
+   integration credentials**. See [configuration and key generation](docs/SELF_HOSTING.md#configuration).
 
-Then pull and start Northbound:
-
-```bash
+```sh
 docker compose pull
 docker compose up -d
+docker compose ps
+curl --fail --silent --show-error http://127.0.0.1:8000/health/
 ```
 
-Compose pulls the published `ghcr.io/yetti7/northbound:latest` image, so a normal installation does not build Northbound from source. On a fresh installation, Northbound automatically opens the setup wizard to create the first Platform Owner. The SQLite database and uploaded media persist across image pulls and container recreation.
+Compose creates persistent storage on first start and selects
+`ghcr.io/yetti7/northbound:latest`; it does not build the checkout. Registry access
+and your intended image/version must be available—an unpublished checkout is not
+necessarily in that image. The healthy response is plain `OK`. Adjust the probe
+address if you changed the bind address or host port.
 
-This same container can run locally, on a LAN, on a VPS, or behind Nginx Proxy Manager, Cloudflare Tunnel, Caddy, Traefik, or another external proxy. Platform services such as Railway or Render can use the image with an externally managed PostgreSQL database and persistent media storage.
+Open `/setup/` at your configured address and create the first Platform Owner.
+This is an account-creation form, not a default password or environment-based owner
+bootstrap. Review **Platform Administration → Settings**, configure backups and
+then optionally Hardcover. See [Self-hosting](docs/SELF_HOSTING.md) for detailed
+setup, HTTPS, PostgreSQL and source builds.
 
-See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for LAN access, upgrades, backups, and external databases. See [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) before placing Northbound behind HTTPS, Cloudflare Tunnel, Nginx, Caddy, Traefik, or another proxy.
+## Protect your data before upgrading
 
-## Local Python development
+Preserve `/data/northbound.sqlite3`, `/data/media/` and your installation secrets.
+Stored SQLite backups normally live at `/data/backups/`; download copies to separate
+protected storage. A backup on the same volume does not protect against volume loss.
+Never commit `.env`, keys, credentials, databases, backups or uploaded media.
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
-```
+Keep the **original encryption key**: encrypted credentials in a restored database
+need the same key. Back up before upgrading. Startup runs migrations, so switching
+to an older image alone is not a safe rollback strategy. Read
+[Backup and restore](docs/BACKUP_RESTORE.md) and [Upgrades](docs/SELF_HOSTING.md#upgrades)
+first. Do not remove the persistent volume.
 
-In a second terminal, run the Challenge scheduler so date/time automation behaves like the production container:
+## Hardcover, optionally
 
-```bash
-. .venv/bin/activate
-python manage.py run_challenge_scheduler
-```
+A Group's scoped API key powers shared catalog/search/metadata workflows.
+A Reader's separate OAuth connection—or personal scoped API key—powers their
+Personal TBR lookup and optional personal synchronization. Neither falls back to
+the other. Each installation brings its own OAuth Developer App.
 
-The scheduler evaluates due Registration Opens, Registration Closes, Challenge Starts, Challenge Ends, and enabled Final Announcement actions every 30 seconds. It works with both SQLite and PostgreSQL. The normal production container starts it automatically; SQLite backup scheduling remains a separate process.
+**Connection is not consent.** Sync defaults OFF. Only new eligible approvals after
+the Reader enables consent may synchronize; date sync also requires completed-book
+consent. Previously approved history stays Northbound-only: there is no backfill
+or Hardcover-history import. Sync Now handles existing queue work only. Provider
+availability does not determine Northbound approval or scoring.
+See [Hardcover setup and operations](docs/HARDCOVER.md).
 
-Without `DATABASE_URL` or `POSTGRES_HOST`, Northbound uses SQLite. PostgreSQL remains supported for hosted and advanced deployments.
+## Documentation
 
-For the deterministic development-only showcase dataset and reset-safe seeding command, see [docs/DEMO_DATA.md](docs/DEMO_DATA.md).
+| Topic | Canonical guide |
+| --- | --- |
+| Manage your Group and oversee Challenges | [Group Owner Guide](docs/GROUP_OWNER_GUIDE.md) |
+| Configure and run a Challenge | [Host Guide](docs/HOST_GUIDE.md) |
+| Register, submit books and follow your reading | [Reader Guide](docs/READER_GUIDE.md) |
+| Install, configuration, first run, upgrades, development | [Self-hosting](docs/SELF_HOSTING.md) |
+| Backups, restore, rollback and restored sync safety | [Backup and restore](docs/BACKUP_RESTORE.md) |
+| Public origins, proxy headers and HTTPS | [Reverse proxies](docs/REVERSE_PROXY.md) |
+| Credentials, OAuth and sync | [Hardcover](docs/HARDCOVER.md) |
+| Architecture and data boundaries | [Project overview](docs/PROJECT_OVERVIEW.md) |
+| Brief authority/lifecycle reference | [Roles and lifecycle](docs/ROLES_AND_LIFECYCLE.md) |
 
-To build the current checkout in Docker instead of pulling the released image:
-
-```bash
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build
-```
-
-## PostgreSQL
-
-PostgreSQL is optional, not part of the normal self-hosted install. Use `compose.postgres.yaml` when a larger or advanced deployment needs it. See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
+The public V1 source includes runtime code, production migrations, source-build
+configuration and these guides. The full development test suite, demo seeder and
+internal validation tools remain in the development workspace, not this public
+package. Public CI checks source configuration, migrations and container builds;
+it does not claim to run the private development regression suite.

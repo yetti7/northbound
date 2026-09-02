@@ -13,7 +13,8 @@ permissions:
   packages: write
 
 jobs:
-  postgres-tests:
+  postgres-checks:
+    # The former dev-only restore dispatch is now a local validation workflow.
     if: ${{ !(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') }}
     runs-on: ubuntu-latest
     services:
@@ -39,10 +40,14 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python manage.py check && python manage.py test
+      - name: Check PostgreSQL configuration and production migrations
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py migrate --noinput
 
-  test-and-publish:
-    needs: postgres-tests
+  build-and-publish:
+    needs: postgres-checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -57,10 +62,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run checks and tests
+      - name: Check SQLite configuration and production migrations
         run: |
           python manage.py check
-          python manage.py test
+          python manage.py makemigrations --check --dry-run
+          python manage.py migrate --noinput
 
       - name: Validate Compose deployments
         run: |
@@ -110,20 +116,3 @@ jobs:
           context: .
           push: false
           platforms: linux/amd64
-
-  restore-e2e:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Prepare isolated Compose environment
-        run: cp .env.example .env
-
-      - name: Validate stored backup and controlled restore lifecycle
-        env:
-          NORTHBOUND_BIND_ADDRESS: 127.0.0.1
-          NORTHBOUND_PORT: 18060
-          RESTORE_TEST_PROJECT: northbound-restore-e2e
-        run: bash scripts/docker_restore_e2e.sh

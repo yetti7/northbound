@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ month.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ month.name }} · Games</p><h1>{{ title }}</h1><p class="muted">Dates and times use {{ month.group.timezone }}. Maximum Bonus Pages is the most that may later be awarded.</p><form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Save Game</button><a class="button secondary" href="{% if game %}{% url 'game-detail' month.group.slug month.pk game.pk %}{% else %}{% url 'game-list' month.group.slug month.pk %}{% endif %}">Cancel</a></div></form></section>
+{% endblock %}

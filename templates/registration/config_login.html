@@ -4,6 +4,6 @@
 <section class="auth-card config-auth-card">
   <p class="eyebrow">Platform Administration</p>
   <h1>Owner Sign In</h1>
-  <form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<button class="button primary">Open Platform Administration</button></form>
+  <form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Open Platform Administration</button></div></form>
 </section>
 {% endblock %}

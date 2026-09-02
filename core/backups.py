@@ -206,6 +206,12 @@ def apply_pending_restore():
             for name in archive.namelist():
                 if name.startswith("media/") and not name.endswith("/"):
                     archive.extract(name, staged)
+        # Persist restore intent before replacing the database. A crash between
+        # replacement and the old post-restore marker must not bypass sync safety.
+        (root / "last-restore.json").write_text(json.dumps({
+            "restored_at": datetime.now(timezone.utc).isoformat(),
+            "rollback_directory": str(rollback),
+        }, indent=2))
         os.replace(staged / "northbound.sqlite3", database_path)
         replacement_media = staged / "media"
         old_media = root / ".media-before-restore"
@@ -220,8 +226,4 @@ def apply_pending_restore():
         shutil.rmtree(old_media, ignore_errors=True)
 
     pending.unlink()
-    (root / "last-restore.json").write_text(json.dumps({
-        "restored_at": datetime.now(timezone.utc).isoformat(),
-        "rollback_directory": str(rollback),
-    }, indent=2))
     return rollback

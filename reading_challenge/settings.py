@@ -19,6 +19,12 @@ def env_list(name, default=""):
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-development-key-change-me")
 NORTHBOUND_VERSION = os.getenv("NORTHBOUND_VERSION", "development").strip() or "development"
 TOKEN_ENCRYPTION_KEY = os.getenv("NORTHBOUND_TOKEN_ENCRYPTION_KEY", "")
+if TOKEN_ENCRYPTION_KEY.strip():
+    from cryptography.fernet import Fernet
+    try:
+        Fernet(TOKEN_ENCRYPTION_KEY.strip().encode("ascii"))
+    except (ValueError, UnicodeError):
+        raise ImproperlyConfigured("NORTHBOUND_TOKEN_ENCRYPTION_KEY must be a valid Fernet key. Restore the original key; do not generate a replacement for existing credentials.") from None
 HARDCOVER_GRAPHQL_URL = os.getenv("HARDCOVER_GRAPHQL_URL", "https://api.hardcover.app/v1/graphql")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 
@@ -65,6 +71,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.InternalHealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Games Settings · {{ month.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ month.name }} · Challenge Settings</p><h1>Games</h1><p class="lede">Control whether Games are available on this Challenge. Existing rewards and scores are always preserved.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">Save Games Setting</button><a class="button" href="{% url 'challenge-settings' month.group.slug month.pk %}">Cancel</a></div></form></section>
+{% endblock %}

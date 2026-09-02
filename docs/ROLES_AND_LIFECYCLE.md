@@ -1,11 +1,14 @@
 # Roles and monthly lifecycle
 
+Brief terminology reference, not a detailed role guide. For installation and
+operations start with [Self-hosting](SELF_HOSTING.md).
+
 ## Roles
 
 | Role | Scope | Main capabilities |
 |---|---|---|
 | Platform owner | Entire installation | Unrestricted installation administration, including Challenge operations and review when needed, without implicit Group membership, staffing, participation, or scoring |
-| Group owner | One group | Full group control, permission management, exports, retention decisions |
+| Group owner | One group | Group administration and permission management; Challenge operation follows the applicable authority rules |
 | Moderator | One group | Delegated group authority; current defaults cover Group announcements and restricted team statistics, with per-member capability overrides; Challenge review requires staffing |
 | Member | One group | Persistent group membership; Reader participation is determined separately for each challenge month |
 | Host | One challenge month | Operates existing Challenge teams, rosters, enrollment administration, themes, Challenge announcements, submission soft-removal, and Challenge-wide submission/theme-claim review; assignment itself does not create participation |
@@ -20,10 +23,13 @@ Platform owners have equal installation-wide authority and remain separate from 
 
 | State | Meaning |
 |---|---|
-| Draft | Staff configure dates, teams, rules, and visuals |
-| Open | Readers can submit completions |
-| Closed | New submissions stop while moderators finish reviews |
-| Finalized | Scores and standings are locked |
+| Draft | Challenge preparation |
+| Upcoming | Published/pre-start Challenge; registration follows its separate gate |
+| Active | Active Challenge participation and submission period |
+| Finalizing | Submissions have ended; authorized staff finish review |
+| Completed | Completed Challenge history; reopening requires explicit recovery confirmation |
 | Archived | Historical read-only view |
 
-Reopening a finalized month will require a reason and audit event.
+Registration being open is separate from lifecycle state. Normal lifecycle changes
+move one adjacent stage at a time; moving backward requires explicit confirmation.
+Archived Challenges cannot move backward through the normal lifecycle.

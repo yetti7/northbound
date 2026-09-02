@@ -8,7 +8,7 @@ from django.utils.text import slugify
 from django.conf import settings
 from zoneinfo import available_timezones
 
-from .models import BookSubmission, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ProgressCheckpoint, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile
+from .models import BookSubmission, BotmBook, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverOAuthApplication, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ProgressCheckpoint, ReaderHardcoverSyncPreference, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, normalize_book_identity
 from .permissions import DELEGABLE_CAPABILITIES
 
 
@@ -317,6 +317,34 @@ class PlatformSettingsForm(forms.ModelForm):
         return display_name
 
 
+class HardcoverOAuthApplicationForm(forms.ModelForm):
+    client_secret = forms.CharField(
+        label="Client Secret",
+        required=False,
+        strip=True,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}, render_value=False),
+        help_text="Stored encrypted. Leave blank to keep the configured secret.",
+    )
+
+    class Meta:
+        model = HardcoverOAuthApplication
+        fields = ("enabled", "client_id")
+        labels = {"enabled": "Enable Hardcover OAuth", "client_id": "Client ID"}
+
+    def clean_client_id(self):
+        return self.cleaned_data["client_id"].strip()
+
+    def clean(self):
+        cleaned = super().clean()
+        has_secret = bool(self.instance and self.instance.encrypted_client_secret)
+        if cleaned.get("enabled"):
+            if not cleaned.get("client_id"):
+                self.add_error("client_id", "Enter the Hardcover Developer App Client ID before enabling OAuth.")
+            if not cleaned.get("client_secret") and not has_secret:
+                self.add_error("client_secret", "Enter the Hardcover Developer App Client Secret before enabling OAuth.")
+        return cleaned
+
+
 class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):
     email = forms.EmailField()
 
@@ -396,6 +424,43 @@ class HardcoverConnectionForm(forms.Form):
         widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
         help_text="Create a token with only read:catalog:data and read:catalog:search.",
     )
+
+
+class ReaderHardcoverConnectionForm(forms.Form):
+    api_token = forms.CharField(
+        label="Personal Hardcover API Token",
+        strip=True,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+        help_text=(
+            "This token belongs to your personal Hardcover account, is stored encrypted, and should include "
+            "read:catalog, read:library, and write:library. Northbound cannot inspect PAT scope metadata."
+        ),
+    )
+
+
+class ReaderHardcoverSyncPreferenceForm(forms.ModelForm):
+    class Meta:
+        model = ReaderHardcoverSyncPreference
+        fields = ("sync_completed_books", "sync_completion_dates")
+        labels = {
+            "sync_completed_books": "Sync completed books",
+            "sync_completion_dates": "Sync Northbound completion dates",
+        }
+
+    def __init__(self, *args, write_available=False, unavailable_reason="", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.write_available = write_available
+        self.unavailable_reason = unavailable_reason
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("sync_completed_books"):
+            cleaned["sync_completion_dates"] = False
+        if cleaned.get("sync_completed_books") and not self.write_available:
+            raise forms.ValidationError(
+                self.unavailable_reason or "A valid personal Hardcover connection with library-write permission is required."
+            )
+        return cleaned
 
 
 class GroupJoinForm(forms.Form):
@@ -558,6 +623,30 @@ class ChallengeAnnouncementForm(forms.ModelForm):
         return challenge
 
 
+class ChallengeGamesSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("games_enabled",)
+        labels = {"games_enabled": "Enable Games"}
+        help_texts = {
+            "games_enabled": "Show Games for this Challenge. Disabling Games preserves Games, rewards, and scores.",
+        }
+
+
+class ChallengeBotmSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("botm_enabled", "botm_completion_bonus_pages")
+        labels = {
+            "botm_enabled": "Enable Book of the Month",
+            "botm_completion_bonus_pages": "Full BOTM Completion Bonus Pages",
+        }
+        help_texts = {
+            "botm_enabled": "Show Book of the Month for this Challenge. Disabling it preserves configured books.",
+            "botm_completion_bonus_pages": "Use 0 when there is no full-completion bonus.",
+        }
+
+
 class ChallengeScheduleForm(forms.ModelForm):
     class Meta:
         model = ChallengeMonth
@@ -638,6 +727,22 @@ class ChallengeRegistrationSettingsForm(forms.ModelForm):
         return cleaned
 
 
+class ChallengeTbrSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ("tbr_enabled", "tbr_book_bonus_pages", "tbr_completion_bonus_pages")
+        labels = {
+            "tbr_enabled": "Enable Personal TBR",
+            "tbr_book_bonus_pages": "Per-book TBR Bonus Pages",
+            "tbr_completion_bonus_pages": "Full 9-Book TBR Completion Bonus Pages",
+        }
+        help_texts = {
+            "tbr_enabled": "Readers may optionally submit up to 9 books during Challenge registration.",
+            "tbr_book_bonus_pages": "Bonus awarded for each qualifying completed book from the Reader's locked Personal TBR.",
+            "tbr_completion_bonus_pages": "Additional bonus awarded only when a Reader registered exactly 9 TBR books and completes all 9.",
+        }
+
+
 class ChallengeSignupQuestionForm(forms.Form):
     wording = forms.CharField(label="Question", max_length=240)
     question_type = forms.ChoiceField(label="Type", choices=ChallengeSignupQuestion.QuestionType.choices)
@@ -672,6 +777,7 @@ class ChallengeSignupQuestionForm(forms.Form):
 
 
 class ProgressCheckpointForm(forms.Form):
+    checkpoint_id = forms.IntegerField(required=False, widget=forms.HiddenInput)
     scheduled_at = forms.DateTimeField(
         label="Checkpoint Date and Time",
         input_formats=["%Y-%m-%dT%H:%M"],
@@ -799,6 +905,122 @@ class ChallengeRegistrationForm(forms.Form):
             )
 
 
+class PersonalTbrRegistrationBookForm(forms.Form):
+    catalog_selection = forms.CharField(required=False, widget=forms.HiddenInput())
+    title_snapshot = forms.CharField(label="Title", max_length=300, required=False)
+    author_snapshot = forms.CharField(label="Author", max_length=300, required=False)
+    page_count_snapshot = forms.IntegerField(label="Page Count (Optional)", min_value=1, required=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        signed_selection = cleaned.get("catalog_selection", "")
+        title = cleaned.get("title_snapshot", "").strip()
+        author = cleaned.get("author_snapshot", "").strip()
+        page_count = cleaned.get("page_count_snapshot")
+        if not signed_selection and not title and not author and page_count is None:
+            cleaned["is_empty"] = True
+            return cleaned
+        if signed_selection:
+            try:
+                selection = signing.loads(
+                    signed_selection,
+                    salt="northbound.personal-tbr-selection",
+                    max_age=86400,
+                )
+                selected = CatalogEdition.objects.select_related("book").get(pk=selection["selected"])
+                scoring = CatalogEdition.objects.select_related("book").get(pk=selection["scoring"])
+            except (signing.BadSignature, signing.SignatureExpired, CatalogEdition.DoesNotExist, KeyError, TypeError):
+                raise forms.ValidationError("The Hardcover selection is invalid or expired. Search again or use manual entry.")
+            if selected.book_id != scoring.book_id or not scoring.page_count:
+                raise forms.ValidationError("Select a Hardcover edition with a usable page count.")
+            cleaned.update({
+                "catalog_book": selected.book,
+                "catalog_edition": selected,
+                "title_snapshot": selected.book.title,
+                "author_snapshot": selected.book.author,
+                "page_count_snapshot": scoring.page_count,
+                "cover_url_snapshot": selected.book.cover_url,
+                "source_url_snapshot": selected.source_url or selected.book.source_url,
+            })
+        else:
+            if not title:
+                self.add_error("title_snapshot", "Enter a title or remove this book.")
+            if not author:
+                self.add_error("author_snapshot", "Enter an author or remove this book.")
+            cleaned.update({
+                "catalog_book": None,
+                "catalog_edition": None,
+                "title_snapshot": title,
+                "author_snapshot": author,
+                "cover_url_snapshot": "",
+                "source_url_snapshot": "",
+            })
+        cleaned["is_empty"] = False
+        return cleaned
+
+
+class BasePersonalTbrRegistrationBookFormSet(BaseFormSet):
+    ordering_widget = forms.HiddenInput
+    deletion_widget = forms.HiddenInput
+
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+        active = [
+            form for form in self.forms
+            if form.cleaned_data and not form.cleaned_data.get("DELETE") and not form.cleaned_data.get("is_empty")
+        ]
+        if len(active) > 9:
+            raise forms.ValidationError("A Personal TBR may contain at most nine books.")
+        identities = set()
+        catalog_ids = set()
+        for form in active:
+            identity = (
+                normalize_book_identity(form.cleaned_data["title_snapshot"]),
+                normalize_book_identity(form.cleaned_data["author_snapshot"]),
+            )
+            if identity in identities:
+                raise forms.ValidationError("The same title and author cannot appear twice on your Personal TBR.")
+            identities.add(identity)
+            catalog_book = form.cleaned_data.get("catalog_book")
+            if catalog_book:
+                if catalog_book.pk in catalog_ids:
+                    raise forms.ValidationError("The same Hardcover book cannot appear twice on your Personal TBR.")
+                catalog_ids.add(catalog_book.pk)
+
+    def book_values(self):
+        active = [
+            form for form in self.forms
+            if form.cleaned_data and not form.cleaned_data.get("DELETE") and not form.cleaned_data.get("is_empty")
+        ]
+        active.sort(key=lambda form: form.cleaned_data.get("ORDER") or self.forms.index(form) + 1)
+        return [
+            {
+                "position": position,
+                "catalog_book": form.cleaned_data.get("catalog_book"),
+                "catalog_edition": form.cleaned_data.get("catalog_edition"),
+                "title_snapshot": form.cleaned_data["title_snapshot"],
+                "author_snapshot": form.cleaned_data["author_snapshot"],
+                "page_count_snapshot": form.cleaned_data.get("page_count_snapshot"),
+                "cover_url_snapshot": form.cleaned_data.get("cover_url_snapshot", ""),
+                "source_url_snapshot": form.cleaned_data.get("source_url_snapshot", ""),
+            }
+            for position, form in enumerate(active, start=1)
+        ]
+
+
+PersonalTbrRegistrationBookFormSet = formset_factory(
+    PersonalTbrRegistrationBookForm,
+    formset=BasePersonalTbrRegistrationBookFormSet,
+    extra=9,
+    can_delete=True,
+    can_order=True,
+    max_num=9,
+    validate_max=True,
+)
+
+
 class MonthThemeForm(forms.ModelForm):
     class Meta:
         model = MonthTheme
@@ -810,6 +1032,185 @@ class MonthThemeForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if month:
             self.instance.month = month
+
+
+class GameForm(forms.ModelForm):
+    class Meta:
+        model = Game
+        fields = ("name", "starts_at", "ends_at", "advertised_bonus_pages")
+        labels = {
+            "starts_at": "Starts At",
+            "ends_at": "Ends At",
+            "advertised_bonus_pages": "Maximum Bonus Pages",
+        }
+        widgets = {
+            "starts_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "ends_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+        }
+
+    def __init__(self, *args, month=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if month:
+            self.instance.month = month
+        for field_name in ("starts_at", "ends_at"):
+            self.fields[field_name].input_formats = ["%Y-%m-%dT%H:%M"]
+
+
+class BotmBookForm(forms.ModelForm):
+    catalog_selection = forms.CharField(required=False, widget=forms.HiddenInput())
+    entry_mode = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    class Meta:
+        model = BotmBook
+        fields = (
+            "position", "title_snapshot", "author_snapshot", "page_count_snapshot",
+            "cover_url_snapshot", "source_url_snapshot", "bonus_pages",
+        )
+        labels = {
+            "title_snapshot": "Title", "author_snapshot": "Author",
+            "page_count_snapshot": "Page Count", "cover_url_snapshot": "Cover URL",
+            "source_url_snapshot": "Source URL", "bonus_pages": "Per-book Bonus Pages",
+        }
+        help_texts = {"bonus_pages": "Use 0 when this book has no bonus."}
+
+    def __init__(self, *args, month, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.month = month
+        self.fields["position"].widget = forms.Select(choices=[(value, value) for value in range(1, 10)])
+        if not self.is_bound and not self.instance.pk:
+            used = set(month.botm_books.filter(is_retired=False).values_list("position", flat=True))
+            self.initial["position"] = next((value for value in range(1, 10) if value not in used), 1)
+        if self.instance.pk and self.instance.catalog_book_id:
+            self.fields["title_snapshot"].disabled = True
+            self.fields["author_snapshot"].disabled = True
+            self.fields["cover_url_snapshot"].disabled = True
+            self.fields["source_url_snapshot"].disabled = True
+
+    def clean(self):
+        cleaned = super().clean()
+        signed_selection = cleaned.get("catalog_selection")
+        entry_mode = cleaned.get("entry_mode")
+        if entry_mode == "catalog" and not signed_selection:
+            raise forms.ValidationError(
+                "The Hardcover selection was not retained. Select the edition again before saving."
+            )
+        if signed_selection:
+            try:
+                selection = signing.loads(signed_selection, salt="northbound.catalog-selection", max_age=86400)
+                selected = CatalogEdition.objects.select_related("book").get(pk=selection["selected"])
+                scoring = CatalogEdition.objects.select_related("book").get(pk=selection["scoring"])
+            except (signing.BadSignature, signing.SignatureExpired, CatalogEdition.DoesNotExist, KeyError, TypeError):
+                raise forms.ValidationError("The Hardcover selection is invalid or expired. Select the edition again or use manual entry.")
+            if selected.book_id != scoring.book_id or not scoring.page_count:
+                raise forms.ValidationError("Select a Hardcover edition with a usable positive page count.")
+            self.instance.catalog_book = selected.book
+            self.instance.catalog_edition = selected
+            cleaned.update({
+                "title_snapshot": selected.book.title,
+                "author_snapshot": selected.book.author,
+                "page_count_snapshot": scoring.page_count,
+                "cover_url_snapshot": selected.book.cover_url,
+                "source_url_snapshot": selected.source_url or selected.book.source_url,
+            })
+        elif not self.instance.pk:
+            self.instance.catalog_book = None
+            self.instance.catalog_edition = None
+        if self.instance.pk and not self.instance.is_retired and cleaned.get("position") != self.initial.get("position", self.instance.position):
+            # The service owns atomic position swaps; avoid rejecting the
+            # transient occupied target during ModelForm constraint validation.
+            self.instance.is_retired = True
+        return cleaned
+
+    def service_values(self):
+        values = {
+            field: self.cleaned_data[field]
+            for field in self.Meta.fields
+        }
+        if self.cleaned_data.get("catalog_selection"):
+            values.update({
+                "catalog_book": self.instance.catalog_book,
+                "catalog_edition": self.instance.catalog_edition,
+            })
+        return values
+
+
+class BotmReactivateForm(forms.Form):
+    position = forms.TypedChoiceField(
+        choices=[(value, value) for value in range(1, 10)], coerce=int, label="Active Position"
+    )
+
+
+class GameRewardApplyForm(forms.Form):
+    amount = forms.IntegerField(min_value=1, label="Amount")
+    target_type = forms.ChoiceField(
+        choices=(
+            (GameRewardApplication.TargetType.READER, "Individual"),
+            (GameRewardApplication.TargetType.TEAM, "Team"),
+            (GameRewardApplication.TargetType.CHALLENGE, "Challenge-wide"),
+        ),
+        label="Apply To",
+    )
+    target_participant = forms.ModelChoiceField(
+        queryset=Membership.objects.none(), required=False, label="Target Reader"
+    )
+    target_team = forms.ModelChoiceField(
+        queryset=Team.objects.none(), required=False, label="Target Team"
+    )
+    reason = forms.CharField(label="Reason / Note", widget=forms.Textarea(attrs={"rows": 3}))
+    idempotency_key = forms.UUIDField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, game, final_apply=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.game = game
+        self.fields["amount"].initial = game.advertised_bonus_pages
+        participants = game.month.group.memberships.filter(is_active=True, user__is_superuser=False)
+        teams = game.month.teams.all()
+        if not final_apply:
+            enrolled_ids = game.month.enrollments.filter(is_active=True).values_list("participant_id", flat=True)
+            participants = participants.filter(pk__in=enrolled_ids).exclude(
+                challenge_staff_assignments__month=game.month,
+                challenge_staff_assignments__role=ChallengeStaffAssignment.Role.FLOATER,
+                challenge_staff_assignments__ended_at__isnull=True,
+            )
+            teams = teams.filter(is_archived=False)
+        self.fields["target_participant"].queryset = participants.order_by("display_name", "pk")
+        self.fields["target_team"].queryset = teams.order_by("name", "pk")
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount > self.game.advertised_bonus_pages:
+            raise forms.ValidationError(
+                f"Amount cannot exceed this Game's maximum of {self.game.advertised_bonus_pages} pages."
+            )
+        return amount
+
+    def clean(self):
+        cleaned = super().clean()
+        target_type = cleaned.get("target_type")
+        participant = cleaned.get("target_participant")
+        team = cleaned.get("target_team")
+        if target_type == GameRewardApplication.TargetType.READER:
+            if not participant:
+                self.add_error("target_participant", "Select a Reader.")
+            if team:
+                self.add_error("target_team", "Do not select a Team for an Individual reward.")
+        elif target_type == GameRewardApplication.TargetType.TEAM:
+            if not team:
+                self.add_error("target_team", "Select a Team.")
+            if participant:
+                self.add_error("target_participant", "Do not select a Reader for a Team reward.")
+        elif target_type == GameRewardApplication.TargetType.CHALLENGE:
+            if participant or team:
+                raise forms.ValidationError("Challenge-wide rewards do not use a Reader or Team target.")
+        return cleaned
+
+
+class GameRewardVoidForm(forms.Form):
+    reason = forms.CharField(
+        label="Void Reason",
+        widget=forms.Textarea(attrs={"rows": 3}),
+        help_text="Required. To correct this reward, void it and create a new application.",
+    )
 
 
 class CompetitionVisibilityForm(forms.ModelForm):

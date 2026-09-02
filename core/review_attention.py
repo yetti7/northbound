@@ -21,7 +21,7 @@ def challenge_attention_count(user, month):
 
 def needs_attention_summary(user):
     if not user.is_authenticated:
-        return {"total": 0, "challenges": []}
+        return {"total": 0, "challenges": [], "available": False}
     host_notices = []
     if not user.is_superuser:
         host_notices = list(ChallengeStaffAssignment.objects.filter(
@@ -73,4 +73,8 @@ def needs_attention_summary(user):
             "host_notices": month_host_notices,
             "scope_label": scope_label,
         })
-    return {"total": sum(item["count"] for item in challenges), "challenges": challenges}
+    return {
+        "total": sum(item["count"] for item in challenges),
+        "challenges": challenges,
+        "available": user.is_superuser or bool(month_ids),
+    }

@@ -3,6 +3,15 @@
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Signup Questions</h1><p class="lede">Configure up to ten bounded planning questions and the Reader answer-editing policy.</p></div></div>
 <section class="form-card"><h2>Information automatically provided</h2><ul><li>Reader name</li><li>Email</li><li>Discord username</li><li>Previous Challenges completed</li><li>Average Challenge pages for this Group</li><li>Previous/last Challenge pages</li></ul></section>
+<section class="form-card">
+  <h2>Personal TBR</h2>
+  <p>Configure the optional Personal TBR collected during registration. The full-completion bonus applies only to Readers who register exactly 9 books and complete all 9.</p>
+  {% if lifecycle_locked %}
+    <dl class="details"><dt>Enabled</dt><dd>{% if month.tbr_enabled %}Yes{% else %}No{% endif %}</dd><dt>Per-book Bonus</dt><dd>{{ month.tbr_book_bonus_pages }} pages</dd><dt>Full 9-Book Bonus</dt><dd>{{ month.tbr_completion_bonus_pages }} pages</dd></dl>
+  {% else %}
+    <form method="post" class="stacked-form">{% csrf_token %}<input type="hidden" name="action" value="save_tbr_settings">{{ tbr_settings_form.as_p }}<button class="button primary">Save Personal TBR Settings</button></form>
+  {% endif %}
+</section>
 {% if configuration_read_only %}
 <section class="form-card"><h2>Registration configuration locked</h2><p>{% if schema_locked %}Signup questions and the answer-editing policy are read-only because registration responses have already been collected. Existing answers and history are preserved.{% else %}{{ month.get_status_display }} Challenges are read-only, so registration configuration cannot be changed.{% endif %}</p><dl class="details"><dt>Reader Answer Editing</dt><dd>{{ month.get_registration_answer_editing_policy_display }}{% if month.registration_answer_editing_policy == 'timed' %} · {{ month.registration_answer_editing_hours }} hours{% endif %}</dd></dl></section>
 <section><div class="section-heading"><h2>Questions</h2></div><div class="card-grid">{% for question in questions %}<div class="card"><p class="eyebrow">{{ question.get_question_type_display }} · {% if question.is_required %}Required{% else %}Optional{% endif %}</p><h3>{{ question.wording }}</h3>{% if question.choices %}<ul>{% for choice in question.choices %}<li>{{ choice }}</li>{% endfor %}</ul>{% endif %}</div>{% empty %}<div class="empty-state">This Challenge has no custom signup questions.</div>{% endfor %}</div></section>

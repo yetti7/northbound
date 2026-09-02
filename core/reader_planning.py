@@ -22,19 +22,27 @@ class ReaderPlanningData:
         return "N/A" if self.last_challenge_pages is None else str(self.last_challenge_pages)
 
 
-def historical_reader_planning_data(*, month, participant_ids):
+def historical_reader_planning_data(*, participant_ids, month=None, group=None):
     """Return Group-scoped historical planning data without per-Reader queries."""
+    if (month is None) == (group is None):
+        raise ValueError("Provide exactly one of month or group.")
     participant_ids = tuple(participant_ids)
     if not participant_ids:
         return {}
 
-    participation_rows = list(
+    group_id = month.group_id if month is not None else group.pk
+    participation = (
         MonthEnrollment.objects.filter(
             participant_id__in=participant_ids,
-            month__group_id=month.group_id,
+            month__group_id=group_id,
             month__status=ChallengeMonth.Status.COMPLETED,
         )
-        .exclude(month_id=month.pk)
+        .exclude(is_active=False, inactive_reason=MonthEnrollment.InactiveReason.WITHDRAWN)
+    )
+    if month is not None and month.pk:
+        participation = participation.exclude(month_id=month.pk)
+    participation_rows = list(
+        participation
         .values("participant_id", "month_id", "month__starts_on")
         .order_by("participant_id", "month__starts_on", "month_id")
     )

@@ -1,10 +1,26 @@
 {% extends "base.html" %}
 {% block title %}{{ group.name }} · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">Reading Group</p><h1>{{ group.name }}</h1>{% if can_edit_group %}<a class="button" href="{% url 'group-edit' group.slug %}">Edit</a>{% endif %}</div><div class="action-row">{% if can_view_access_code %}<a class="button" href="{% url 'group-access-code' group.slug %}">Access Code</a>{% endif %}{% if can_manage_participants %}<a class="button" href="{% url 'member-create' group.slug %}">Add Participant</a>{% endif %}{% if can_manage_months %}<a class="button primary" href="{% url 'month-create' group.slug %}">Create Challenge</a>{% endif %}</div></div>
-{% if group.announcement_enabled and group.announcement %}<div class="announcement" role="status"><span class="announcement-label">Group Announcement</span><p>{{ group.announcement|linebreaksbr }}</p>{% if can_manage_group_announcements %}<details class="announcement-editor"><summary class="button">Edit Group Announcement</summary><form method="post" action="{% url 'group-announcement-update' group.slug %}" class="stacked-form">{% csrf_token %}<p><label for="group-announcement">Group Announcement</label><textarea id="group-announcement" name="announcement" rows="3" required>{{ group.announcement }}</textarea></p><div class="action-row"><button class="button primary">Save</button><button class="button" type="button" data-close-details>Cancel</button></div></form></details>{% endif %}</div>{% endif %}
-<div class="stats two-stats"><a class="stat stat-link" href="{% url 'participant-list' group.slug %}"><span>Participants</span><strong>{{ participant_count }}</strong><small>Group-wide people and stats →</small></a><a class="stat stat-link" href="{% url 'month-list' group.slug %}"><span>Challenges</span><strong>{{ active_month_count }}</strong><small>Open a Challenge to view its teams →</small></a></div>
-<div class="card-grid">
-  {% for month in active_months %}<a class="card interactive" href="{{ month.get_absolute_url }}"><span class="pill">{{ month.get_status_display }}</span><h2>{{ month.name }}</h2><p>{{ month.starts_on }} – {{ month.ends_on }}</p></a>{% empty %}<div class="empty-state">No visible Challenges yet.</div>{% endfor %}
+<div class="page-heading page-header">
+  <div class="page-header-content"><p class="eyebrow">Reading Group</p><h1>{{ group.name }}</h1><p class="lede">{{ participant_count }} active member{{ participant_count|pluralize }} · {{ active_month_count }} visible Challenge{{ active_month_count|pluralize }}</p></div>
+  <div class="action-row page-actions">
+    {% if can_manage_months %}<a class="button primary" href="{% url 'month-create' group.slug %}">Create Challenge</a>{% endif %}
+    {% if can_edit_group %}<a class="button secondary" href="{% url 'group-edit' group.slug %}">Group Settings</a>{% endif %}
+    {% if can_view_access_code %}<a class="button secondary" href="{% url 'group-access-code' group.slug %}">Access Code</a>{% endif %}
+  </div>
 </div>
+{% if group.announcement_enabled and group.announcement %}<div class="announcement" role="status"><span class="announcement-label">Group Announcement</span><p>{{ group.announcement|linebreaksbr }}</p>{% if can_manage_group_announcements %}<details class="announcement-editor"><summary class="button">Edit Group Announcement</summary><form method="post" action="{% url 'group-announcement-update' group.slug %}" class="stacked-form">{% csrf_token %}<p><label for="group-announcement">Group Announcement</label><textarea id="group-announcement" name="announcement" rows="3" required>{{ group.announcement }}</textarea></p><div class="action-row"><button class="button primary">Save</button><button class="button" type="button" data-close-details>Cancel</button></div></form></details>{% endif %}</div>{% endif %}
+<section class="page-section">
+  <div class="section-heading"><div><h2>Group Navigation</h2><p>Members and Challenges are the main Group workspaces.</p></div></div>
+  <div class="card-grid group-navigation-grid group-detail-card-grid">
+    <a class="card interactive navigation-card" href="{% url 'participant-list' group.slug %}"><span class="pill status-badge status-info">{{ participant_count }} active</span><h3>Members</h3><p>View Group members, profiles, permissions, and reading history.</p></a>
+    <a class="card interactive navigation-card" href="{% url 'month-list' group.slug %}"><span class="pill status-badge status-info">{{ active_month_count }} visible</span><h3>Challenges</h3><p>Open current Challenges and their operational workspaces.</p></a>
+  </div>
+</section>
+<section class="page-section">
+  <div class="section-heading"><div><h2>Active Challenges</h2><p>Current non-archived Challenges visible to you.</p></div></div>
+  <div class="card-grid group-detail-card-grid">
+    {% for month in active_months %}<a class="card interactive navigation-card" href="{{ month.get_absolute_url }}"><span class="pill status-badge status-{% if month.status == 'active' %}success{% elif month.status == 'upcoming' %}info{% else %}neutral{% endif %}">{{ month.get_status_display }}</span><h3>{{ month.name }}</h3><p>{{ month.starts_on }} – {{ month.ends_on }}</p></a>{% empty %}<div class="empty-state"><strong>No visible Challenges yet.</strong>{% if can_manage_months %}<p>Create the first Challenge for this Group.</p><a class="button primary" href="{% url 'month-create' group.slug %}">Create Challenge</a>{% endif %}</div>{% endfor %}
+  </div>
+</section>
 {% endblock %}

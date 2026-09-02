@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Submission Recovery · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'advanced-recovery' %}">Advanced Recovery</a></p><h1>Submission Recovery</h1><p class="lede">Locate a submission using Reader, book, Challenge, and review state before taking any recovery action.</p></div></div>
+<section class="card"><div class="table-scroll"><table><thead><tr><th>Reader</th><th>Book</th><th>Challenge</th><th>Completed</th><th>Pages</th><th>State</th><th></th></tr></thead><tbody>{% for submission in submissions %}<tr><td>{{ submission.participant.display_name }}</td><td><strong>{{ submission.title }}</strong><br><span class="muted">{{ submission.author }}</span></td><td>{{ submission.month.group.name }} · {{ submission.month.name }}</td><td>{{ submission.completed_on|date:"M j, Y" }}</td><td>{{ submission.approved_pages|default:submission.submitted_pages }}</td><td>{{ submission.get_status_display }}{% if submission.is_removed %} · Removed{% endif %}</td><td><a href="{% url 'recovery-submission-detail' submission.pk %}">Inspect →</a></td></tr>{% empty %}<tr><td colspan="7">No submissions found.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

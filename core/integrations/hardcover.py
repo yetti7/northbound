@@ -4,16 +4,22 @@ import re
 from datetime import timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from .http import urlopen
 
 from django.conf import settings
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_variables
 
 from core.models import CatalogBook, CatalogEdition, CatalogSearchCache
 
 
 class HardcoverConnectionError(Exception):
-    pass
+    def __init__(self, message, *, classification="provider_rejected", retryable=False, reconnect_required=False):
+        super().__init__(message)
+        self.classification = classification
+        self.retryable = retryable
+        self.reconnect_required = reconnect_required
 
 
 class HardcoverLinkError(ValueError):
@@ -31,6 +37,7 @@ SEARCH_CACHE_TTL = timedelta(hours=24)
 EDITION_CACHE_TTL = timedelta(days=30)
 
 
+@sensitive_variables()
 def execute_graphql(token, query, variables=None):
     authorization = token if token.lower().startswith("bearer ") else f"Bearer {token}"
     request = Request(
@@ -44,20 +51,23 @@ def execute_graphql(token, query, variables=None):
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         if exc.code == 401:
-            raise HardcoverConnectionError("Hardcover rejected the token.") from exc
+            raise HardcoverConnectionError("Hardcover rejected the token.", classification="credential_rejected", reconnect_required=True) from exc
         if exc.code == 403:
-            raise HardcoverConnectionError("The token does not have the required catalog permissions.") from exc
+            raise HardcoverConnectionError("The token does not have the required permissions.", classification="insufficient_permission", reconnect_required=True) from exc
         if exc.code == 429:
-            raise HardcoverConnectionError("Hardcover's rate limit was reached. Try again later.") from exc
-        raise HardcoverConnectionError(f"Hardcover returned HTTP {exc.code}.") from exc
+            raise HardcoverConnectionError("Hardcover's rate limit was reached. Try again later.", classification="rate_limited", retryable=True) from exc
+        if exc.code >= 500:
+            raise HardcoverConnectionError("Hardcover is temporarily unavailable.", classification="provider_unavailable", retryable=True) from exc
+        raise HardcoverConnectionError(f"Hardcover returned HTTP {exc.code}.", classification="provider_rejected") from exc
     except (URLError, TimeoutError) as exc:
-        raise HardcoverConnectionError("Hardcover could not be reached.") from exc
+        raise HardcoverConnectionError("Hardcover could not be reached.", classification="temporary_network", retryable=True) from exc
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise HardcoverConnectionError("Hardcover returned an unreadable response.") from exc
+        raise HardcoverConnectionError("Hardcover returned an unreadable response.", classification="unreadable_response", retryable=True) from exc
+    if not isinstance(payload, dict):
+        raise HardcoverConnectionError("Hardcover returned an unexpected response.", classification="unreadable_response", retryable=True)
     if payload.get("errors"):
-        message = payload["errors"][0].get("message", "The catalog query was rejected.")
-        raise HardcoverConnectionError(message[:300])
-    if "data" not in payload:
+        raise HardcoverConnectionError("Hardcover rejected the catalog query.")
+    if not isinstance(payload.get("data"), dict):
         raise HardcoverConnectionError("Hardcover did not return the expected catalog response.")
     return payload["data"]
 

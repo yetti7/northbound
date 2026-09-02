@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}Correct {{ theme.name }} · Northbound{% endblock %}
+{% block content %}<section class="form-card"><p class="eyebrow">Platform Recovery · Tier 2</p><h1>Correct Unused Theme</h1><p class="lede">This operation is refused if any Theme claim history exists. Availability is managed separately.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">Correct Theme</button><a class="button" href="{{ cancel_url }}">Cancel</a></div></form></section>{% endblock %}

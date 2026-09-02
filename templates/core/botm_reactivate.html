@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}Reactivate {{ book.title_snapshot }} · {{ month.name }}{% endblock %}
+{% block content %}<section class="form-card"><p class="eyebrow"><a href="{% url 'botm-list' month.group.slug month.pk %}">Book of the Month</a></p><h1>Reactivate {{ book.title_snapshot }}</h1><p>Select an unoccupied active position. Existing books will not be displaced.</p><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<div class="action-row"><button class="button primary">Reactivate</button><a class="button" href="{% url 'botm-list' month.group.slug month.pk %}">Cancel</a></div></form></section>{% endblock %}

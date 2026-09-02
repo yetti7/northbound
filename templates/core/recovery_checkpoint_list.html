@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% load tz %}
+{% block title %}Checkpoint Recovery · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'advanced-recovery' %}">Advanced Recovery</a></p><h1>Checkpoint Recovery</h1><p class="lede">Evaluated checkpoints may be reset only as a whole. Recovery Hold pauses automatic processing until explicit Platform Owner release.</p></div></div>
+{% timezone platform_timezone %}<div class="card-grid">{% for checkpoint in checkpoints %}<a class="card interactive" href="{% url 'recovery-checkpoint-detail' checkpoint.pk %}"><p class="eyebrow">{{ checkpoint.month.group.name }} · {{ checkpoint.month.name }}</p><h2>Checkpoint {{ checkpoint.position }}</h2><p>{{ checkpoint.scheduled_at|date:"M j, Y g:i a" }}</p>{% if checkpoint.recovery_hold %}<p><span class="pill">Recovery Hold</span> Automatic evaluation paused</p>{% else %}<p><span class="pill">{{ checkpoint.get_evaluation_state_display }}</span></p>{% endif %}<dl class="details"><dt>Results</dt><dd>{{ checkpoint.recovery_result_count }}</dd><dt>Met</dt><dd>{{ checkpoint.recovery_met_count }}</dd><dt>Below</dt><dd>{{ checkpoint.recovery_below_count }}</dd></dl>{% if checkpoint.evaluation_state == "pending" and not checkpoint.recovery_hold %}<p class="muted">Ordinary Pending checkpoint; emergency reset is unavailable.</p>{% endif %}</a>{% empty %}<div class="empty-state">No progress checkpoints exist.</div>{% endfor %}</div>{% endtimezone %}
+{% endblock %}
