@@ -31,6 +31,7 @@ document.querySelectorAll("[data-hardcover-test]").forEach((button) => {
     const form = button.closest("form");
     const input = document.getElementById(button.dataset.tokenInput);
     const result = form.querySelector("[data-hardcover-result]");
+    result.className = "notice";
     if (!input || !input.value.trim()) {
       result.textContent = "Enter a token first.";
       return;
@@ -43,7 +44,14 @@ document.querySelectorAll("[data-hardcover-test]").forEach((button) => {
     try {
       const response = await fetch(button.dataset.testUrl, {method: "POST", body, credentials: "same-origin"});
       const payload = await response.json();
-      result.textContent = payload.message;
+      result.className = payload.ok ? "notice success" : "notice error";
+      result.replaceChildren();
+      if (payload.ok) {
+        const title = document.createElement("strong");
+        title.textContent = payload.title;
+        result.append(title, document.createElement("br"));
+      }
+      result.append(document.createTextNode(payload.message));
     } catch (error) {
       result.textContent = "The connection test could not be completed.";
     } finally {
@@ -332,6 +340,9 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     return payload;
   };
 
+  tools.querySelector("#catalog-search")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); tools.querySelector("[data-catalog-search]").click(); }
+  });
   const clearResults = () => { results.replaceChildren(); };
 
   const formatValue = (format, audioSeconds) => {
@@ -416,7 +427,15 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     status.textContent = "Searching Hardcover…";
     clearResults();
     try {
-      const payload = await request("search", {query});
+      const payload = tools.querySelector("[data-catalog-smart]")
+        ? await request("smart", {input: query}) : await request("search", {query});
+      if (payload.lookup_type === "book") { await showEditions(payload.result.book_id); return; }
+      if (payload.lookup_type === "edition") {
+        const selected = await request("edition", {edition_id: payload.result.edition_id});
+        if (selected.manual_required) { clearToManual(); status.textContent = selected.message; }
+        else applyEdition(selected.result);
+        return;
+      }
       if (!payload.results.length) { status.textContent = "No matching books were found. Try manual entry below."; return; }
       status.textContent = payload.cached ? "Showing cached results." : "Select a book to view its editions.";
       payload.results.forEach((book) => {
@@ -428,7 +447,7 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     }
   });
 
-  tools.querySelector("[data-catalog-link]").addEventListener("click", async () => {
+  tools.querySelector("[data-catalog-link]")?.addEventListener("click", async () => {
     const url = document.getElementById("catalog-link").value.trim();
     if (!url) { status.textContent = "Paste a Hardcover book or edition link first."; return; }
     status.textContent = "Importing Hardcover link…";
@@ -458,7 +477,8 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     if (!isBotm) document.getElementById("id_book_format").value = "";
     document.getElementById(isBotm ? "id_page_count_snapshot" : "id_submitted_pages").readOnly = false;
     document.getElementById("catalog-search").value = "";
-    document.getElementById("catalog-link").value = "";
+    const linkInput = document.getElementById("catalog-link");
+    if (linkInput) linkInput.value = "";
     clearResults();
     entryMode.textContent = "Manual Entry";
     document.getElementById(isBotm ? "id_title_snapshot" : "id_title").focus();
@@ -469,3 +489,17 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     status.textContent = "Hardcover selection cleared. Enter the book details manually below.";
   });
 });
+
+// Duration is meaningful only for the fixed-window policy; keep its value when toggling.
+const answerPolicy = document.getElementById("id_registration_answer_editing_policy");
+const answerHours = document.getElementById("id_registration_answer_editing_hours");
+if (answerPolicy && answerHours) {
+  const updateAnswerDuration = () => {
+    const timed = answerPolicy.value === "timed";
+    answerHours.closest("p").hidden = !timed;
+    answerHours.disabled = !timed;
+    answerHours.required = timed;
+  };
+  answerPolicy.addEventListener("change", updateAnswerDuration);
+  updateAnswerDuration();
+}

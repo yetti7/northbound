@@ -3083,7 +3083,7 @@ def group_edit(request, group_slug):
         else:
             connection.is_valid = True
             connection.last_error = ""
-            messages.success(request, "Hardcover catalog access is working.")
+            messages.success(request, "Hardcover Catalog Connected. Northbound can search the Hardcover catalog for this group.")
         connection.tested_at = timezone.now()
         connection.save(update_fields=["is_valid", "last_error", "tested_at"])
         return redirect("group-edit", group_slug=group.slug)
@@ -3099,7 +3099,7 @@ def group_edit(request, group_slug):
                 defaults={"encrypted_token": encrypt_token(token), "token_hint": token[-4:], "tested_at": timezone.now(), "is_valid": True, "last_error": ""},
             )
             AuditEvent.objects.create(actor=request.user, group=group, action="hardcover.connected", object_type="HardcoverConnection", object_id=str(connection.pk), summary="Saved and tested a read-only Hardcover catalog connection.")
-            messages.success(request, "Hardcover catalog access was connected successfully.")
+            messages.success(request, "Hardcover Catalog Connected. Northbound can search the Hardcover catalog for this group.")
             return redirect("group-edit", group_slug=group.slug)
     return render(request, "core/group_edit.html", {"form": form, "hardcover_form": hardcover_form, "group": group, "connection": connection})
 
@@ -3165,7 +3165,7 @@ def hardcover_test_token(request):
         test_catalog_connection(token)
     except HardcoverConnectionError as exc:
         return JsonResponse({"ok": False, "message": str(exc)}, status=400)
-    return JsonResponse({"ok": True, "message": "Hardcover catalog access is working."})
+    return JsonResponse({"ok": True, "title": "Hardcover Catalog Connected", "message": "Northbound can search the Hardcover catalog for this group."})
 
 
 @login_required
@@ -5189,6 +5189,16 @@ def challenge_register_confirm(request, group_slug, month_pk):
     return redirect(month)
 
 
+def _smart_catalog_lookup(token, value):
+    """Shared routing only; each caller supplies its own authorized credential."""
+    value = value.strip()
+    if "://" in value or "hardcover.app" in value.casefold():
+        result, cached = lookup_hardcover_url(token, value)
+        return {"lookup_type": "book" if result.get("edition_required") else "edition", "result": result, "cached": cached}
+    results, cached = search_books(token, value)
+    return {"lookup_type": "search", "results": results, "cached": cached}
+
+
 @login_required
 @sensitive_variables("token")
 def personal_tbr_catalog(request, group_slug, month_pk):
@@ -5207,18 +5217,13 @@ def personal_tbr_catalog(request, group_slug, month_pk):
         token = get_reader_hardcover_token(request.user)
         action = request.POST.get("action")
         if action == "smart":
-            value = request.POST.get("input", "").strip()
-            looks_like_url = "://" in value or "hardcover.app" in value.casefold()
-            if looks_like_url:
-                result, cached = lookup_hardcover_url(token, value)
-                if result.get("edition_required"):
-                    return JsonResponse({"ok": True, "lookup_type": "book", "result": result, "cached": cached})
-                prepared = _prepare_personal_tbr_edition(token, result)
+            payload = _smart_catalog_lookup(token, request.POST.get("input", ""))
+            if payload["lookup_type"] == "edition":
+                prepared = _prepare_personal_tbr_edition(token, payload["result"])
                 if prepared.get("manual_required"):
                     return JsonResponse({"ok": True, **prepared})
-                return JsonResponse({"ok": True, "lookup_type": "edition", "result": prepared["result"], "cached": cached})
-            results, cached = search_books(token, value)
-            return JsonResponse({"ok": True, "lookup_type": "search", "results": results, "cached": cached})
+                payload["result"] = prepared["result"]
+            return JsonResponse({"ok": True, **payload})
         if action == "search":
             results, cached = search_books(token, request.POST.get("query", ""))
             return JsonResponse({"ok": True, "results": results, "cached": cached})
@@ -5527,6 +5532,8 @@ def botm_catalog(request, group_slug, month_pk):
     try:
         token = decrypt_token(connection.encrypted_token)
         action = request.POST.get("action")
+        if action == "smart":
+            return JsonResponse({"ok": True, **_smart_catalog_lookup(token, request.POST.get("input", ""))})
         if action == "search":
             results, cached = search_books(token, request.POST.get("query", ""))
             return JsonResponse({"ok": True, "results": results, "cached": cached})

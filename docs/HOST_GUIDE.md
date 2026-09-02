@@ -300,7 +300,7 @@ awards. Review the Reader's response in Submission Review, not just the Theme ti
 2. Set **Full BOTM Completion Bonus Pages** if completing the whole configured
    list should earn an extra reward; use zero for none. Save the settings.
 3. Open **Books**, or **Book of the Month** on the Challenge, then **Add Book**.
-4. Use **Find on Hardcover** with **Search** or **Import Link** to select a title,
+4. Use **Find on Hardcover**: enter a title, author, ISBN, or Hardcover book/edition URL and choose **Find Book** to select a title,
    or **Clear and Enter Manually** to enter it yourself.
 5. Check **Position**, **Title**, **Author**, **Page Count** and optional
    **Per-book Bonus Pages**. Choose **Save Book**.

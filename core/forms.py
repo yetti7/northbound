@@ -10,6 +10,7 @@ from zoneinfo import available_timezones
 
 from .models import BookSubmission, BotmBook, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverOAuthApplication, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ProgressCheckpoint, ReaderHardcoverSyncPreference, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, normalize_book_identity
 from .permissions import DELEGABLE_CAPABILITIES
+from .widgets import MidnightDateTimeInput
 
 
 def avatar_choices():
@@ -529,11 +530,11 @@ class ChallengeMonthForm(forms.ModelForm):
         }
         widgets = {
             "description": forms.Textarea(attrs={"rows": 4}),
-            "registration_opens_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
-            "registration_closes_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
-            "starts_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
-            "ends_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
-            "final_announcement_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "registration_opens_at": MidnightDateTimeInput(),
+            "registration_closes_at": MidnightDateTimeInput(),
+            "starts_at": MidnightDateTimeInput(),
+            "ends_at": MidnightDateTimeInput(),
+            "final_announcement_at": MidnightDateTimeInput(),
         }
 
     def __init__(self, *args, **kwargs):
@@ -675,7 +676,7 @@ class ChallengeScheduleForm(forms.ModelForm):
             "auto_complete_challenge": "Mark Challenge Completed at this time",
         }
         widgets = {
-            field_name: forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"})
+            field_name: MidnightDateTimeInput()
             for field_name in (
                 "registration_opens_at",
                 "registration_closes_at",
@@ -715,6 +716,13 @@ class ChallengeRegistrationSettingsForm(forms.ModelForm):
         help_texts = {
             "registration_answer_editing_hours": "Used only when editing is allowed for a set period. Choose 1–720 hours.",
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        policy = self.data.get(self.add_prefix("registration_answer_editing_policy")) if self.is_bound else self.initial.get("registration_answer_editing_policy")
+        if self.is_bound and policy != ChallengeMonth.RegistrationAnswerEditingPolicy.TIMED:
+            # Ignore irrelevant submitted durations; retain the saved/default duration.
+            self.fields["registration_answer_editing_hours"].disabled = True
 
     def clean(self):
         cleaned = super().clean()
@@ -781,7 +789,7 @@ class ProgressCheckpointForm(forms.Form):
     scheduled_at = forms.DateTimeField(
         label="Checkpoint Date and Time",
         input_formats=["%Y-%m-%dT%H:%M"],
-        widget=forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+        widget=MidnightDateTimeInput(),
     )
     threshold_percentage = forms.IntegerField(label="Threshold Percentage", min_value=1, max_value=100, initial=25)
     progress_basis = forms.ChoiceField(label="Progress Basis", choices=ProgressCheckpoint.ProgressBasis.choices)
@@ -1044,8 +1052,8 @@ class GameForm(forms.ModelForm):
             "advertised_bonus_pages": "Maximum Bonus Pages",
         }
         widgets = {
-            "starts_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
-            "ends_at": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"type": "datetime-local"}),
+            "starts_at": MidnightDateTimeInput(),
+            "ends_at": MidnightDateTimeInput(),
         }
 
     def __init__(self, *args, month=None, **kwargs):

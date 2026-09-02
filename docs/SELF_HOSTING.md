@@ -24,10 +24,25 @@ Keep the project name and volume configuration consistent between runs.
 Do not use that option for upgrades or routine stops.
 
 Use SQLite on persistent local storage for the normal small self-hosted deployment,
-not a remote network filesystem. The image runs as UID/GID 10001; a substitute bind
-mount needs write access for that account. PostgreSQL does not remove media
+not a remote network filesystem. PostgreSQL does not remove media
 persistence requirements or permit multiple application replicas. Keep one
 Northbound application container: the sync lock is local, not distributed.
+
+### Host bind mounts
+
+The stock Docker named volume needs no manual ownership handling. Northbound runs
+as UID/GID `10001:10001`. If you substitute a host bind mount such as
+`/srv/appdata/northbound:/data`, create the directory and make it writable by that
+account before startup:
+
+```sh
+sudo mkdir -p /path/to/northbound-data
+sudo chown -R 10001:10001 /path/to/northbound-data
+```
+
+Use the actual dedicated Northbound data directory. Without write access, startup
+cannot create `/data/.northbound-maintenance.lock` and may restart repeatedly.
+Keep permissions restricted to the application account and intended administrators.
 
 ## Configuration
 
@@ -176,6 +191,12 @@ Plan a maintenance window; there is no zero-downtime or automatic rollback guara
    For PostgreSQL include `-f compose.yaml -f compose.postgres.yaml` on each command.
    The default `latest` tag moves; select an available version tag or digest in
    deployment configuration for repeatable image selection.
+
+   Stable `vMAJOR.MINOR.PATCH` tag builds publish the exact release tag and `latest`
+   together from the same image build/digest. Prerelease, beta, RC and other
+   non-stable tag builds do not update `latest`. Main-branch builds also update
+   `latest`; pin a release digest when you need a fixed production version.
+
 4. Startup migrates automatically. Verify health, owner login, expected Groups/
    Challenges, media, backups and Reader sync status. Retain the pre-upgrade backup.
 

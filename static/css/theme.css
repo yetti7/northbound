@@ -91,7 +91,7 @@ select:not([multiple]){padding-right:2rem!important}
 .navigation-card::after{content:"Open →";margin-top:auto;padding-top:18px;color:var(--accent2);font-size:.85rem;font-weight:800}
 .summary-card{min-width:0}
 .card.summary-card:not(a){cursor:default}
-.entity-card{display:flex;flex-direction:column;min-width:0}
+.entity-card{display:flex;flex-direction:column;min-width:0}.entity-card>.pill{align-self:flex-start}
 .task-card>h1,.task-card>h2{margin-top:0}
 .task-card>.eyebrow+ h1,.task-card>.eyebrow+ h2{margin-top:0}
 
@@ -140,7 +140,7 @@ select:not([multiple]){padding-right:2rem!important}
 .hc-oauth-setup-card>.section-heading{margin-top:0}
 .recovery-unsupported-panel{margin-top:54px}
 .submission-hardcover-disconnected+.submission-book-details{margin-top:12px}
-.submission-book-details>.section-heading{margin-top:0}
+.submission-book-details>.section-heading,.book-details-card>.section-heading{margin-top:0}
 
 :where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .button:focus-visible,.back-button:focus-visible{outline-offset:2px}
@@ -231,3 +231,5 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
   .form-card,.auth-card{padding:20px}
   .stacked-form .errorlist{font-size:.9rem}
 }
+
+.stacked-form p[hidden]{display:none}
