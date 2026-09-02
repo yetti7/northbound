@@ -109,9 +109,3 @@ See [Hardcover setup and operations](docs/HARDCOVER.md).
 | Credentials, OAuth and sync | [Hardcover](docs/HARDCOVER.md) |
 | Architecture and data boundaries | [Project overview](docs/PROJECT_OVERVIEW.md) |
 | Brief authority/lifecycle reference | [Roles and lifecycle](docs/ROLES_AND_LIFECYCLE.md) |
-
-The public V1 source includes runtime code, production migrations, source-build
-configuration and these guides. The full development test suite, demo seeder and
-internal validation tools remain in the development workspace, not this public
-package. Public CI checks source configuration, migrations and container builds;
-it does not claim to run the private development regression suite.

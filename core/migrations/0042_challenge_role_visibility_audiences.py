@@ -44,7 +44,6 @@ class Migration(migrations.Migration):
     dependencies = [("core", "0041_challenge_competition_visibility")]
 
     operations = [
-        migrations.RunPython(migrate_visibility_audiences, restore_previous_audiences),
         migrations.AlterField(
             model_name="challengemonth",
             name="team_standings_visibility",
@@ -75,4 +74,7 @@ class Migration(migrations.Migration):
                 max_length=14,
             ),
         ),
+        # Widen both columns before writing role names longer than 12 characters.
+        # On reversal, restore the shorter legacy values before narrowing them.
+        migrations.RunPython(migrate_visibility_audiences, restore_previous_audiences),
     ]
