@@ -17,6 +17,17 @@ Readers' libraries. Platform Owner setup cannot impersonate Readers, reveal thei
 tokens or enable their consent. Group credential editing requires the existing
 Group Owner/Moderator/Platform Owner authority; Host/Reader status alone does not grant it.
 
+## Group OAuth assessment for v1.0.1
+
+Group catalog access retains its scoped token. The current Reader OAuth flow binds
+consent, callbacks, refresh, disconnect and sync eligibility to a Reader account.
+Reusing it for a Group would require a separate Group authorization lifecycle,
+permission checks, catalog-only scopes, ownership/reauthorization rules and tests.
+That is a new integration feature, not a patch-level substitution. OAuth could
+reduce manual token renewal, but does not add needed catalog functionality here.
+A Group OAuth design may be considered for v1.1; it is not implemented or required
+for v1.0.1. Reader credentials and library consent remain Reader-owned.
+
 ## Configure this installation's OAuth app
 
 Each installation brings its own Developer App; Northbound has no shared hosted

@@ -109,3 +109,5 @@ See [Hardcover setup and operations](docs/HARDCOVER.md).
 | Credentials, OAuth and sync | [Hardcover](docs/HARDCOVER.md) |
 | Architecture and data boundaries | [Project overview](docs/PROJECT_OVERVIEW.md) |
 | Brief authority/lifecycle reference | [Roles and lifecycle](docs/ROLES_AND_LIFECYCLE.md) |
+
+Patch details and acceptance coverage: [v1.0.1 release notes](docs/RELEASE_NOTES.md).

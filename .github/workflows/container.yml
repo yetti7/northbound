@@ -87,14 +87,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Select latest image tag
+        if: github.event_name != 'pull_request'
+        id: image-tags
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Preserve main publication; only exact stable release tags promote latest.
+          publish_latest=false
+          if [[ "$REF_TYPE" == "branch" && "$REF_NAME" == "main" ]] ||
+             [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            publish_latest=true
+          fi
+          echo "latest=$publish_latest" >> "$GITHUB_OUTPUT"
+
       - name: Generate image metadata
         if: github.event_name != 'pull_request'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # Disable automatic latest for tag events (including prereleases).
+          flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ steps.image-tags.outputs.latest }}
             type=ref,event=tag
             type=sha
 
