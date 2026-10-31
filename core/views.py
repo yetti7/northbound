@@ -5017,6 +5017,9 @@ def challenge_register(request, group_slug, month_pk):
     existing_tbr = getattr(existing, "personal_tbr", None) if existing else None
     locked_tbr = existing_tbr if existing_tbr and existing_tbr.confirmed_at else None
     draft_key = f"challenge-registration-draft:{request.user.pk}:{month.pk}"
+    # A failed edit must not leave an older summary available for confirmation.
+    if request.method == "POST":
+        request.session.pop(draft_key, None)
     stored_draft = request.session.get(draft_key) if request.method == "GET" else None
     form_data = _registration_draft_querydict(stored_draft.get("registration", {})) if stored_draft else None
     form = ChallengeRegistrationForm(

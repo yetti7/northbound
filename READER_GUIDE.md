@@ -193,6 +193,14 @@ TBR means your planned “to be read” list for this Challenge. It is optional 
 5. **Confirm Registration locks the list**, including an empty one.
 6. Later open **Personal TBR** for progress and submit finished books normally.
 
+Before confirmation, **Remove** excludes a book from the saved TBR and the
+remaining selections keep consecutive positions. Check **Registration Summary**
+before **Confirm Registration**. A shorter list is allowed, with the existing
+nine-book bonus warning. Invalid edits must be corrected and reviewed again;
+you cannot confirm an older summary after a failed edit. This does not unlock
+an already confirmed TBR or remove protected history.
+
+
 Search results and selected rows show cover thumbnails; missing or unavailable
 artwork uses a placeholder. A selected Hardcover edition keeps its artwork when
 you save. For a manual book, you may enter an HTTP or HTTPS image URL in
@@ -208,7 +216,9 @@ Unlike submission/BOTM search, TBR catalog search uses your **personal** connect
 ### Ask staff for TBR assistance
 
 If you need help, Group Owners and Moderators can manage Challenge TBRs in their
-Group. Hosts and Floaters can help within their assigned Challenge; Team Leaders
+Group. Platform Owners can help across all Groups and Challenges without Group
+membership or a staff assignment. Hosts and Floaters can help within their assigned
+Challenge; Team Leaders
 can help only Readers currently on their own team. They use **Manage TBR** to add,
 remove, replace or reorder selections, including protected corrections after your
 normal editing lock. Books with match or award history must keep their selection

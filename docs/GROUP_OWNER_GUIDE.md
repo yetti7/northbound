@@ -230,7 +230,9 @@ that reopening an answer-editing window will unlock their confirmed list.
 
 You and Group Moderators can use **Challenge Participants → Manage TBR** or the
 Reader's Participant Detail to help with an existing Challenge enrollment, without
-a Host assignment. Hosts and Floaters can help throughout their assigned Challenge;
+a Host assignment. Platform Owners can help any Reader across all Groups and
+Challenges without membership or staffing, using the same protected editor.
+Hosts and Floaters can help throughout their assigned Challenge;
 Team Leaders are restricted to Readers currently on their own team.
 
 **Save TBR** keeps an incomplete list as a draft; **Save & Complete TBR** requires
