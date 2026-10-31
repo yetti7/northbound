@@ -5257,6 +5257,10 @@ def _personal_tbr_catalog_response(request, token):
 
 
 def _prepare_personal_tbr_edition(token, selected):
+    # TBR needs the selected edition's artwork, not a work-level cache that
+    # another edition (including an audiobook's scoring edition) can overwrite.
+    selected, _cached = lookup_edition(token, selected["edition_id"], refresh=True)
+    cover_url = selected.get("cover_url") or ""
     scoring, _method = resolve_scoring_edition(token, selected)
     if not scoring:
         return {"manual_required": True, "message": "Hardcover does not have a usable page count for this edition. Continue with manual entry."}
@@ -5264,7 +5268,7 @@ def _prepare_personal_tbr_edition(token, selected):
     scoring_record = CatalogEdition.objects.get(provider="hardcover", provider_edition_id=scoring["edition_id"])
     selected["pages"] = scoring["pages"]
     selected["catalog_selection"] = signing.dumps(
-        {"selected": selected_record.pk, "scoring": scoring_record.pk},
+        {"selected": selected_record.pk, "scoring": scoring_record.pk, "cover_url": cover_url},
         salt="northbound.personal-tbr-selection",
     )
     return {"result": selected}
@@ -6179,6 +6183,8 @@ def staff_challenge_tbr(request, group_slug, month_pk, pk):
             initial.append({
                 "title_snapshot": book.title_snapshot, "author_snapshot": book.author_snapshot,
                 "page_count_snapshot": book.page_count_snapshot, "ORDER": book.position,
+                "cover_url_snapshot": book.cover_url_snapshot,
+                "catalog_cover_locked": bool(book.catalog_book_id),
                 "existing_selection": signing.dumps({"book": book.pk}, salt="staff-tbr-existing"),
             })
     formset = StaffChallengeTbrBookFormSet(

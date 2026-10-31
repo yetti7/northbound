@@ -377,7 +377,20 @@ account settings or the Reader's Hardcover credentials.
 
 Use **Add Book**, **Move Up**, **Move Down** and **Remove** to organize up to nine
 books. Search Hardcover to add or replace a selection, or enter **Title** and
-**Author** manually; **Page Count (Optional)** may be blank.
+**Author** manually; **Page Count (Optional)** and **Cover URL (Optional)** may be blank.
+
+Hardcover search results and selected TBR rows show cover thumbnails, including
+saved artwork when staff reopen **Manage TBR**. Missing or unavailable images use
+Northbound's usual placeholder. Selecting a Hardcover edition retains that
+edition's artwork when saved, even if a different edition supplies scoring pages;
+existing saved cover snapshots are preserved.
+
+For a manual book, **Cover URL (Optional)** accepts an HTTP or HTTPS image URL.
+Leave it blank to keep the placeholder; older entries without covers still work.
+The URL is validated, but Northbound does not upload images or fetch them on the
+server. Your browser loads the preview. Catalog artwork is supplied by the signed
+selection rather than an editable manual cover override.
+
 
 - **Save TBR** saves the current selections without finalizing an incomplete list.
 - **Save & Complete TBR** finalizes an incomplete list only when all nine selections

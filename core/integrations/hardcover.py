@@ -162,11 +162,11 @@ def _edition_payload(edition):
     }
 
 
-def lookup_edition(token, edition_id):
+def lookup_edition(token, edition_id, *, refresh=False):
     edition_id = str(int(edition_id))
     fresh_after = timezone.now() - EDITION_CACHE_TTL
     cached = CatalogEdition.objects.select_related("book").filter(provider="hardcover", provider_edition_id=edition_id, refreshed_at__gte=fresh_after).first()
-    if cached:
+    if cached and not refresh:
         return _edition_payload(cached), True
     item = execute_graphql(token, EDITION_QUERY, {"id": int(edition_id)}).get("editions_by_pk")
     if not item:

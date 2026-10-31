@@ -12,7 +12,8 @@ reading tracker and does not import personal reading history.
 - Accounts and multiple Groups with Group Owner, Moderator and Member authority.
 - Challenge registration and lifecycle, teams, Hosts, Team Leaders and Floaters.
 - Completed-book submissions and review, Themes, Book of the Month and Personal TBR.
-- Staff-assisted Challenge TBR planning and protected corrections through Manage TBR.
+- Staff-assisted Challenge TBR planning and protected corrections through Manage TBR,
+  with cover previews, optional manual cover URLs and preserved edition artwork.
 - Manual Rewards / Games, checkpoints, and team/participant reporting, keeping
   original submissions, approved base pages and reward adjustments distinct.
 - Platform Administration, audit history, controlled recovery, and SQLite backups/restores.

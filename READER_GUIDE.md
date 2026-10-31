@@ -187,11 +187,19 @@ Read a listed book and submit it normally. A qualifying approved completion can 
 TBR means your planned “to be read” list for this Challenge. It is optional when enabled.
 
 1. While registering, in **Personal TBR**, use **Search Hardcover** with your own personal connection, or **Enter manually**.
-2. Manual books need **Title** and **Author**; **Page Count (Optional)** can be blank.
+2. Manual books need **Title** and **Author**; **Page Count (Optional)** and **Cover URL (Optional)** can be blank.
 3. Add up to nine books using **Add Book**. Organize with **Move Up**, **Move Down**, **Remove**.
 4. On Registration Summary, check the list and bonus warnings; **Back to Edit** before confirmation if necessary.
 5. **Confirm Registration locks the list**, including an empty one.
 6. Later open **Personal TBR** for progress and submit finished books normally.
+
+Search results and selected rows show cover thumbnails; missing or unavailable
+artwork uses a placeholder. A selected Hardcover edition keeps its artwork when
+you save. For a manual book, you may enter an HTTP or HTTPS image URL in
+**Cover URL (Optional)**. The URL is validated and your browser loads the preview;
+there are no image uploads or server-side image downloads. Existing entries
+without cover URLs continue to work.
+
 
 A confirmed empty list earns no TBR rewards. Fewer than nine books can still earn each qualifying per-book reward; completing a shorter list does not earn the **Full 9-Book** bonus. That requires nine registered books and all nine qualifying completions. Answer editing and rejoining do not unlock the list.
 

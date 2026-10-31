@@ -16,8 +16,32 @@
     title: card.querySelector('input[name$="-title_snapshot"]').value,
     author: card.querySelector('input[name$="-author_snapshot"]').value,
   });
+  function previewCover(container, url, title) {
+    const image = container.querySelector('[data-tbr-cover-image]');
+    const placeholder = container.querySelector('[data-tbr-cover-placeholder]');
+    placeholder.textContent = (title.trim()[0] || '?').toUpperCase();
+    image.alt = `Cover of ${title || 'selected book'}`;
+    let safeUrl = '';
+    try {
+      const parsed = new URL(url);
+      if (['http:', 'https:'].includes(parsed.protocol)) safeUrl = parsed.href;
+    } catch (_) {}
+    if (image.dataset.coverUrl !== safeUrl) {
+      image.dataset.coverUrl = safeUrl;
+      image.hidden = !safeUrl;
+      placeholder.hidden = Boolean(safeUrl);
+      image.onerror = () => { image.hidden = true; placeholder.hidden = false; };
+      if (safeUrl) image.src = safeUrl;
+      else image.removeAttribute('src');
+    }
+  }
   function sync() {
     const active = cards();
+    active.forEach((card) => {
+      const cover = card.querySelector('input[name$="-cover_url_snapshot"]');
+      cover.readOnly = Boolean(card.querySelector('input[name$="-catalog_selection"]').value) || card.dataset.catalogCoverLocked === 'true';
+      previewCover(card, cover.value, card.querySelector('input[name$="-title_snapshot"]').value);
+    });
     active.forEach((card, index) => {
       card.querySelector('[data-tbr-number]').textContent = index + 1;
       card.querySelector('input[name$="-ORDER"]').value = index + 1;
@@ -82,12 +106,17 @@
       if (!response.ok || !payload.ok) throw new Error(payload.message || 'Hardcover search failed.');
       return payload;
     }
-    function buttonCard(title, details, label, handler) {
+    function buttonCard(title, details, label, handler, coverUrl = '') {
       const card = document.createElement('div'); card.className = 'card';
       const heading = document.createElement('h3'); heading.textContent = title || 'Untitled';
       const copy = document.createElement('p'); copy.textContent = details;
       const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label; button.addEventListener('click', handler);
-      card.append(heading, copy, button); return card;
+      const cover = document.createElement('div'); cover.className = 'book-cover-frame tbr-cover-preview';
+      const image = document.createElement('img'); image.dataset.tbrCoverImage = ''; image.hidden = true;
+      const placeholder = document.createElement('div'); placeholder.className = 'botm-cover-placeholder';
+      placeholder.dataset.tbrCoverPlaceholder = ''; placeholder.setAttribute('aria-hidden', 'true');
+      cover.append(image, placeholder); card.append(cover, heading, copy, button);
+      previewCover(cover, coverUrl, title || ''); return card;
     }
     function applyEditionResult(result) {
       const everyCard = allCards();
@@ -106,11 +135,13 @@
       destinationCard.querySelector('input[name$="-title_snapshot"]').value = result.title || '';
       destinationCard.querySelector('input[name$="-author_snapshot"]').value = result.author || '';
       destinationCard.querySelector('input[name$="-page_count_snapshot"]').value = result.pages || '';
+      destinationCard.querySelector('input[name$="-cover_url_snapshot"]').value = result.cover_url || '';
+      destinationCard.dataset.catalogCoverLocked = 'false';
       results.replaceChildren(); searchInput.value = ''; sync();
       const position = cards().indexOf(destinationCard) + 1;
       resetToGlobal(destination.kind === 'add' ? `Hardcover edition added as Book ${position}.` : `Book ${position} updated from Hardcover.`);
     }
-    async function showEditions(bookId) {
+    async function showEditions(bookId, bookCoverUrl = '') {
       const payload = await request('editions', {book_id: bookId}); results.replaceChildren();
       payload.editions.forEach((edition) => results.append(buttonCard(edition.title, [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · '), 'Use Edition', async () => {
         try {
@@ -118,7 +149,7 @@
           if (selected.manual_required) { status.textContent = selected.message; return; }
           applyEditionResult(selected.result);
         } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }
-      })));
+      }, bookCoverUrl)));
       status.textContent = payload.editions.length ? 'Select an edition.' : 'No editions found. Manual entry remains available.';
     }
     catalog.querySelector('[data-tbr-search]').addEventListener('click', async () => {
@@ -130,14 +161,14 @@
           status.textContent = payload.message;
         } else if (payload.lookup_type === 'book') {
           status.textContent = 'Hardcover book found. Select an edition.';
-          await showEditions(payload.result.book_id);
+          await showEditions(payload.result.book_id, payload.result.cover_url);
         } else if (payload.lookup_type === 'edition') {
           const edition = payload.result;
           const details = [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · ');
-          results.append(buttonCard(edition.title, details, 'Use Edition', () => applyEditionResult(edition)));
+          results.append(buttonCard(edition.title, details, 'Use Edition', () => applyEditionResult(edition), edition.cover_url));
           status.textContent = 'Exact Hardcover edition found. Select Use Edition to continue.';
         } else {
-          payload.results.forEach((book) => results.append(buttonCard(book.title, book.author || '', 'View Editions', () => showEditions(book.book_id))));
+          payload.results.forEach((book) => results.append(buttonCard(book.title, book.author || '', 'View Editions', () => showEditions(book.book_id, book.cover_url), book.cover_url)));
           status.textContent = payload.results.length ? 'Select a book to view its editions.' : 'No matches found. Manual entry remains available.';
         }
       } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }

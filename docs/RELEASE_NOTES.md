@@ -1,5 +1,21 @@
 # Release notes
 
+## v1.0.4 — October 31, 2026
+
+### Challenge TBR cover previews
+
+- Readers and authorized staff can see cover thumbnails in Hardcover search
+  results and TBR selection/editing rows, including previously saved covers.
+- Manual books support an optional HTTP/HTTPS **Cover URL**. Existing entries
+  without artwork still work, and missing or unavailable images use placeholders.
+  No image upload is required.
+- New Hardcover selections retain the chosen edition's artwork when saved,
+  including when another edition supplies scoring pages. Existing saved cover
+  snapshots are preserved.
+
+No database migration is required. Challenge permissions, registration behavior,
+scoring, historical awards and Hardcover synchronization are unchanged.
+
 ## v1.0.3 — October 31, 2026
 
 ### Staff-assisted Challenge TBR management
