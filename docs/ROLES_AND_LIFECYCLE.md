@@ -7,7 +7,7 @@ operations start with [Self-hosting](SELF_HOSTING.md).
 
 | Role | Scope | Main capabilities |
 |---|---|---|
-| Platform owner | Entire installation | Unrestricted installation administration, including Challenge operations and review when needed, without implicit Group membership, staffing, participation, or scoring |
+| Platform owner | Entire installation | Unrestricted installation administration, including Challenge operations, review and global Challenge TBR management without Group membership or staffing; no implicit Reader participation or scoring |
 | Group owner | One group | Group administration, permission management and Challenge TBR assistance for participants in their Group; Challenge operation follows the applicable authority rules |
 | Moderator | One group | Delegated group authority; current defaults cover Group announcements, Challenge TBR assistance within their Group and restricted team statistics, with per-member capability overrides; Challenge review requires staffing |
 | Member | One group | Persistent group membership; Reader participation is determined separately for each challenge month |

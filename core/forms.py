@@ -985,7 +985,8 @@ class PersonalTbrRegistrationBookForm(forms.Form):
 class BasePersonalTbrRegistrationBookFormSet(BaseFormSet):
     tbr_label = "Personal TBR"
     ordering_widget = forms.HiddenInput
-    deletion_widget = forms.HiddenInput
+    # Remove toggles checked state; a hidden text input never submits that state.
+    deletion_widget = forms.CheckboxInput(attrs={"hidden": True})
 
     def clean(self):
         super().clean()

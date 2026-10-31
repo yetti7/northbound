@@ -11,7 +11,7 @@
   let selectionMode = 'global-add';
   let target = null;
   const rowState = (card) => ({
-    occupied: Boolean(card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value),
+    occupied: !card.querySelector('input[name$="-DELETE"]').checked && Boolean(card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value),
     available: !card.hidden && !card.querySelector('input[name$="-DELETE"]').checked,
     title: card.querySelector('input[name$="-title_snapshot"]').value,
     author: card.querySelector('input[name$="-author_snapshot"]').value,
@@ -35,7 +35,27 @@
       else image.removeAttribute('src');
     }
   }
+  function revealCard(card) {
+    const deletion = card.querySelector('input[name$="-DELETE"]');
+    if (deletion.checked) {
+      // Reusing a removed slot creates a new selection, not a restored book.
+      card.querySelectorAll('input').forEach((input) => {
+        if (!input.name.endsWith('-DELETE') && !input.name.endsWith('-ORDER')) input.value = '';
+      });
+      card.dataset.catalogCoverLocked = 'false';
+    }
+    deletion.checked = false;
+    card.hidden = false;
+  }
   function sync() {
+    allCards().forEach((card) => {
+      const removed = card.querySelector('input[name$="-DELETE"]').checked;
+      if (removed) card.hidden = true;
+      // Deleted values must not trigger native validation on an invisible row.
+      card.querySelectorAll('input').forEach((input) => {
+        if (!input.name.endsWith('-DELETE')) input.disabled = removed;
+      });
+    });
     const active = cards();
     active.forEach((card) => {
       const cover = card.querySelector('input[name$="-cover_url_snapshot"]');
@@ -56,8 +76,7 @@
   add.addEventListener('click', () => {
     const card = [...list.querySelectorAll('[data-tbr-book][hidden]')][0];
     if (!card) return;
-    card.hidden = false;
-    card.querySelector('input[name$="-DELETE"]').checked = false;
+    revealCard(card);
     sync();
     card.querySelector('input[name$="-title_snapshot"]').focus();
   });
@@ -128,8 +147,7 @@
       if (destination.error) { status.textContent = {% if staff_tbr %}destination.message.replace(/Personal TBR/g, 'Challenge TBR'){% else %}destination.message{% endif %}; return; }
       const destinationCard = everyCard[destination.index];
       if (destination.kind === 'add') {
-        destinationCard.hidden = false;
-        destinationCard.querySelector('input[name$="-DELETE"]').checked = false;
+        revealCard(destinationCard);
       }
       destinationCard.querySelector('input[name$="-catalog_selection"]').value = result.catalog_selection;
       destinationCard.querySelector('input[name$="-title_snapshot"]').value = result.title || '';

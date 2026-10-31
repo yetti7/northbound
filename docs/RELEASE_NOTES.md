@@ -1,5 +1,22 @@
 # Release notes
 
+## v1.0.5 — October 31, 2026
+
+### Challenge TBR access and registration fixes
+
+- Platform Owners can now manage any Reader's Challenge TBR across all Groups
+  and Challenges without Group membership or a Challenge staff assignment.
+  **Manage TBR** is available on participant lists and profiles.
+- Removing a book before confirming registration now removes it from the saved
+  TBR. Remaining selections retain their correct order and positions, and reused
+  slots start empty instead of restoring a removed book.
+- Invalid registration edits cannot confirm an older saved summary. Correct the
+  errors and review the updated registration before confirming.
+
+Existing Reader locks, protected history, role scopes, nine-book completion
+requirements and Hardcover credential isolation remain in place. No database
+migration is required; Hardcover synchronization is unchanged.
+
 ## v1.0.4 — October 31, 2026
 
 ### Challenge TBR cover previews

@@ -291,8 +291,12 @@ def can_view_access_code(user, group):
 def can_manage_challenge_tbr(user, enrollment):
     """TBR-only staff authority; never grants registration or account access."""
     month = enrollment.month
+    if not user.is_authenticated or enrollment.participant.group_id != month.group_id:
+        return False
+    if user.is_superuser:
+        return True
     member = membership_for(user, month.group)
-    if not member or user.is_superuser or enrollment.participant.group_id != month.group_id:
+    if not member:
         return False
     if member.role in STAFF_ROLES:
         return True

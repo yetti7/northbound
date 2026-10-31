@@ -125,14 +125,19 @@ when an approved book has not contributed as expected.
 
 When TBR is enabled, open **Challenge Participants → Manage TBR**, or choose
 **Manage TBR** on the Reader's Participant Detail. The Reader must already have
-a Challenge enrollment. Group Owners and Moderators can help participants in
+a Challenge enrollment. Platform Owners can manage any Reader's Challenge TBR
+across all Groups and Challenges without Group membership or a staff assignment.
+They use the same **Manage TBR** actions on participant lists and profiles, with
+existing locks, protected-history restrictions and Hardcover credential isolation
+unchanged. Group Owners and Moderators can help participants in
 their Group without a Host assignment. Hosts and Floaters can help throughout
 their assigned Challenge; Team Leaders can help only Readers currently assigned
 to their own team. This permission does not grant access to registration answers,
 account settings or the Reader's Hardcover credentials.
 
 Use **Add Book**, **Move Up**, **Move Down** and **Remove** to organize up to nine
-books. Search Hardcover to add or replace a selection, or enter **Title** and
+books. Removed selections stay removed when saved, and remaining books retain
+consecutive positions. Search Hardcover to add or replace a selection, or enter **Title** and
 **Author** manually; **Page Count (Optional)** and **Cover URL (Optional)** may be blank.
 
 Hardcover search results and selected TBR rows show cover thumbnails, including
