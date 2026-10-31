@@ -362,3 +362,54 @@ class PersonalTbrRegistrationTests(TestCase):
         self.client.force_login(self.other_user)
         other_page = self.client.get(self.register_url)
         self.assertNotContains(other_page, "Private Draft")
+
+    def test_confirmation_with_blank_optional_number_saves_answer_and_tbr(self):
+        question = ChallengeSignupQuestion.objects.create(
+            month=self.month, wording="Optional planned pages",
+            question_type=ChallengeSignupQuestion.QuestionType.NUMBER,
+            is_required=False, position=1,
+        )
+        response = self.stage([{"title": "Synthetic TBR book", "author": "Writer"}], **{f"question_{question.pk}": ""})
+        self.assertContains(response, "Confirm Registration")
+        response = self.finalize()
+        self.assertRedirects(response, self.month.get_absolute_url(), fetch_redirect_response=False)
+        enrollment = MonthEnrollment.objects.get(month=self.month, participant=self.reader)
+        self.assertEqual(enrollment.signup_answers.get(question=question).value, "")
+        self.assertEqual(enrollment.personal_tbr.books.get().title_snapshot, "Synthetic TBR book")
+        self.assertIsNotNone(enrollment.personal_tbr.confirmed_at)
+
+    def test_confirmation_with_blank_optional_number_without_tbr(self):
+        self.month.tbr_enabled = False
+        self.month.save(update_fields=["tbr_enabled"])
+        question = ChallengeSignupQuestion.objects.create(
+            month=self.month, wording="Optional planned pages",
+            question_type=ChallengeSignupQuestion.QuestionType.NUMBER,
+            is_required=False, position=1,
+        )
+        self.assertContains(self.stage(), "Confirm Registration")
+        self.assertRedirects(self.finalize(), self.month.get_absolute_url(), fetch_redirect_response=False)
+        self.assertEqual(ChallengeSignupAnswer.objects.get(question=question).value, "")
+        self.assertFalse(PersonalTBR.objects.exists())
+
+    def test_confirmation_preserves_zero_and_decimal_numeric_answers(self):
+        questions = [ChallengeSignupQuestion.objects.create(
+            month=self.month, wording=f"Numeric answer {position}",
+            question_type=ChallengeSignupQuestion.QuestionType.NUMBER,
+            is_required=False, position=position,
+        ) for position in (1, 2)]
+        self.stage(**{f"question_{questions[0].pk}": "0", f"question_{questions[1].pk}": "12.50"})
+        self.assertRedirects(self.finalize(), self.month.get_absolute_url(), fetch_redirect_response=False)
+        self.assertEqual([ChallengeSignupAnswer.objects.get(question=question).value for question in questions], ["0", "12.50"])
+
+    def test_blank_required_numeric_answer_still_blocks_registration(self):
+        question = ChallengeSignupQuestion.objects.create(
+            month=self.month, wording="Required planned pages",
+            question_type=ChallengeSignupQuestion.QuestionType.NUMBER,
+            is_required=True, position=1,
+        )
+        response = self.stage(**{f"question_{question.pk}": ""})
+        self.assertContains(response, "This field is required.")
+        self.assertNotContains(response, ">Confirm Registration</button>")
+        self.assertRedirects(self.finalize(), self.register_url, fetch_redirect_response=False)
+        self.assertFalse(MonthEnrollment.objects.exists())
+        self.assertFalse(ChallengeSignupAnswer.objects.exists())

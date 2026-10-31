@@ -1,5 +1,17 @@
 # Release notes
 
+## v1.0.6 — October 31, 2026
+
+### Registration confirmation hotfix
+
+- Fixed an HTTP 500 when confirming registration with a blank optional numeric
+  signup answer. Blank answers now save correctly with or without Challenge TBR.
+- Zero and decimal answers retain their values; required numeric questions still
+  require an answer.
+
+No database migration is required. Existing registration requirements, TBR rules,
+permissions and Hardcover synchronization are unchanged.
+
 ## v1.0.5 — October 31, 2026
 
 ### Challenge TBR access and registration fixes

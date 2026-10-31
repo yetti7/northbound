@@ -905,8 +905,8 @@ class ChallengeRegistrationForm(forms.Form):
     def save_answers(self, enrollment):
         for question in self.questions:
             value = self.cleaned_data.get(f"question_{question.pk}", "")
-            if question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER and value is not None:
-                value = format(value, "f")
+            if question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER:
+                value = format(value, "f") if value is not None else ""
             ChallengeSignupAnswer.objects.update_or_create(
                 enrollment=enrollment,
                 question=question,
