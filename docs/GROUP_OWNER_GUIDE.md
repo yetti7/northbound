@@ -12,8 +12,8 @@ Start by opening your Group. **Group Settings**, **Access Code**, **Members** an
 ## Choose who helps you
 
 - **Moderators** are permanent Group members with an ongoing support role. Their
-  default extra authority is managing Group announcements; give them additional
-  Group permissions deliberately if they need them.
+  default extra authority includes Group announcements and staff-assisted Challenge
+  TBR management; give them additional Group permissions deliberately if needed.
 - **Hosts** run a particular Challenge. You assign them for that Challenge, without
   changing their permanent Group role.
 - **Readers** take part in Challenges and submit their completed books. Joining
@@ -228,6 +228,24 @@ The full-list bonus requires a nine-book list and qualifying completion of all
 nine books. Ask Hosts to oversee completion and review; do not promise Readers
 that reopening an answer-editing window will unlock their confirmed list.
 
+You and Group Moderators can use **Challenge Participants → Manage TBR** or the
+Reader's Participant Detail to help with an existing Challenge enrollment, without
+a Host assignment. Hosts and Floaters can help throughout their assigned Challenge;
+Team Leaders are restricted to Readers currently on their own team.
+
+**Save TBR** keeps an incomplete list as a draft; **Save & Complete TBR** requires
+nine valid selections and finalizes only that list, not Challenge registration or
+reading completion. Staff may correct selections after the Reader lock, but books
+with match or award history must retain their selection and position. Established
+awards and historical snapshots remain intact; conflicting edits are blocked.
+Changes identify their author and time.
+
+Staff search uses their own authorized Hardcover connection first, then the Group
+catalog connection, with manual entry always available. It never uses the Reader's
+private credentials or synchronizes reading activity to staff or Group accounts.
+This TBR-only permission does not grant registration-answer or account access.
+See the [staff TBR workflow](HOST_GUIDE.md#help-a-reader-manage-their-challenge-tbr).
+
 ### Games and manual rewards
 
 **Games** are Challenge-scoped activities with manual bonus-page rewards. Hosts
@@ -265,12 +283,13 @@ roster count, not a count of only those displayed by a filter. Check Base, Modif
 and Total separately when a score seems unexpected.
 
 **Detailed Reader access is narrower than score visibility.** Selecting a Reader
-from a Challenge report opens Participant Detail only for that Reader themselves
-or staff with review authority over them. Owner status alone is not sufficient.
-If you are also an assigned Host, that page brings together **Score**,
-**Planning / History**, **Registration**, Personal TBR, BOTM, Themes,
-**Submissions** and **Modifiers / Rewards**. Use that role when you need detailed
-review oversight; otherwise coordinate with the Host.
+from a Challenge report opens Participant Detail for that Reader, staff with
+scoped review authority, or staff authorized to manage that Reader's Challenge TBR.
+Owners and Moderators have the latter access; registration answers and scores
+still follow their separate permissions. Depending on those permissions, the page
+brings together **Score**, **Planning / History**, **Registration**, Personal TBR,
+BOTM, Themes, **Submissions** and **Modifiers / Rewards**. Detailed review work
+still requires the appropriate review assignment; otherwise coordinate with the Host.
 
 ### Progress checkpoints
 

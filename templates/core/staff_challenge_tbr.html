@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Manage TBR · {{ participant.display_name }}{% endblock %}
+{% block content %}
+<section class="form-card">
+<p class="eyebrow"><a href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">{{ month.name }} · {{ participant.display_name }}</a></p>
+<h1>Manage TBR</h1>
+<p class="lede">Help {{ participant.display_name }} with their Challenge TBR. Saving or completing this list does not complete registration.</p>
+{% if personal_tbr.confirmed_at %}<p class="notice">This TBR is complete. Staff may correct selections after the Reader lock. Books with match or award history must retain their selection and position.</p>{% endif %}
+{% if latest_change %}<p class="muted">Last updated by {{ latest_change.actor.get_username|default:"a former member" }} · {{ latest_change.created_at|date:"M j, Y, g:i a" }} · {% if latest_change.action == 'challenge_tbr.staff_updated' %}Staff-assisted{% else %}Reader-managed{% endif %}</p>{% endif %}
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<form method="post" class="stacked-form" data-tbr-registration>{% csrf_token %}<input type="hidden" name="version" value="{{ version }}">
+{% include 'core/includes/challenge_tbr_fields.html' %}
+<div class="action-row"><button class="button primary" name="action" value="save">Save TBR</button>{% if not personal_tbr.confirmed_at %}<button class="button" name="action" value="complete">Save &amp; Complete TBR</button>{% endif %}<a class="button" href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">Cancel</a></div>
+</form></section>
+{% include 'core/includes/challenge_tbr_script.html' %}
+{% endblock %}

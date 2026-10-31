@@ -1,0 +1,148 @@
+{% load static %}
+{% if tbr_formset and not locked_tbr %}<script src="{% static 'js/personal_tbr_registration_helpers.js' %}?v=1"></script><script>
+(function () {
+  const root = document.querySelector('[data-tbr-registration]');
+  const list = root?.querySelector('[data-tbr-list]');
+  if (!root || !list) return;
+  const cards = () => [...list.querySelectorAll('[data-tbr-book]:not([hidden])')];
+  const allCards = () => [...list.querySelectorAll('[data-tbr-book]')];
+  const count = root.querySelector('[data-tbr-count]');
+  const add = root.querySelector('[data-tbr-add]');
+  let selectionMode = 'global-add';
+  let target = null;
+  const rowState = (card) => ({
+    occupied: Boolean(card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value),
+    available: !card.hidden && !card.querySelector('input[name$="-DELETE"]').checked,
+    title: card.querySelector('input[name$="-title_snapshot"]').value,
+    author: card.querySelector('input[name$="-author_snapshot"]').value,
+  });
+  function sync() {
+    const active = cards();
+    active.forEach((card, index) => {
+      card.querySelector('[data-tbr-number]').textContent = index + 1;
+      card.querySelector('input[name$="-ORDER"]').value = index + 1;
+      card.querySelector('[data-tbr-up]').disabled = index === 0;
+      card.querySelector('[data-tbr-down]').disabled = index === active.length - 1;
+    });
+    const selected = active.filter((card) => card.querySelector('input[name$="-title_snapshot"]').value.trim() || card.querySelector('input[name$="-catalog_selection"]').value).length;
+    count.textContent = `${selected} / 9 books selected`;
+    add.disabled = selected >= 9;
+    [...list.querySelectorAll('[data-tbr-book][hidden]')].forEach((card) => list.appendChild(card));
+  }
+  add.addEventListener('click', () => {
+    const card = [...list.querySelectorAll('[data-tbr-book][hidden]')][0];
+    if (!card) return;
+    card.hidden = false;
+    card.querySelector('input[name$="-DELETE"]').checked = false;
+    sync();
+    card.querySelector('input[name$="-title_snapshot"]').focus();
+  });
+  list.addEventListener('input', sync);
+  list.addEventListener('click', (event) => {
+    const card = event.target.closest('[data-tbr-book]');
+    if (!card) return;
+    const active = cards();
+    const index = active.indexOf(card);
+    if (event.target.matches('[data-tbr-up]') && index > 0) list.insertBefore(card, active[index - 1]);
+    if (event.target.matches('[data-tbr-down]') && index < active.length - 1) list.insertBefore(active[index + 1], card);
+    if (event.target.matches('[data-tbr-remove]')) {
+      card.querySelector('input[name$="-DELETE"]').checked = true;
+      card.hidden = true;
+    }
+    if (event.target.matches('[data-tbr-search-target]')) {
+      selectionMode = 'row-replace';
+      target = card;
+      const status = root.querySelector('[data-tbr-catalog-status]');
+      const cancelTarget = root.querySelector('[data-tbr-cancel-target]');
+      if (status) status.textContent = `The selected edition will replace Book ${index + 1} only.`;
+      if (cancelTarget) cancelTarget.hidden = false;
+      root.querySelector('[data-tbr-catalog]')?.scrollIntoView({behavior: 'smooth'});
+    }
+    sync();
+  });
+  const catalog = root.querySelector('[data-tbr-catalog]');
+  if (catalog) {
+    const status = catalog.querySelector('[data-tbr-catalog-status]');
+    const results = catalog.querySelector('[data-tbr-catalog-results]');
+    const searchInput = catalog.querySelector('#tbr-catalog-search');
+    const cancelTarget = catalog.querySelector('[data-tbr-cancel-target]');
+    const csrf = root.querySelector('[name=csrfmiddlewaretoken]').value;
+    function resetToGlobal(message) {
+      selectionMode = 'global-add';
+      target = null;
+      cancelTarget.hidden = true;
+      if (message) status.textContent = message;
+    }
+    cancelTarget.addEventListener('click', () => resetToGlobal('The selected edition will be added as a new {% if staff_tbr %}Challenge TBR{% else %}Personal TBR{% endif %} book.'));
+    async function request(action, values) {
+      const body = new FormData(); body.append('action', action); body.append('csrfmiddlewaretoken', csrf);
+      Object.entries(values || {}).forEach(([key, value]) => body.append(key, value));
+      const response = await fetch(catalog.dataset.catalogUrl, {method: 'POST', body, credentials: 'same-origin'});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Hardcover search failed.');
+      return payload;
+    }
+    function buttonCard(title, details, label, handler) {
+      const card = document.createElement('div'); card.className = 'card';
+      const heading = document.createElement('h3'); heading.textContent = title || 'Untitled';
+      const copy = document.createElement('p'); copy.textContent = details;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label; button.addEventListener('click', handler);
+      card.append(heading, copy, button); return card;
+    }
+    function applyEditionResult(result) {
+      const everyCard = allCards();
+      const targetIndex = target ? everyCard.indexOf(target) : null;
+      const destination = window.NorthboundTbrSelection.resolveSelection(
+        everyCard.map(rowState), selectionMode, targetIndex,
+        {title: result.title || '', author: result.author || ''}
+      );
+      if (destination.error) { status.textContent = {% if staff_tbr %}destination.message.replace(/Personal TBR/g, 'Challenge TBR'){% else %}destination.message{% endif %}; return; }
+      const destinationCard = everyCard[destination.index];
+      if (destination.kind === 'add') {
+        destinationCard.hidden = false;
+        destinationCard.querySelector('input[name$="-DELETE"]').checked = false;
+      }
+      destinationCard.querySelector('input[name$="-catalog_selection"]').value = result.catalog_selection;
+      destinationCard.querySelector('input[name$="-title_snapshot"]').value = result.title || '';
+      destinationCard.querySelector('input[name$="-author_snapshot"]').value = result.author || '';
+      destinationCard.querySelector('input[name$="-page_count_snapshot"]').value = result.pages || '';
+      results.replaceChildren(); searchInput.value = ''; sync();
+      const position = cards().indexOf(destinationCard) + 1;
+      resetToGlobal(destination.kind === 'add' ? `Hardcover edition added as Book ${position}.` : `Book ${position} updated from Hardcover.`);
+    }
+    async function showEditions(bookId) {
+      const payload = await request('editions', {book_id: bookId}); results.replaceChildren();
+      payload.editions.forEach((edition) => results.append(buttonCard(edition.title, [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · '), 'Use Edition', async () => {
+        try {
+          const selected = await request('edition', {edition_id: edition.edition_id});
+          if (selected.manual_required) { status.textContent = selected.message; return; }
+          applyEditionResult(selected.result);
+        } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }
+      })));
+      status.textContent = payload.editions.length ? 'Select an edition.' : 'No editions found. Manual entry remains available.';
+    }
+    catalog.querySelector('[data-tbr-search]').addEventListener('click', async () => {
+      const query = searchInput.value.trim();
+      if (!query) { status.textContent = 'Enter a title, author, ISBN, or Hardcover link first.'; return; }
+      try {
+        const payload = await request('smart', {input: query}); results.replaceChildren();
+        if (payload.manual_required) {
+          status.textContent = payload.message;
+        } else if (payload.lookup_type === 'book') {
+          status.textContent = 'Hardcover book found. Select an edition.';
+          await showEditions(payload.result.book_id);
+        } else if (payload.lookup_type === 'edition') {
+          const edition = payload.result;
+          const details = [edition.format, edition.pages ? `${edition.pages} pages` : 'Page count unavailable'].filter(Boolean).join(' · ');
+          results.append(buttonCard(edition.title, details, 'Use Edition', () => applyEditionResult(edition)));
+          status.textContent = 'Exact Hardcover edition found. Select Use Edition to continue.';
+        } else {
+          payload.results.forEach((book) => results.append(buttonCard(book.title, book.author || '', 'View Editions', () => showEditions(book.book_id))));
+          status.textContent = payload.results.length ? 'Select a book to view its editions.' : 'No matches found. Manual entry remains available.';
+        }
+      } catch (error) { status.textContent = `${error.message} Manual entry remains available.`; }
+    });
+  }
+  sync();
+})();
+</script>{% endif %}

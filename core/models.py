@@ -2284,6 +2284,8 @@ AUDIT_ACTION_LABELS = {
     "participation.staff_reactivated": "Reader Reactivated by Staff",
     "participation.staff_removed": "Reader Removed by Staff",
     "challenge.registration_schema_updated": "Challenge Registration Schema Updated",
+    "challenge_tbr.staff_updated": "Challenge TBR Updated by Staff",
+    "challenge_tbr.reader_updated": "Challenge TBR Updated by Reader",
     "challenge.tbr_settings_updated": "Personal TBR Settings Updated",
     "challenge.progress_checkpoints_updated": "Challenge Progress Checkpoints Updated",
     "registration.answers_admin_corrected": "Registration Answers Administratively Corrected",

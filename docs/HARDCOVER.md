@@ -12,10 +12,26 @@ without it. This guide covers integration setup and operating constraints; use
 | Group | Shared catalog/search/metadata, including submission and BOTM lookup | Group-owned scoped API key with `read:catalog:data` and `read:catalog:search` |
 | Reader | That Reader's Personal TBR catalog lookup and optional personal library sync | OAuth recommended when configured; personal scoped PAT/API key remains supported |
 
-Reader work never falls back to a Group credential. Group connections cannot sync
-Readers' libraries. Platform Owner setup cannot impersonate Readers, reveal their
+Reader self-service TBR lookup and personal sync never fall back to a Group
+credential. Staff-assisted TBR search has the separate read-only fallback described
+below. Group connections cannot sync Readers' libraries. Platform Owner setup cannot impersonate Readers, reveal their
 tokens or enable their consent. Group credential editing requires the existing
 Group Owner/Moderator/Platform Owner authority; Host/Reader status alone does not grant it.
+
+## Staff-assisted Challenge TBR search
+
+In **Manage TBR**, authorized staff search with their own personal connection
+first. If it is unavailable, an existing authorized Group catalog connection may
+be used; otherwise they can enter books manually. The Reader need not connect
+Hardcover. Staff never use or see the Reader's private credentials, and this
+feature adds no connection-management screen or OAuth flow.
+
+These credentials are used only for catalog lookup in this workflow. **Save TBR**
+and **Save & Complete TBR** never enqueue reading synchronization, mark books read,
+update progress or copy reading activity to staff or Group Hardcover accounts.
+The Reader's existing personal sync remains separate, governed by their own
+connection, consent and forward-only eligibility rules. Completing a TBR does not
+complete registration or count as reading the books.
 
 ## Group OAuth assessment for v1.0.1
 

@@ -60,7 +60,9 @@ from .hardcover_oauth import (
 )
 from .hardcover_sync import make_existing_reader_events_due, reader_sync_capability, reader_sync_health
 from .health import health_response
-from .personal_tbr import confirm_personal_tbr, replace_draft_personal_tbr
+from .personal_tbr import confirm_personal_tbr, replace_draft_personal_tbr, save_staff_challenge_tbr, staff_tbr_version
+from .permissions import can_manage_challenge_tbr
+from .forms import StaffChallengeTbrBookFormSet
 from .personal_tbr_matching import adjudicate_match as adjudicate_personal_tbr_match
 from .personal_tbr_matching import synchronize_submission as synchronize_personal_tbr_submission
 from .personal_tbr_presentation import build_personal_tbr_reader_presentation
@@ -3321,7 +3323,7 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
     in_review_scope = bool(scope and (
         scope[0] == "challenge" or (team and team.pk in scope[1])
     ))
-    if not (in_review_scope or is_self):
+    if not (in_review_scope or is_self or can_manage_challenge_tbr(request.user, enrollment)):
         return HttpResponseForbidden("You may view only Readers in your Challenge review scope.")
 
     score_access = can_view_reader_scores(request.user, month, team=team, reader=participant)
@@ -3384,6 +3386,7 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
     return render(request, "core/challenge_participant_detail.html", {
         "month": month, "participant": participant, "enrollment": enrollment,
         "team": team, "challenge_role": challenge_role,
+        "can_manage_tbr": month.tbr_enabled and can_manage_challenge_tbr(request.user, enrollment),
         "can_view_discord_username": discord_access,
         "can_view_reader_scores": score_access, "score": score,
         "can_view_registration_answers": registration_access,
@@ -4843,6 +4846,7 @@ def month_participant_list(request, group_slug, month_pk):
             checkpoint_warnings.setdefault(result.participant_id, []).append(result)
     questions = list(month.signup_questions.all()) if planning_access else []
     for enrollment in enrollments:
+        enrollment.can_manage_tbr = month.tbr_enabled and can_manage_challenge_tbr(request.user, enrollment)
         enrollment.planning = planning_by_participant.get(enrollment.participant_id)
         enrollment.current_team_name = (
             enrollment.participant.current_month_team_assignments[0].team.name
@@ -5217,6 +5221,16 @@ def personal_tbr_catalog(request, group_slug, month_pk):
         return JsonResponse({"ok": False, "message": "A POST request is required."}, status=405)
     try:
         token = get_reader_hardcover_token(request.user)
+    except ReaderHardcoverUnavailable as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=503)
+    except (HardcoverConnectionError, HardcoverLinkError, TokenDecryptionError, TypeError, ValueError) as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=400)
+    return _personal_tbr_catalog_response(request, token)
+
+
+@sensitive_variables("token")
+def _personal_tbr_catalog_response(request, token):
+    try:
         action = request.POST.get("action")
         if action == "smart":
             payload = _smart_catalog_lookup(token, request.POST.get("input", ""))
@@ -6113,3 +6127,91 @@ def theme_edit(request, group_slug, month_pk, pk):
         messages.success(request, f"{theme.name} was updated.")
         return redirect("theme-list", group_slug=group_slug, month_pk=month_pk)
     return render(request, "core/form_page.html", {"form": form, "title": f"Edit {theme.name}", "eyebrow": theme.month.name})
+
+
+@sensitive_variables("token")
+def _staff_tbr_search_token(user, group):
+    # Search credentials are passed only to catalog read operations.
+    try:
+        return get_reader_hardcover_token(user)
+    except ReaderHardcoverUnavailable:
+        connection = HardcoverConnection.objects.filter(group=group, is_valid=True).first()
+        if connection:
+            return decrypt_token(connection.encrypted_token)
+        raise ReaderHardcoverUnavailable("No authorized search connection is available. Use manual entry.")
+
+
+def _staff_tbr_enrollment(group_slug, month_pk, pk):
+    return get_object_or_404(
+        MonthEnrollment.objects.select_related("month__group", "participant__user"),
+        month_id=month_pk, month__group__slug=group_slug, participant_id=pk,
+    )
+
+
+@login_required
+@sensitive_variables("token")
+def staff_challenge_tbr_catalog(request, group_slug, month_pk, pk):
+    enrollment = _staff_tbr_enrollment(group_slug, month_pk, pk)
+    if not can_manage_challenge_tbr(request.user, enrollment):
+        return JsonResponse({"ok": False, "message": "Challenge TBR staff authority is required."}, status=403)
+    if not enrollment.month.tbr_enabled:
+        return JsonResponse({"ok": False, "message": "Challenge TBR is disabled."}, status=409)
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "message": "A POST request is required."}, status=405)
+    try:
+        token = _staff_tbr_search_token(request.user, enrollment.month.group)
+    except (ReaderHardcoverUnavailable, TokenDecryptionError):
+        return JsonResponse({"ok": False, "message": "Search is unavailable. Use manual entry."}, status=503)
+    return _personal_tbr_catalog_response(request, token)
+
+
+@login_required
+def staff_challenge_tbr(request, group_slug, month_pk, pk):
+    enrollment = _staff_tbr_enrollment(group_slug, month_pk, pk)
+    if not can_manage_challenge_tbr(request.user, enrollment):
+        return HttpResponseForbidden("Challenge TBR staff authority is required.")
+    if not enrollment.month.tbr_enabled:
+        return HttpResponseForbidden("Challenge TBR is disabled.")
+    tbr = PersonalTBR.objects.filter(enrollment=enrollment).first()
+    initial = []
+    if tbr:
+        for book in tbr.books.all():
+            initial.append({
+                "title_snapshot": book.title_snapshot, "author_snapshot": book.author_snapshot,
+                "page_count_snapshot": book.page_count_snapshot, "ORDER": book.position,
+                "existing_selection": signing.dumps({"book": book.pk}, salt="staff-tbr-existing"),
+            })
+    formset = StaffChallengeTbrBookFormSet(
+        request.POST if request.method == "POST" else None, initial=initial,
+        prefix="tbr-books", form_kwargs={"enrollment_id": enrollment.pk},
+    )
+    error = ""
+    if request.method == "POST" and formset.is_valid():
+        action = request.POST.get("action")
+        try:
+            if action not in {"save", "complete"}:
+                raise ValidationError("Choose Save TBR or Save & Complete TBR.")
+            save_staff_challenge_tbr(
+                enrollment=enrollment, actor=request.user, books=formset.book_values(),
+                complete=action == "complete", version=request.POST.get("version", ""),
+            )
+        except ValidationError as exc:
+            error = "; ".join(exc.messages)
+        else:
+            messages.success(request, "Challenge TBR saved. Registration status is unchanged.")
+            return redirect("staff-challenge-tbr", group_slug=group_slug, month_pk=month_pk, pk=pk)
+    available = _reader_hardcover_is_available(request.user) or HardcoverConnection.objects.filter(
+        group=enrollment.month.group, is_valid=True,
+    ).exists()
+    latest = AuditEvent.objects.filter(
+        object_type="PersonalTBR", object_id=str(tbr.pk) if tbr else "",
+        action__in=["challenge_tbr.staff_updated", "challenge_tbr.reader_updated"],
+    ).select_related("actor").first()
+    return render(request, "core/staff_challenge_tbr.html", {
+        "month": enrollment.month, "participant": enrollment.participant, "tbr_formset": formset,
+        "staff_tbr": True, "tbr_enabled": True, "tbr_feature_enabled": True,
+        "reader_hardcover_available": available, "personal_tbr": tbr, "latest_change": latest,
+        "version": request.POST.get("version", "") if request.method == "POST" else staff_tbr_version(tbr),
+        "error": error,
+        "tbr_catalog_url": reverse("staff-challenge-tbr-catalog", args=[group_slug, month_pk, pk]),
+    })

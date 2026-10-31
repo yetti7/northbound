@@ -968,6 +968,7 @@ class PersonalTbrRegistrationBookForm(forms.Form):
 
 
 class BasePersonalTbrRegistrationBookFormSet(BaseFormSet):
+    tbr_label = "Personal TBR"
     ordering_widget = forms.HiddenInput
     deletion_widget = forms.HiddenInput
 
@@ -980,7 +981,7 @@ class BasePersonalTbrRegistrationBookFormSet(BaseFormSet):
             if form.cleaned_data and not form.cleaned_data.get("DELETE") and not form.cleaned_data.get("is_empty")
         ]
         if len(active) > 9:
-            raise forms.ValidationError("A Personal TBR may contain at most nine books.")
+            raise forms.ValidationError(f"A {self.tbr_label} may contain at most nine books.")
         identities = set()
         catalog_ids = set()
         for form in active:
@@ -989,12 +990,12 @@ class BasePersonalTbrRegistrationBookFormSet(BaseFormSet):
                 normalize_book_identity(form.cleaned_data["author_snapshot"]),
             )
             if identity in identities:
-                raise forms.ValidationError("The same title and author cannot appear twice on your Personal TBR.")
+                raise forms.ValidationError(f"The same title and author cannot appear twice on your {self.tbr_label}.")
             identities.add(identity)
             catalog_book = form.cleaned_data.get("catalog_book")
             if catalog_book:
                 if catalog_book.pk in catalog_ids:
-                    raise forms.ValidationError("The same Hardcover book cannot appear twice on your Personal TBR.")
+                    raise forms.ValidationError(f"The same Hardcover book cannot appear twice on your {self.tbr_label}.")
                 catalog_ids.add(catalog_book.pk)
 
     def book_values(self):
@@ -1027,6 +1028,43 @@ PersonalTbrRegistrationBookFormSet = formset_factory(
     max_num=9,
     validate_max=True,
 )
+
+
+class StaffChallengeTbrBookForm(PersonalTbrRegistrationBookForm):
+    existing_selection = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def __init__(self, *args, enrollment_id, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enrollment_id = enrollment_id
+
+    def clean(self):
+        cleaned = super().clean()
+        value = cleaned.get("existing_selection")
+        if value and not cleaned.get("catalog_selection") and not cleaned.get("is_empty"):
+            from .models import PersonalTBRBook
+            try:
+                data = signing.loads(value, salt="staff-tbr-existing")
+                book = PersonalTBRBook.objects.get(pk=data["book"], personal_tbr__enrollment_id=self.enrollment_id)
+            except (signing.BadSignature, KeyError, TypeError, PersonalTBRBook.DoesNotExist):
+                raise forms.ValidationError("The saved selection has changed. Reload this TBR.")
+            if all(cleaned.get(field) == getattr(book, field) for field in (
+                "title_snapshot", "author_snapshot", "page_count_snapshot",
+            )):
+                cleaned.update({field: getattr(book, field) for field in (
+                    "catalog_book", "catalog_edition", "cover_url_snapshot", "source_url_snapshot",
+                )})
+        return cleaned
+
+
+class BaseStaffChallengeTbrBookFormSet(BasePersonalTbrRegistrationBookFormSet):
+    tbr_label = "Challenge TBR"
+
+
+StaffChallengeTbrBookFormSet = formset_factory(
+    StaffChallengeTbrBookForm, formset=BaseStaffChallengeTbrBookFormSet,
+    extra=9, can_delete=True, can_order=True, max_num=9, validate_max=True,
+)
+
 
 
 class MonthThemeForm(forms.ModelForm):

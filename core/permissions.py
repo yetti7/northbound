@@ -286,3 +286,20 @@ def can_view_access_code(user, group):
     if group.access_code_visibility == group.AccessCodeVisibility.STAFF:
         return membership.role in STAFF_ROLES
     return membership.role == Membership.Role.OWNER
+
+
+def can_manage_challenge_tbr(user, enrollment):
+    """TBR-only staff authority; never grants registration or account access."""
+    month = enrollment.month
+    member = membership_for(user, month.group)
+    if not member or user.is_superuser or enrollment.participant.group_id != month.group_id:
+        return False
+    if member.role in STAFF_ROLES:
+        return True
+    scope = challenge_review_scope(user, month)
+    if not scope:
+        return False
+    return scope[0] == "challenge" or TeamAssignment.objects.filter(
+        month=month, participant=enrollment.participant,
+        team_id__in=scope[1], ended_at__isnull=True,
+    ).exists()
