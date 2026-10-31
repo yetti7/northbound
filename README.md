@@ -12,6 +12,7 @@ reading tracker and does not import personal reading history.
 - Accounts and multiple Groups with Group Owner, Moderator and Member authority.
 - Challenge registration and lifecycle, teams, Hosts, Team Leaders and Floaters.
 - Completed-book submissions and review, Themes, Book of the Month and Personal TBR.
+- Staff-assisted Challenge TBR planning and protected corrections through Manage TBR.
 - Manual Rewards / Games, checkpoints, and team/participant reporting, keeping
   original submissions, approved base pages and reward adjustments distinct.
 - Platform Administration, audit history, controlled recovery, and SQLite backups/restores.
@@ -86,8 +87,13 @@ first. Do not remove the persistent volume.
 
 A Group's scoped API key powers shared catalog/search/metadata workflows.
 A Reader's separate OAuth connection—or personal scoped API key—powers their
-Personal TBR lookup and optional personal synchronization. Neither falls back to
-the other. Each installation brings its own OAuth Developer App.
+Personal TBR lookup and optional personal synchronization. Reader self-service
+lookup and sync never fall back to the Group connection. In staff-assisted
+**Manage TBR**, search prefers the acting staff member's connection, then the
+Group catalog connection; manual entry remains available. Staff never use the
+Reader's private credentials. TBR saves and completion do not trigger reading
+sync or write activity to staff or Group Hardcover accounts. Each installation
+brings its own OAuth Developer App.
 
 **Connection is not consent.** Sync defaults OFF. Only new eligible approvals after
 the Reader enables consent may synchronize; date sync also requires completed-book
@@ -110,4 +116,4 @@ See [Hardcover setup and operations](docs/HARDCOVER.md).
 | Architecture and data boundaries | [Project overview](docs/PROJECT_OVERVIEW.md) |
 | Brief authority/lifecycle reference | [Roles and lifecycle](docs/ROLES_AND_LIFECYCLE.md) |
 
-Patch details and acceptance coverage: [v1.0.1 release notes](docs/RELEASE_NOTES.md).
+Patch details and acceptance coverage: [release notes, including the v1.0.3 draft](docs/RELEASE_NOTES.md).

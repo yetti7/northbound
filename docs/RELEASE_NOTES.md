@@ -1,5 +1,28 @@
 # Release notes
 
+## v1.0.3 — October 31, 2026
+
+### Staff-assisted Challenge TBR management
+
+- Group Owners and Moderators can help participants in their Group plan their
+  Challenge TBR. Hosts and Floaters can help within their assigned Challenge;
+  Team Leaders can help only Readers currently on their own team.
+- **Manage TBR** lets staff add, remove, replace and reorder selections, search
+  Hardcover or enter books manually. **Save TBR** preserves an incomplete list;
+  **Save & Complete TBR** finalizes nine valid selections without completing
+  Challenge registration or bypassing its requirements.
+- Staff can make protected corrections after the Reader's editing lock. Books
+  with match or award history keep their selection and position; conflicting
+  changes are blocked. Earned bonuses and historical results are preserved,
+  and changes show who last updated the list.
+- Readers do not need a Hardcover connection for staff assistance. Staff search
+  uses their own connection first, then the Group catalog connection, with
+  manual fallback. Reader credentials stay private. TBR changes never sync
+  reading activity to staff or Group Hardcover accounts; the Reader's own
+  optional, consented forward-only sync remains separate.
+
+No database migration is required for this feature.
+
 ## v1.0.2 — Draft, unreleased
 
 Prepared locally for review. No release, tag, image publication or deployment is

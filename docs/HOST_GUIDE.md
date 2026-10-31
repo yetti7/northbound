@@ -111,14 +111,53 @@ In **Signup Questions → Personal TBR**:
 3. Choose **Save Personal TBR Settings**.
 
 Readers may prepare up to nine books during registration. The list locks when
-registration is confirmed. An answer-editing window does **not** unlock the TBR,
-and a Host cannot simply rewrite the confirmed list for a Reader.
+registration is confirmed. An answer-editing window does **not** unlock the TBR
+for the Reader. Authorized staff can make protected corrections through
+**Manage TBR**, as described below.
 
 Approved qualifying completions earn the configured per-book bonus. The full-list
 bonus requires a nine-book list and completion of all nine; a shorter completed
 list does not earn that bonus. View the Reader's list, pending/completed states
 and earned modifiers in Participant Detail. See [resolve completion matches](#resolve-botm-and-personal-tbr-matches)
 when an approved book has not contributed as expected.
+
+### Help a Reader manage their Challenge TBR
+
+When TBR is enabled, open **Challenge Participants → Manage TBR**, or choose
+**Manage TBR** on the Reader's Participant Detail. The Reader must already have
+a Challenge enrollment. Group Owners and Moderators can help participants in
+their Group without a Host assignment. Hosts and Floaters can help throughout
+their assigned Challenge; Team Leaders can help only Readers currently assigned
+to their own team. This permission does not grant access to registration answers,
+account settings or the Reader's Hardcover credentials.
+
+Use **Add Book**, **Move Up**, **Move Down** and **Remove** to organize up to nine
+books. Search Hardcover to add or replace a selection, or enter **Title** and
+**Author** manually; **Page Count (Optional)** may be blank.
+
+- **Save TBR** saves the current selections without finalizing an incomplete list.
+- **Save & Complete TBR** finalizes an incomplete list only when all nine selections
+  are valid. It is not shown once the TBR is complete. This completes the planned
+  list, not the reading of those books or the full-list reading bonus.
+
+Neither action completes Challenge registration, supplies required answers,
+reactivates participation or bypasses registration requirements. Readers still
+submit finished books through the usual submission and review process.
+
+Staff can correct selections after the normal Reader editing lock. Books with
+match or award history must retain their selection and position; conflicting
+changes are blocked with an explanation. Completed submissions, approved pages,
+earned bonuses and historical checkpoint snapshots are preserved. The editor
+shows who last updated the list and whether the change was staff-assisted or
+Reader-managed.
+
+Search first uses the acting staff member's authorized personal Hardcover
+connection, then an available authorized Group catalog connection. Manual entry
+remains available when neither works. The Reader need not connect Hardcover,
+and staff never use or see that Reader's private credentials. Search connections
+are read-only for this feature: saving or completing a TBR never queues reading
+sync or writes reading activity to staff or Group Hardcover accounts. The Reader's
+own connection, consent and forward-only synchronization remain separate.
 
 ## During registration: plan participants and teams
 
@@ -508,7 +547,8 @@ An active Floater must stop that assignment before competing.
 
 **A Reader cannot edit registration.** Check their chosen answer-editing policy
 and registration time. Host access to answers does not let you change them.
-Confirmed Personal TBR is locked separately.
+Confirmed Personal TBR is locked separately for the Reader. Use **Manage TBR**
+for permitted staff assistance; this does not grant answer-editing rights.
 
 **A Team Leader cannot review someone.** Confirm both are on the appropriate
 current team, the leader's assignment is current, and review is still Active or
@@ -524,9 +564,11 @@ list; BOTM full completion uses its configured set. Check active modifiers rathe
 than assuming a matching title alone guarantees an award.
 
 **Hardcover search fails.** Ask the Group connection manager to check shared
-catalog access, or use manual entry. Personal TBR lookup and personal library
-sync use the Reader's connection; the Reader must handle their own connection
-problem. Their sync failure does not require reversing a Northbound approval.
+catalog access, or use manual entry. Reader self-service TBR lookup and personal
+library sync use the Reader's connection. Staff **Manage TBR** search instead
+uses the acting staff member's connection, then the Group catalog connection,
+with manual fallback. None of these TBR operations triggers reading sync. A
+Reader's sync failure does not require reversing a Northbound approval.
 
 **A scheduled change did not give the expected result.** Check the displayed
 Group timezone, time, action checkbox and starting stage. Publishing Upcoming

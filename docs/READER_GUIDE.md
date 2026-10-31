@@ -124,6 +124,26 @@ Partial completion still counts for those individual bonuses. An additional
 full-list reward, when offered, requires nine registered books and completion of
 all nine. Registration-answer editing and re-registering do not unlock the list.
 
+### Ask staff for TBR assistance
+
+If you need help, Group Owners and Moderators can manage Challenge TBRs in their
+Group. Hosts and Floaters can help within their assigned Challenge; Team Leaders
+can help only Readers currently on their own team. They use **Manage TBR** to add,
+remove, replace or reorder selections, including protected corrections after your
+normal editing lock. Books with match or award history must keep their selection
+and position; edits that conflict with that history are blocked.
+
+Staff can **Save TBR** without finalizing it, or **Save & Complete TBR** when all
+nine selections are valid. Completing the TBR does not complete Challenge
+registration, answer required questions or mean you have read the books. Submit
+finished books normally. Your usual self-service editing lock remains in place.
+
+You do not need to connect Hardcover for staff assistance. Staff search uses their
+own authorized connection, then the Group catalog connection, or manual entry.
+They never use your private Hardcover credentials. TBR changes never synchronize
+reading activity to staff or Group accounts; your own optional, consented,
+forward-only sync stays separate.
+
 ## Read BOTM books and claim Themes
 
 ### Book of the Month
@@ -391,7 +411,8 @@ you were removed or your participation needs checking.
 
 **I cannot edit my answers or TBR.** Answer windows are Challenge-specific.
 Confirmed TBR is locked even if answers remain editable; re-registering does not
-reset either lock.
+reset either lock. Ask authorized staff for protected TBR assistance through
+**Manage TBR**; this does not unlock registration answers.
 
 **Hardcover cannot find my book.** Try the correct title/author/ISBN or edition
 link, then use manual entry if needed. Submission search and personal TBR search
