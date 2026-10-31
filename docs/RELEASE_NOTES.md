@@ -1,5 +1,63 @@
 # Release notes
 
+## v1.0.2 — Draft, unreleased
+
+Prepared locally for review. No release, tag, image publication or deployment is
+implied by this draft. Tagged builds continue to supply `NORTHBOUND_VERSION`.
+
+### Theme percentage bonuses
+
+- Newly created Themes use independently configurable whole percentages from
+  0–100%, default 0%, calculated from **Approved Pages** only.
+- Each Theme rounds half-up separately to whole pages. Stacked percentages use
+  the same base and add their awards; they do not compound.
+- The rate locks after the first claim. Calculation snapshots retain rate,
+  approved-page basis, result and finalized state, including zero-page awards.
+- Intentional Approved Pages corrections update established percentage awards,
+  including rejected claims, without approving or activating those claims.
+  Reapproval uses the corrected award; ordinary repeat review does not recalculate.
+- Authorized restoration establishes a first-time award for approved claims whose
+  books were ineligible when recovery approved them. Zero awards are finalized and
+  canonical provenance is not duplicated.
+- Existing Themes remain legacy fixed-page rules throughout their lifecycle.
+  No fixed value is reinterpreted as a percentage and no conversion UI is added.
+
+### Migration and data preservation
+
+Migration `0060_theme_percentage_awards` depends on `0059`. It adds rule and
+snapshot fields, identifies existing Themes as legacy, and changes the default
+for future Themes to percentage. Existing awarded pages, provenance amounts,
+submission score caches and historical checkpoint snapshots are not recalculated.
+Ambiguous legacy zero awards retain their previous behavior rather than invented
+historical calculation evidence. Historical migration files are unchanged.
+
+### Validation and release gates
+
+Maintained test sources are versioned, remain outside production image contexts,
+and are required before image publication. SQLite/PostgreSQL migration checks,
+Compose checks, architecture builds and existing version-tag behavior are retained.
+Four stale/time-dependent test expectations are corrected without changing working
+application behavior. See [automated validation](TESTING.md) for suite scope and
+local-only development-demo tests. Final validation results belong to the release
+review; this draft does not assert a published CI run or deployment acceptance.
+
+### Deployment and rollback
+
+Plan a maintenance window and verify a pre-upgrade backup before starting the new
+image: startup applies migrations automatically. Preserve matching media, original
+Django/encryption keys, deployment configuration and the previous image digest.
+SQLite schema changes may rebuild tables and need free space; PostgreSQL requires
+native backup procedures. Keep the current database backend and volume identity.
+
+Pin the reviewed release image/digest. Main-branch pushes and stable version tags
+can update `latest`; image publication is distinct from deployment authorization.
+Do not run an old image against percentage-era data as an assumed rollback.
+Reversing 0060 removes calculation metadata and does not convert new percentage
+Themes into equivalent fixed rules. The safe recovery plan uses the pre-upgrade
+backup, matching media and compatible image, with the documented restored-Hardcover
+safeguards before workers resume. Restoring local data cannot undo external
+Hardcover writes. See [backup/restore](BACKUP_RESTORE.md) and [upgrades](SELF_HOSTING.md#upgrades).
+
 ## v1.0.1 — September 2, 2026
 
 Focused fresh-install polish following the released v1.0.0 baseline, manually

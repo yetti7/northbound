@@ -276,8 +276,28 @@ they turn sync on. Do not reapprove books just to try to trigger external sync.
 
 ## Configure and review Themes
 
+New Themes use **Theme Bonus (%)**: a whole percentage from 0–100, default 0%.
+The bonus uses the book's **Approved Pages**, excluding bonuses. Each Theme is
+rounded separately to the nearest whole page, with half pages rounded up:
+400 × 25% = 100; 333 × 25% = 83; 334 × 25% = 84; 1 × 25% = 0.
+Stacked Themes use the same base independently and their rounded awards are added;
+percentages never compound. The rate locks as soon as any Theme claim exists,
+including pending or rejected claims; other settings retain their existing editing rules.
+Existing Themes remain clearly labeled **legacy fixed-page** rules; their values
+are not converted. Approval records the percentage, approved-page basis and awarded
+pages, including a finalized zero. Rejection/reapproval and removal/restoration
+preserve that evidence. An authorized **Approved Pages** correction during normal
+review recalculates percentage awards transactionally, without changing fixed-page
+awards, unrelated rewards or historical checkpoint snapshots. Corrections also update established rejected-claim calculations without changing
+the claim status or activating rewards. Authorized restoration initializes missing
+first-time awards once the book becomes eligible. Ordinary reports,
+catalog changes and repeat reviews do not recalculate awards. Completed/Archived
+Challenges cannot receive ordinary review corrections; existing recovery safeguards
+remain in force. There is no conversion control or live calculation preview.
+
+
 1. Open **Themes → Add Theme**.
-2. Enter **Name**, **Description**, **Starts On**, **Ends On** and **Bonus Pages**.
+2. Enter **Name**, **Description**, **Starts On**, **Ends On** and **Theme Bonus (%)**.
 3. Add a **Prompt** if a Reader must explain their claim. A selected Theme with a
    prompt requires an answer during submission.
 4. Set **Allow Stacking**, **Active** and **Visible to Readers**, then **Save**.
@@ -288,9 +308,8 @@ Theme on the same book. Active and visible are separate: you can prepare a hidde
 Theme without showing it to Readers. Hosts can see inactive and hidden Themes.
 
 Use **Edit Theme** for changes while setup is allowed. Claim approval supplies
-the bonus only when the book is approved too. Previously awarded Theme amounts
-are preserved; editing the advertised bonus is not a bulk rewrite of earlier
-awards. Review the Reader's response in Submission Review, not just the Theme title.
+the bonus only when the book is approved too. Established awards are preserved
+unless authorized review corrects Approved Pages for a percentage Theme. Review the Reader's response in Submission Review, not just the Theme title.
 
 ## Manage Book of the Month
 

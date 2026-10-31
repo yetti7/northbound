@@ -15,7 +15,7 @@ from .recovery import (
     execute_recovery_operation,
 )
 from .score_aggregation import challenge_score_totals
-from .scoring import refresh_submission_score
+from .scoring import refresh_submission_score, establish_theme_award, establish_restored_theme_awards
 
 
 def submission_recovery_label(submission):
@@ -76,6 +76,8 @@ def set_submission_removed(*, submission, removed, recovery_request):
         locked.save(update_fields=[
             "is_removed", "removed_at", "removed_by", "removal_reason",
         ])
+        if not removed:
+            establish_restored_theme_awards(locked)
         _synchronize_reader_sources(locked.month, locked.participant)
         locked.refresh_from_db(fields=["bonus_pages", "final_scored_pages"])
         after_score = _reader_score(locked.month, locked.participant)
@@ -213,7 +215,7 @@ def set_theme_active(*, theme, active, recovery_request):
 
 
 def correct_unused_theme(*, theme, values, recovery_request):
-    allowed = {"name", "description", "starts_on", "ends_on", "bonus_pages", "allow_stacking", "prompt", "is_visible"}
+    allowed = {"name", "description", "starts_on", "ends_on", "bonus_pages", "bonus_percentage", "allow_stacking", "prompt", "is_visible"}
     if set(values) - allowed:
         raise ValidationError("Unsupported Theme recovery field.")
 
@@ -304,17 +306,20 @@ def recover_theme_claim(*, claim, status, recovery_request, force_rebuild=False)
         locked.reviewed_by = recovery_request.actor
         locked.reviewed_at = timezone.now()
         if status == ThemeClaim.Status.APPROVED:
-            historical_amount = ModifierProvenance.objects.filter(
-                source_type=ModifierProvenance.SourceType.THEME_BONUS,
-                source_reference=_theme_reference(locked),
-            ).values_list("amount", flat=True).first()
-            locked.approved_bonus_pages = (
-                locked.approved_bonus_pages or historical_amount or locked.theme.bonus_pages
-            )
+            if locked.theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE:
+                locked.approved_bonus_pages = establish_theme_award(locked)
+            else:
+                historical_amount = ModifierProvenance.objects.filter(
+                    source_type=ModifierProvenance.SourceType.THEME_BONUS,
+                    source_reference=_theme_reference(locked),
+                ).values_list("amount", flat=True).first()
+                locked.approved_bonus_pages = (
+                    locked.approved_bonus_pages or historical_amount or locked.theme.bonus_pages
+                )
         else:
             locked.approved_bonus_pages = 0
         locked.full_clean()
-        locked.save(update_fields=["status", "approved_bonus_pages", "reviewed_by", "reviewed_at"])
+        locked.save()
         provenance, removed_malformed, recreated = _reconcile_theme_claim_locked(
             locked, actor=recovery_request.actor, force_rebuild=force_rebuild,
         )

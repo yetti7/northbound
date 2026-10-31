@@ -1,8 +1,7 @@
 .git
 .github
 # Development-only source retained locally, never copied into production images
-core/test_*.py
-core/tests.py
+core/test*.py
 reading_challenge/tests.py
 static/js/*.test.js
 tests
@@ -15,6 +14,9 @@ scripts/docker_restore_e2e.sh
 # Public source/operating documentation and build inputs are not runtime payload
 docs
 README.md
+ADMIN_GUIDE.md
+READER_GUIDE.md
+FIRST_CHALLENGE_WALKTHROUGH.md
 compose*.yaml
 Dockerfile
 .gitignore

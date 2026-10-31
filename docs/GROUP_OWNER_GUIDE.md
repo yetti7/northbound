@@ -197,6 +197,10 @@ Reports keep three ideas separate:
 
 Ask Hosts to explain the configured **Themes**, BOTM, Personal TBR and Games before
 registration. A pending submission or unapproved claim is not an earned bonus.
+New Themes use 0–100% of Approved Pages, rounded half-up separately per claim.
+The rate locks after the first claim. Legacy fixed-page Themes and historical
+awards are preserved. Authorized Approved Pages corrections recalculate percentage
+awards, while fixed-page awards and historical checkpoints remain unchanged.
 Hosts manage Themes and their rewards; Owners oversee the agreed rules rather
 than acquiring review rights just by viewing a score.
 

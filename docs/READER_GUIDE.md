@@ -148,6 +148,15 @@ The book's **Completed On** date must fall within that Theme's window. If a Them
 does not allow stacking, you cannot claim it together with another Theme on the
 same book. The form will ask you to correct incompatible claims.
 
+
+New Theme rewards are percentages of **Approved Pages** (not submitted pages or
+bonus-inclusive totals). For example, 400 approved pages at 25% earns 100 extra
+pages. Each stacked Theme is rounded separately, with half pages rounded up, and
+bonuses do not compound. Existing legacy Themes still award fixed pages. A zero
+bonus can still be an approved completion. If staff intentionally correct Approved
+Pages, percentage rewards change with that correction; ordinary repeat review does
+not change an established award. Ask a Host about corrections.
+
 Theme bonuses require review. A book may already be Approved while its Theme
 claim is still pending; those are separate decisions.
 

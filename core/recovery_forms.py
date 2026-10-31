@@ -85,6 +85,7 @@ class UnusedThemeRecoveryForm(RecoveryConfirmationForm):
     starts_on = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
     ends_on = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
     bonus_pages = forms.IntegerField(min_value=0)
+    bonus_percentage = forms.IntegerField(min_value=0, max_value=100, label="Theme Bonus (%)")
     allow_stacking = forms.BooleanField(required=False)
     prompt = forms.CharField(max_length=300, required=False)
     is_visible = forms.BooleanField(required=False)
@@ -98,11 +99,18 @@ class UnusedThemeRecoveryForm(RecoveryConfirmationForm):
                 "starts_on": theme.starts_on,
                 "ends_on": theme.ends_on,
                 "bonus_pages": theme.bonus_pages,
+                "bonus_percentage": theme.bonus_percentage,
                 "allow_stacking": theme.allow_stacking,
                 "prompt": theme.prompt,
                 "is_visible": theme.is_visible,
             }
         super().__init__(*args, **kwargs)
+        if theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE:
+            self.fields.pop("bonus_pages")
+            self.fields["bonus_percentage"].disabled = bool(theme.pk and (theme.bonus_rate_locked or theme.claims.exists()))
+        else:
+            self.fields.pop("bonus_percentage")
+            self.fields["bonus_pages"].label = "Theme Bonus (legacy fixed pages)"
 
 
 class BotmMatchRecoveryForm(RecoveryConfirmationForm):

@@ -1032,7 +1032,7 @@ PersonalTbrRegistrationBookFormSet = formset_factory(
 class MonthThemeForm(forms.ModelForm):
     class Meta:
         model = MonthTheme
-        fields = ("name", "description", "starts_on", "ends_on", "bonus_pages", "allow_stacking", "prompt", "is_active", "is_visible")
+        fields = ("name", "description", "starts_on", "ends_on", "bonus_pages", "bonus_percentage", "allow_stacking", "prompt", "is_active", "is_visible")
         labels = {"starts_on": "Starts On", "ends_on": "Ends On", "bonus_pages": "Bonus Pages", "allow_stacking": "Allow Stacking", "is_active": "Active", "is_visible": "Visible to Readers"}
         widgets = {"starts_on": forms.DateInput(attrs={"type": "date"}), "ends_on": forms.DateInput(attrs={"type": "date"}), "description": forms.Textarea(attrs={"rows": 3})}
 
@@ -1040,6 +1040,19 @@ class MonthThemeForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if month:
             self.instance.month = month
+        if self.instance.bonus_rule == MonthTheme.BonusRule.PERCENTAGE:
+            self.fields.pop("bonus_pages")
+            self.fields["bonus_percentage"].label = "Theme Bonus (%)"
+            self.fields["bonus_percentage"].help_text = (
+                "Percentage of the book's Approved Pages awarded as bonus pages. "
+                "Each Theme bonus is rounded separately to the nearest whole page."
+            )
+            if self.instance.pk and (self.instance.bonus_rate_locked or self.instance.claims.exists()):
+                self.fields["bonus_percentage"].disabled = True
+                self.fields["bonus_percentage"].help_text += " Locked after the first Theme claim."
+        else:
+            self.fields.pop("bonus_percentage")
+            self.fields["bonus_pages"].label = "Theme Bonus (legacy fixed pages)"
 
 
 class GameForm(forms.ModelForm):

@@ -1230,10 +1230,12 @@ def recovery_theme_correct(request, pk):
         values = {
             field: form.cleaned_data[field]
             for field in (
-                "name", "description", "starts_on", "ends_on", "bonus_pages",
+                "name", "description", "starts_on", "ends_on",
                 "allow_stacking", "prompt", "is_visible",
             )
         }
+        reward_field = "bonus_percentage" if theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE else "bonus_pages"
+        values[reward_field] = form.cleaned_data[reward_field]
         operation_request = _recovery_request_from_form(
             request, form, tier=2, action="theme.correct_unused",
             target_type="MonthTheme", target_id=theme.pk, target_label=label,
