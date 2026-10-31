@@ -244,6 +244,10 @@ Staff search uses their own authorized Hardcover connection first, then the Grou
 catalog connection, with manual entry always available. It never uses the Reader's
 private credentials or synchronizes reading activity to staff or Group accounts.
 This TBR-only permission does not grant registration-answer or account access.
+Search results and selected rows include cover previews. Manual books may use an
+optional HTTP/HTTPS **Cover URL**; no upload is required. Missing artwork uses a
+placeholder, and selected Hardcover edition artwork is retained when saved.
+Existing selections and cover snapshots are preserved.
 See the [staff TBR workflow](HOST_GUIDE.md#help-a-reader-manage-their-challenge-tbr).
 
 ### Games and manual rewards

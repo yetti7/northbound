@@ -233,3 +233,9 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 }
 
 .stacked-form p[hidden]{display:none}
+
+/* Challenge TBR selection and catalog thumbnails. */
+[data-tbr-registration] .tbr-cover-preview{width:72px;max-width:100%;margin-bottom:.75rem}
+[data-tbr-registration] .tbr-cover-preview img{object-fit:cover}
+[data-tbr-registration] .tbr-cover-preview [hidden]{display:none!important}
+[data-tbr-registration] input[name$="-cover_url_snapshot"]{min-width:0;max-width:100%}

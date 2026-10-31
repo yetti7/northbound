@@ -222,7 +222,7 @@ class PersonalTbrRegistrationTests(TestCase):
         link = "https://hardcover.app/books/exact-book/editions/30407787"
         with patch("core.views.lookup_hardcover_url", return_value=(selected.copy(), False)) as lookup, patch(
             "core.views.resolve_scoring_edition", return_value=(selected.copy(), "selected")
-        ):
+        ), patch("core.views.lookup_edition", return_value=(selected.copy(), False)):
             response = self.client.post(self.catalog_url, {"action": "smart", "input": link})
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -262,7 +262,7 @@ class PersonalTbrRegistrationTests(TestCase):
         self.assertContains(page, "+200</strong> bonus pages for completing all 9")
         self.assertContains(page, "Search Hardcover")
         self.assertContains(page, "Enter manually")
-        self.assertContains(page, "Use the Title and Author fields below. Page Count is optional.")
+        self.assertContains(page, "Use the Title and Author fields below. Page Count and Cover URL are optional.")
         self.assertNotContains(page, 'class="form-card" data-tbr-catalog')
         ReaderHardcoverConnection.objects.create(
             user=self.reader_user, encrypted_token=encrypt_token("reader-token"), is_valid=True

@@ -319,7 +319,7 @@ For a later authorized hands-on practice, use a fresh prepared Challenge before 
 **Act as Host/Group Challenge manager before readers confirm registration.**
 
 1. Signup Questions → Personal TBR: Enable Personal TBR; Per-book TBR Bonus Pages **25**; Full 9-Book TBR Completion Bonus Pages **200** → Save Personal TBR Settings.
-2. As Reader, Register → Personal TBR → Enter manually, supply Title/Author; optional Page Count. Add and organize four planned books, then Review Registration.
+2. As Reader, Register → Personal TBR → Enter manually, supply Title/Author; optional Page Count and HTTP/HTTPS Cover URL. Check a cover preview and a blank-cover placeholder. Search results also show covers; selecting an edition retains its artwork when saved. Add and organize four planned books, then Review Registration.
 3. Read the warning: a four-book list can earn per-book rewards but never the full nine-book bonus. Back to Edit if nine books were intended; otherwise Confirm Registration knowingly locks four.
 4. Read/submit a listed book during Active. Staff approve manual reading and inspect **Review Queue → Personal TBR Matches** if necessary. Confirm only supported identities.
 5. One qualifying book earns 25 modifier pages. All four earn 100; the 200 full-nine reward still does not apply.

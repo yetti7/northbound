@@ -1,6 +1,7 @@
 from django import forms
 from django.forms import BaseFormSet, formset_factory
 from django.core import signing
+from django.core.validators import URLValidator
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import transaction
@@ -919,13 +920,21 @@ class PersonalTbrRegistrationBookForm(forms.Form):
     author_snapshot = forms.CharField(label="Author", max_length=300, required=False)
     page_count_snapshot = forms.IntegerField(label="Page Count (Optional)", min_value=1, required=False)
 
+    cover_url_snapshot = forms.URLField(
+        label="Cover URL (Optional)", max_length=1000, required=False,
+        validators=[URLValidator(schemes=["http", "https"])],
+        help_text="Use an http:// or https:// image URL for a manual book. No upload is needed.",
+        widget=forms.URLInput(attrs={"placeholder": "https://…"}),
+    )
+
     def clean(self):
         cleaned = super().clean()
         signed_selection = cleaned.get("catalog_selection", "")
         title = cleaned.get("title_snapshot", "").strip()
         author = cleaned.get("author_snapshot", "").strip()
         page_count = cleaned.get("page_count_snapshot")
-        if not signed_selection and not title and not author and page_count is None:
+        cover_url = cleaned.get("cover_url_snapshot", "")
+        if not signed_selection and not title and not author and page_count is None and not cover_url:
             cleaned["is_empty"] = True
             return cleaned
         if signed_selection:
@@ -941,13 +950,19 @@ class PersonalTbrRegistrationBookForm(forms.Form):
                 raise forms.ValidationError("The Hardcover selection is invalid or expired. Search again or use manual entry.")
             if selected.book_id != scoring.book_id or not scoring.page_count:
                 raise forms.ValidationError("Select a Hardcover edition with a usable page count.")
+            cover_url = selection.get("cover_url", selected.book.cover_url)
+            try:
+                if cover_url:
+                    URLValidator(schemes=["http", "https"])(cover_url)
+            except forms.ValidationError:
+                raise forms.ValidationError("The Hardcover cover URL is invalid. Search again or use manual entry.")
             cleaned.update({
                 "catalog_book": selected.book,
                 "catalog_edition": selected,
                 "title_snapshot": selected.book.title,
                 "author_snapshot": selected.book.author,
                 "page_count_snapshot": scoring.page_count,
-                "cover_url_snapshot": selected.book.cover_url,
+                "cover_url_snapshot": cover_url,
                 "source_url_snapshot": selected.source_url or selected.book.source_url,
             })
         else:
@@ -960,7 +975,7 @@ class PersonalTbrRegistrationBookForm(forms.Form):
                 "catalog_edition": None,
                 "title_snapshot": title,
                 "author_snapshot": author,
-                "cover_url_snapshot": "",
+                "cover_url_snapshot": cover_url,
                 "source_url_snapshot": "",
             })
         cleaned["is_empty"] = False
@@ -1051,8 +1066,12 @@ class StaffChallengeTbrBookForm(PersonalTbrRegistrationBookForm):
                 "title_snapshot", "author_snapshot", "page_count_snapshot",
             )):
                 cleaned.update({field: getattr(book, field) for field in (
-                    "catalog_book", "catalog_edition", "cover_url_snapshot", "source_url_snapshot",
+                    "catalog_book", "catalog_edition", "source_url_snapshot",
                 )})
+                # Catalog snapshots are not editable through the manual URL field.
+                # Omitted fields from older clients also retain their saved cover.
+                if book.catalog_book_id or self.add_prefix("cover_url_snapshot") not in self.data:
+                    cleaned["cover_url_snapshot"] = book.cover_url_snapshot
         return cleaned
 
 

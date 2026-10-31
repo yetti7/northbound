@@ -100,10 +100,18 @@ While completing registration:
 1. In **Personal TBR**, use **Search Hardcover** when your personal connection is
    available, or **Enter manually**.
 2. For manual entries, fill in **Title** and **Author**. **Page Count (Optional)**
-   can be left blank. Use **Add Book** for another entry.
+   and **Cover URL (Optional)** can be left blank. Use **Add Book** for another entry.
 3. Use **Move Up**, **Move Down** and **Remove** to organize your list before
    confirming it.
 4. Review the list and advertised bonuses on **Registration Summary**.
+
+Search results and selected rows show cover thumbnails; missing or unavailable
+artwork uses a placeholder. A selected Hardcover edition keeps its artwork when
+you save. For a manual book, you may enter an HTTP or HTTPS image URL in
+**Cover URL (Optional)**. The URL is validated and your browser loads the preview;
+there are no image uploads or server-side image downloads. Existing entries
+without cover URLs continue to work.
+
 
 TBR catalog search uses **your personal Hardcover connection**, not the Group's
 shared submission search. You can connect from My Account without enabling library
