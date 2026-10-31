@@ -2,7 +2,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
 
-from .models import BookSubmission, ModifierProvenance, ThemeClaim
+from .models import BookSubmission, ModifierProvenance, ThemeClaim, MonthTheme
 
 
 def _theme_source_reference(claim):
@@ -11,6 +11,10 @@ def _theme_source_reference(claim):
 
 def theme_approval_snapshot(claim):
     """Return the durable amount to use when approving a Theme claim."""
+    if claim.theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE:
+        if claim.award_finalized:
+            return claim.award_bonus_pages
+        return percentage_bonus_pages(claim.submission.approved_pages, claim.theme.bonus_percentage)
     existing_amount = ModifierProvenance.objects.filter(
         source_type=ModifierProvenance.SourceType.THEME_BONUS,
         source_reference=_theme_source_reference(claim),
@@ -20,6 +24,40 @@ def theme_approval_snapshot(claim):
     if claim.approved_bonus_pages > 0:
         return claim.approved_bonus_pages
     return claim.theme.bonus_pages
+
+
+def percentage_bonus_pages(approved_pages, percentage):
+    """Exact nonnegative round-half-up; each Theme uses base pages independently."""
+    if not isinstance(approved_pages, int) or isinstance(approved_pages, bool) or approved_pages <= 0:
+        raise ValidationError("Approved Pages must be positive before awarding a Theme bonus.")
+    if not isinstance(percentage, int) or isinstance(percentage, bool) or not 0 <= percentage <= 100:
+        raise ValidationError("Enter a whole-number percentage from 0 through 100.")
+    return (approved_pages * percentage + 50) // 100
+
+
+def establish_theme_award(claim, *, correction=False):
+    """Called only by approval/recovery or intentional review page correction.
+
+    The claim owns calculation evidence; provenance remains the awarded-page ledger.
+    Refresh/preview/reporting never establish or recalculate these snapshots.
+    """
+    if claim.theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE:
+        if not claim.award_finalized and (
+            claim.submission.status != BookSubmission.Status.APPROVED or claim.submission.is_removed
+        ):
+            return 0
+        if not claim.award_finalized or correction:
+            # Existing snapshots retain their rate; the configured rate is locked.
+            rate = claim.award_percentage if claim.award_finalized else claim.theme.bonus_percentage
+            pages = claim.submission.approved_pages
+            claim.award_bonus_pages = percentage_bonus_pages(pages, rate)
+            claim.award_percentage = rate
+            claim.award_basis_pages = pages
+            claim.award_rule = MonthTheme.BonusRule.PERCENTAGE
+            claim.award_version = 1
+            claim.award_finalized = True
+        return claim.award_bonus_pages
+    return theme_approval_snapshot(claim)
 
 
 def _synchronize_locked_theme_provenance(submission, claim):
@@ -45,9 +83,20 @@ def _synchronize_locked_theme_provenance(submission, claim):
     )
 
     if not contributes:
-        if provenance and provenance.is_active:
-            provenance.is_active = False
-            provenance.save(update_fields=["is_active"])
+        if provenance:
+            changed_fields = []
+            if provenance.is_active:
+                provenance.is_active = False
+                changed_fields.append("is_active")
+            # A corrected, temporarily rejected award keeps its canonical source.
+            # Zero has no ledger amount: retain the inactive positive history.
+            if (claim.theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE
+                    and claim.award_finalized and claim.award_bonus_pages > 0
+                    and provenance.amount != claim.award_bonus_pages):
+                provenance.amount = claim.award_bonus_pages
+                changed_fields.append("amount")
+            if changed_fields:
+                provenance.save(update_fields=changed_fields)
         return provenance
 
     create_values = {
@@ -120,6 +169,10 @@ def preview_submission_score(submission):
 def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at):
     """Persist one submission/Theme review through the scoring boundary."""
     locked_submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
+    pages_corrected = (
+        submission.approved_pages is not None and submission.approved_pages > 0
+        and locked_submission.approved_pages != submission.approved_pages
+    )
     newly_approved = locked_submission.status != BookSubmission.Status.APPROVED and submission.status == BookSubmission.Status.APPROVED
     for field in ("approved_pages", "status", "verification_url", "review_notes"):
         setattr(locked_submission, field, getattr(submission, field))
@@ -134,16 +187,30 @@ def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at):
             submission=locked_submission,
         )
     }
-    for reviewed_claim in reviewed_claims:
-        claim = locked_claims[reviewed_claim.pk]
-        claim.status = reviewed_claim.status
-        claim.reviewed_by = reviewer
-        claim.reviewed_at = reviewed_at
+    decisions = {claim.pk: claim.status for claim in reviewed_claims}
+    for claim in locked_claims.values():
+        claim.submission = locked_submission
+        percentage = claim.theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE
+        percentage_correction = pages_corrected and percentage and claim.award_finalized
+        first_eligible_award = (
+            percentage and not claim.award_finalized
+            and decisions.get(claim.pk, claim.status) == ThemeClaim.Status.APPROVED
+            and locked_submission.status == BookSubmission.Status.APPROVED
+            and not locked_submission.is_removed
+        )
+        if claim.pk not in decisions and not percentage_correction and not first_eligible_award:
+            continue
+        if claim.pk in decisions:
+            claim.status = decisions[claim.pk]
+            claim.reviewed_by = reviewer
+            claim.reviewed_at = reviewed_at
+        if percentage_correction:
+            establish_theme_award(claim, correction=True)
         if (
             locked_submission.status == BookSubmission.Status.APPROVED
             and claim.status == ThemeClaim.Status.APPROVED
         ):
-            claim.approved_bonus_pages = theme_approval_snapshot(claim)
+            claim.approved_bonus_pages = establish_theme_award(claim)
         else:
             claim.approved_bonus_pages = 0
         claim.full_clean()
@@ -204,3 +271,24 @@ def refresh_submission_score(submission):
     submission.bonus_pages = modifier_total
     submission.final_scored_pages = final_total
     return final_total
+
+
+@transaction.atomic
+def establish_restored_theme_awards(submission):
+    """Initialize only missing awards during explicit, authorized restoration.
+
+    Reports and ordinary cache refresh never call this eligibility transition.
+    Established snapshots (including zero) and legacy rules remain untouched.
+    """
+    locked = BookSubmission.objects.select_for_update().get(pk=submission.pk)
+    if locked.status != BookSubmission.Status.APPROVED or locked.is_removed:
+        return
+    claims = ThemeClaim.objects.select_for_update().select_related("theme").filter(
+        submission=locked, status=ThemeClaim.Status.APPROVED,
+        theme__bonus_rule=MonthTheme.BonusRule.PERCENTAGE, award_finalized=False,
+    )
+    for claim in claims:
+        claim.submission = locked
+        claim.approved_bonus_pages = establish_theme_award(claim)
+        claim.full_clean()
+        claim.save()

@@ -1,11 +1,5 @@
-# V1 public source excludes development validation; files stay runnable locally.
-# Tracked files need a later, separately approved index-only removal.
-/core/test_*.py
-/core/tests.py
-/reading_challenge/tests.py
-/static/js/*.test.js
-/tests/
-/test-fixtures/
+# Maintained test sources are versioned; the development demo stays local-only.
+/core/test_demo_data.py
 /core/demo_data.py
 /core/management/commands/seed_demo_data.py
 /compose.restore-test.yaml

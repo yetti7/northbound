@@ -10,6 +10,7 @@ from datetime import timedelta
 from datetime import time as datetime_time
 from django.core.validators import MaxValueValidator, MinValueValidator
 from zoneinfo import ZoneInfo
+from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import secrets
@@ -805,6 +806,13 @@ class ChallengeStaffAssignment(models.Model):
 
 
 class MonthTheme(models.Model):
+    class BonusRule(models.TextChoices):
+        LEGACY_FIXED = "legacy_fixed", "Legacy fixed-page"
+        PERCENTAGE = "percentage", "Percentage"
+
+    bonus_rule = models.CharField(max_length=16, choices=BonusRule.choices, default=BonusRule.PERCENTAGE)
+    bonus_percentage = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    bonus_rate_locked = models.BooleanField(default=False, editable=False)
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="themes")
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
@@ -818,9 +826,33 @@ class MonthTheme(models.Model):
 
     class Meta:
         ordering = ["starts_on", "name"]
-        constraints = [models.UniqueConstraint(fields=["month", "name"], name="unique_theme_name_per_month")]
+        constraints = [
+            models.UniqueConstraint(fields=["month", "name"], name="unique_theme_name_per_month"),
+            models.CheckConstraint(condition=Q(bonus_percentage__gte=0, bonus_percentage__lte=100), name="theme_percentage_range"),
+        ]
+
+    def clean_fields(self, exclude=None):
+        if not exclude or "bonus_percentage" not in exclude:
+            try:
+                value = Decimal(str(self.bonus_percentage))
+                if not value.is_finite() or value != value.to_integral_value():
+                    raise ValueError
+            except (InvalidOperation, ValueError, TypeError):
+                raise ValidationError({"bonus_percentage": "Enter a whole-number percentage from 0 through 100."})
+        super().clean_fields(exclude=exclude)
+
+    def validate_bonus_change(self):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if previous and previous.bonus_rule != self.bonus_rule:
+                raise ValidationError("Theme bonus rule types cannot be converted.")
+            if (previous and previous.bonus_rule == self.BonusRule.PERCENTAGE
+                    and previous.bonus_percentage != self.bonus_percentage
+                    and (previous.bonus_rate_locked or self.claims.exists())):
+                raise ValidationError({"bonus_percentage": "The percentage is locked after the first Theme claim."})
 
     def clean(self):
+        self.validate_bonus_change()
         if self.ends_on < self.starts_on:
             raise ValidationError("The theme end date must be on or after its start date.")
         if self.month_id:
@@ -828,6 +860,24 @@ class MonthTheme(models.Model):
                 raise ValidationError("Configure the Challenge schedule before adding themes.")
             if self.starts_on < self.month.starts_on or self.ends_on > self.month.ends_on:
                 raise ValidationError("Theme dates must fall inside the challenge month.")
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if self.pk:
+                previous = type(self).objects.select_for_update().get(pk=self.pk)
+                self.bonus_rate_locked = previous.bonus_rate_locked
+            # Validate the new reward invariants without changing legacy save semantics
+            # for unrelated date/availability recovery operations.
+            self.clean_fields(exclude=[field.name for field in self._meta.fields
+                                       if field.name not in {"bonus_rule", "bonus_percentage"}])
+            self.validate_bonus_change()
+            return super().save(*args, **kwargs)
+
+    @property
+    def bonus_description(self):
+        if self.bonus_rule == self.BonusRule.PERCENTAGE:
+            return f"{self.bonus_percentage}% of Approved Pages"
+        return f"+{self.bonus_pages} pages (legacy fixed-page)"
 
     def __str__(self):
         return f"{self.month.name} — {self.name}"
@@ -1892,6 +1942,12 @@ class ThemeClaim(models.Model):
     response = models.TextField(blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
     approved_bonus_pages = models.PositiveIntegerField(default=0)
+    award_finalized = models.BooleanField(default=False)
+    award_rule = models.CharField(max_length=16, blank=True, default="")
+    award_version = models.PositiveSmallIntegerField(null=True, blank=True)
+    award_percentage = models.PositiveSmallIntegerField(null=True, blank=True)
+    award_basis_pages = models.PositiveIntegerField(null=True, blank=True)
+    award_bonus_pages = models.PositiveIntegerField(null=True, blank=True)
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviewed_theme_claims")
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
@@ -1905,6 +1961,22 @@ class ThemeClaim(models.Model):
                 raise ValidationError("The theme must belong to the submission month.")
             if not (self.theme.starts_on <= self.submission.completed_on <= self.theme.ends_on):
                 raise ValidationError("The book completion date must fall inside the theme dates.")
+
+    def save(self, *args, **kwargs):
+        # Serialize claim creation against percentage edits, including recovery.
+        with transaction.atomic():
+            theme = MonthTheme.objects.select_for_update().get(pk=self.theme_id)
+            result = super().save(*args, **kwargs)
+            if theme.bonus_rule == MonthTheme.BonusRule.PERCENTAGE and not theme.bonus_rate_locked:
+                MonthTheme.objects.filter(pk=theme.pk).update(bonus_rate_locked=True)
+            return result
+
+    @property
+    def award_description(self):
+        if self.award_finalized:
+            return (f"Approved Pages: {self.award_basis_pages}; Theme Bonus: "
+                    f"{self.award_percentage}% (+{self.award_bonus_pages} pages)")
+        return f"Theme Bonus: {self.theme.bonus_description}"
 
     def __str__(self):
         return f"{self.submission.title} — {self.theme.name}"
