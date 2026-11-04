@@ -17,24 +17,9 @@
     author: card.querySelector('input[name$="-author_snapshot"]').value,
   });
   function previewCover(container, url, title) {
-    const image = container.querySelector('[data-tbr-cover-image]');
-    const placeholder = container.querySelector('[data-tbr-cover-placeholder]');
-    placeholder.textContent = (title.trim()[0] || '?').toUpperCase();
-    image.alt = `Cover of ${title || 'selected book'}`;
-    let safeUrl = '';
-    try {
-      const parsed = new URL(url);
-      if (['http:', 'https:'].includes(parsed.protocol)) safeUrl = parsed.href;
-    } catch (_) {}
-    if (image.dataset.coverUrl !== safeUrl) {
-      image.dataset.coverUrl = safeUrl;
-      image.hidden = !safeUrl;
-      placeholder.hidden = Boolean(safeUrl);
-      image.onerror = () => { image.hidden = true; placeholder.hidden = false; };
-      if (safeUrl) image.src = safeUrl;
-      else image.removeAttribute('src');
-    }
+    NorthboundBookCovers.update(container, url, title);
   }
+
   function revealCard(card) {
     const deletion = card.querySelector('input[name$="-DELETE"]');
     if (deletion.checked) {
@@ -130,10 +115,10 @@
       const heading = document.createElement('h3'); heading.textContent = title || 'Untitled';
       const copy = document.createElement('p'); copy.textContent = details;
       const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label; button.addEventListener('click', handler);
-      const cover = document.createElement('div'); cover.className = 'book-cover-frame tbr-cover-preview';
-      const image = document.createElement('img'); image.dataset.tbrCoverImage = ''; image.hidden = true;
+      const cover = document.createElement('div'); cover.className = 'book-cover-frame tbr-cover-preview'; cover.dataset.bookCover = '';
+      const image = document.createElement('img'); image.dataset.tbrCoverImage = ''; image.dataset.bookCoverImage = ''; image.hidden = true;
       const placeholder = document.createElement('div'); placeholder.className = 'botm-cover-placeholder';
-      placeholder.dataset.tbrCoverPlaceholder = ''; placeholder.setAttribute('aria-hidden', 'true');
+      placeholder.dataset.tbrCoverPlaceholder = ''; placeholder.dataset.bookCoverPlaceholder = ''; placeholder.setAttribute('aria-hidden', 'true');
       cover.append(image, placeholder); card.append(cover, heading, copy, button);
       previewCover(cover, coverUrl, title || ''); return card;
     }

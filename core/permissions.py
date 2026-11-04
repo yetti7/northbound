@@ -307,3 +307,13 @@ def can_manage_challenge_tbr(user, enrollment):
         month=month, participant=enrollment.participant,
         team_id__in=scope[1], ended_at__isnull=True,
     ).exists()
+
+
+def can_reconcile_personal_tbr(user, month):
+    """Administrative repair authority, independent of broader review scope."""
+    if not user.is_authenticated or not user.is_active:
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, month.group)
+    return bool(member and (member.role == Membership.Role.OWNER or is_challenge_host(user, month)))

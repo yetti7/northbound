@@ -1757,7 +1757,7 @@ class BookSubmission(models.Model):
         if self.month_id:
             if not self.month.starts_on or not self.month.ends_on:
                 raise ValidationError("The Challenge schedule must be configured before accepting submissions.")
-            if not (self.month.starts_on <= self.completed_on <= self.month.ends_on):
+            if self.completed_on is not None and not (self.month.starts_on <= self.completed_on <= self.month.ends_on):
                 raise ValidationError("Completion date must fall inside the challenge month.")
         if self.started_on and self.completed_on and self.started_on > self.completed_on:
             raise ValidationError("Start date cannot be later than completion date.")

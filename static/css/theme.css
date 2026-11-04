@@ -239,3 +239,8 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 [data-tbr-registration] .tbr-cover-preview img{object-fit:cover}
 [data-tbr-registration] .tbr-cover-preview [hidden]{display:none!important}
 [data-tbr-registration] input[name$="-cover_url_snapshot"]{min-width:0;max-width:100%}
+/* Cover children cannot contribute intrinsic dimensions to their card tracks. */
+[data-book-cover]{min-width:0;align-self:start}
+[data-book-cover]>[data-book-cover-image],[data-book-cover]>[data-book-cover-placeholder]{position:absolute;inset:0;box-sizing:border-box;height:100%;width:100%;max-width:100%;object-fit:cover}
+.botm-management-card{grid-template-columns:7rem minmax(0,1fr)}
+@media(max-width:520px){.botm-management-card{grid-template-columns:5rem minmax(0,1fr)}}

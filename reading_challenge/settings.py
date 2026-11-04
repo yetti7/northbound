@@ -176,3 +176,27 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_SECURE_HSTS_SECONDS", "0"))
     SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS")
     SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD")
+
+# Django handles request exceptions before Gunicorn sees them. Emit safe stack
+# locations to stderr in production without exception values or request payloads.
+if not DEBUG:
+    LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {"safe_exception": {"()": "core.exception_logging.SafeExceptionFormatter"}},
+        "handlers": {
+            "request_stderr": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+                "formatter": "safe_exception",
+                "level": "ERROR",
+            },
+        },
+        "loggers": {
+            "django.request": {
+                "handlers": ["request_stderr"],
+                "level": "ERROR",
+                "propagate": False,
+            },
+        },
+    }
