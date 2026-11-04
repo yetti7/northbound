@@ -259,3 +259,25 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 [data-tbr-catalog] input{min-width:0;max-width:100%}
 [data-tbr-catalog] .card{min-width:0;overflow-wrap:anywhere}
 .sticky-identity > tbody > .inactive-participation > td:first-child{opacity:1}
+
+/* Participant submission management: preserve the sticky Book identity. */
+.participant-submissions > thead > tr > :first-child,
+.participant-submissions > tbody > tr > td:first-child{min-width:18rem;max-width:28rem;white-space:normal}
+.participant-submissions .submission-external-link{display:inline-block;white-space:nowrap}
+.submission-actions{display:inline-flex}
+.submission-menu-toggle{font:inherit;font-weight:700;letter-spacing:.12em;color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:.2rem .65rem;cursor:pointer}
+.submission-action-menu{position:fixed;z-index:10000;min-width:12rem;max-width:calc(100vw - 16px);overflow:auto;padding:.35rem;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow)}
+.submission-action-menu[hidden]{display:none}
+.submission-action-menu a{display:block;padding:.55rem .75rem;border-radius:7px;text-decoration:none;white-space:nowrap}
+.submission-action-menu a:hover,.submission-action-menu a:focus-visible{background:var(--panel2)}
+.submission-action-menu .submission-action-warning{color:#edbd66}
+.submission-action-menu .submission-action-danger{color:var(--danger)}
+.submission-menu-toggle:focus-visible,.submission-action-menu a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.submission-immersive-link{display:block;font-size:.85rem;margin-top:.3rem}
+.platform-groups > thead > tr > :first-child,.platform-groups > tbody > tr > td:first-child{min-width:12rem;max-width:24rem;overflow-wrap:normal;word-break:normal}
+.platform-groups td:nth-child(2){min-width:9rem;max-width:16rem;overflow-wrap:break-word}
+.platform-groups td:nth-child(4){min-width:12rem;max-width:24rem;white-space:normal;overflow-wrap:break-word}
+.platform-groups .status-badge{white-space:nowrap}
+.group-open-link{white-space:nowrap}
+.group-owner-list summary{cursor:pointer}
+.group-owner-list ul{margin:.4rem 0;padding-left:1.2rem}

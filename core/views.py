@@ -36,7 +36,7 @@ from .forms import AccountProfileForm, BookSubmissionForm, BotmBookForm, BotmRea
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, BotmBook, BotmCompletionAward, BotmMatch, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverConnection, HardcoverOAuthApplication, Membership, ModifierProvenance, MonthEnrollment, MonthTheme, PersonalTBR, PersonalTBRBook, PersonalTBRCompletionAward, PersonalTBRMatch, PlatformBackupSettings, PlatformOwnerInvitation, ProgressCheckpoint, ProgressCheckpointResult, ReaderHardcoverConnection, ReaderHardcoverSyncPreference, ReadingGroup, RecoveryOperation, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
-from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
+from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_void_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 from .platform_config import get_platform_settings, get_platform_timezone
 from .maintenance import AUDIT_RETENTION_YEARS, audit_prune_preview, cleanup_disposable_cache, disposable_cache_usage, optimize_sqlite_database, prune_audit_history, storage_overview
@@ -3810,9 +3810,9 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
 @transaction.atomic
 def submission_remove(request, group_slug, month_pk, pk):
     submission = get_object_or_404(BookSubmission.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_removed=False)
-    if not can_operate_challenge(request.user, submission.month):
-        return HttpResponseForbidden("A current Host assignment is required.")
-    if reject_locked_month(request, submission.month, "remove a submission"):
+    if not can_void_submission(request.user, submission):
+        return HttpResponseForbidden("Submission void permission is required.")
+    if reject_locked_month(request, submission.month, "void a submission"):
         return redirect(submission.month)
     if request.method == "POST":
         submission.is_removed = True
@@ -3825,9 +3825,9 @@ def submission_remove(request, group_slug, month_pk, pk):
         from .scoring import refresh_submission_score
         refresh_submission_score(submission)
         AuditEvent.objects.create(actor=request.user, group=submission.month.group, action="submission.removed", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Removed {submission.title} by {submission.participant.display_name}. Reason: {submission.removal_reason or 'Not provided'}")
-        messages.success(request, "Book entry removed from active totals. Its audit record was preserved.")
+        messages.success(request, "Submission voided and removed from active totals. Its audit record was preserved.")
         return redirect(submission.month)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {submission.title}?", "description": "The entry will disappear from active totals but remain recoverable in the database audit history.", "cancel_url": submission.month.get_absolute_url()})
+    return render(request, "core/confirm_remove.html", {"title": f"Void Submission: {submission.title}?", "action_label": "Void Submission", "eyebrow": "Submission management", "description": "The entry will disappear from active totals but remain recoverable in the database audit history.", "cancel_url": submission.month.get_absolute_url()})
 
 
 @login_required
@@ -4407,7 +4407,7 @@ def month_detail(request, group_slug, pk):
         "can_review": month.status in REVIEWABLE_MONTH_STATUSES and can_review_challenge(request.user, month),
         "can_review_immersive": month.status in {'active', 'finalizing', 'completed'} and request.user.is_active and (
             can_review_challenge(request.user, month) or bool(membership and membership.role == Membership.Role.OWNER)),
-        "can_remove_submission": month_is_configurable(month) and can_operate_challenge(request.user, month),
+        "can_remove_submission": any(submission.can_void for submission in visible_submissions),
         "is_enrolled": bool(enrollment and enrollment.is_active),
         "reader_enrollment": enrollment,
         "can_edit_registration": bool(enrollment and enrollment.is_active and enrollment.can_reader_edit_registration_answers()),
@@ -6222,6 +6222,8 @@ def _annotate_submission_edit(user, submissions):
     from .immersive_ui import _readable
     for submission in submissions:
         submission.can_edit = can_edit_submission(user, submission)
+        submission.can_void = month_is_configurable(submission.month) and can_void_submission(user, submission)
+        submission.can_purge = bool(user.is_authenticated and user.is_active and user.is_superuser)
         submission.can_view_immersive = _readable(user, submission)
 
 
