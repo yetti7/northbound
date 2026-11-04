@@ -5403,17 +5403,23 @@ def submission_create(request, group_slug, month_pk):
                 submission.status = BookSubmission.Status.APPROVED
                 submission.approved_pages = submission.metadata_pages
                 submission.reviewed_at = timezone.now()
-            submission.full_clean()
-            submission.save()
-            form.save_theme_claims(submission)
-            submission.recalculate_score()
-            synchronize_submission(submission)
-            AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
-        if submission.status == BookSubmission.Status.APPROVED:
-            messages.success(request, "Book submitted and verified through Hardcover.")
-        else:
-            messages.success(request, "Book submitted for moderator review.")
-        return redirect(month)
+            try:
+                submission.full_clean()
+            except ValidationError as exc:
+                _add_validation_error(form, exc)
+            else:
+                submission.save()
+                form.save_theme_claims(submission)
+                submission.recalculate_score()
+                synchronize_submission(submission)
+                synchronize_personal_tbr_submission(submission)
+                AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
+        if not form.errors:
+            if submission.status == BookSubmission.Status.APPROVED:
+                messages.success(request, "Book submitted and verified through Hardcover.")
+            else:
+                messages.success(request, "Book submitted for moderator review.")
+            return redirect(month)
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).exists()
     return render(request, "core/submission_create.html", {"form": form, "month": month, "hardcover_available": connection})
 
@@ -5738,15 +5744,15 @@ def personal_tbr_match_list(request, group_slug, month_pk):
 @login_required
 def personal_tbr_match_synchronize(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not challenge_review_scope(request.user, month):
-        return HttpResponseForbidden("A current Challenge review staffing assignment is required.")
+    from .permissions import can_reconcile_personal_tbr
+    if not can_reconcile_personal_tbr(request.user, month):
+        return HttpResponseForbidden("A Host, Group Owner or Platform Owner is required for reconciliation.")
     if request.method != "POST":
         return HttpResponseForbidden("A POST request is required.")
-    submissions = scope_reviewable_submissions(request.user, month, month.submissions.all()).order_by("pk")
-    for submission in submissions:
-        synchronize_personal_tbr_submission(submission)
-    messages.success(request, "Personal TBR match history synchronized for your review scope.")
-    return redirect("personal-tbr-match-list", group_slug=group_slug, month_pk=month_pk)
+    return HttpResponse(
+        "Immediate synchronization is disabled. Use the administrative reconcile_personal_tbr command "
+        "to preview and explicitly confirm this Challenge's missing-match repair.", status=409,
+    )
 
 
 @login_required

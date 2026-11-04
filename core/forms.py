@@ -1624,6 +1624,19 @@ class BookSubmissionForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.month = month
         if month:
+            self.instance.month = month
+            completion = self.fields["completed_on"]
+            if month.starts_on:
+                completion.widget.attrs["min"] = month.starts_on.isoformat()
+            if month.ends_on:
+                completion.widget.attrs["max"] = month.ends_on.isoformat()
+            if month.starts_on and month.ends_on:
+                completion.help_text = (
+                    f"Complete the book from {month.starts_on:%B %d, %Y} through "
+                    f"{month.ends_on:%B %d, %Y}, inclusive."
+                )
+            else:
+                completion.help_text = "The Challenge schedule must be configured before accepting submissions."
             themes = month.themes.filter(is_active=True, is_visible=True)
             self.fields["themes"].queryset = themes
             for theme in themes.exclude(prompt=""):
@@ -1638,6 +1651,10 @@ class BookSubmissionForm(forms.ModelForm):
         themes = list(cleaned.get("themes") or [])
         completed_on = cleaned.get("completed_on")
         if completed_on:
+            if self.month and self.month.starts_on and self.month.ends_on and not (
+                self.month.starts_on <= completed_on <= self.month.ends_on
+            ):
+                self.add_error("completed_on", "Completion date must fall inside the challenge month.")
             for theme in themes:
                 if not (theme.starts_on <= completed_on <= theme.ends_on):
                     self.add_error("themes", f"{theme.name} only applies from {theme.starts_on} through {theme.ends_on}.")

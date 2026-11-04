@@ -1,5 +1,23 @@
 # Release notes
 
+## v1.0.7 — November 3, 2026
+
+### Submission and Personal TBR hotfixes
+
+- Invalid completion dates now show helpful form errors instead of an HTTP 500,
+  with the Challenge's inclusive permitted date range displayed on the form.
+- Hardcover-verified submissions now update matching Personal TBR completions
+  automatically, without granting duplicate credit.
+- Missing or unavailable book covers use consistent placeholders across TBR and
+  BOTM cards, while preserving completion badges and mobile layouts.
+- Authorized administrators can preview and explicitly confirm missing Personal
+  TBR matches using a controlled command. Historical awards and checkpoint
+  snapshots are preserved; reconciliation never runs automatically.
+- Production error logging now provides privacy-conscious exception diagnostics.
+
+No database migration is required. Deployment and historical reconciliation are
+separate operations. Metadata refresh and submission editing are deferred to v1.0.8.
+
 ## v1.0.6 — October 31, 2026
 
 ### Registration confirmation hotfix
