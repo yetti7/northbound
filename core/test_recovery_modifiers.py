@@ -19,7 +19,7 @@ from .models import (
 from .personal_tbr_matching import synchronize_reader as synchronize_tbr_reader
 from .recovery import RecoveryRequest
 from .recovery_modifiers import (
-    botm_match_label, game_application_label, purge_botm_match,
+    botm_match_label, game_application_label, purge_botm_match, correct_botm_book,
     rebuild_locked_tbr, recover_botm_match, recover_game_application,
     recover_tbr_match, repair_tbr_entry, set_botm_book_retired,
     recreate_game_application, set_game_active, tbr_label, tbr_match_label,
@@ -249,6 +249,18 @@ class ModifierDomainRecoveryTests(TestCase):
                 1,
             )
 
+    def test_existing_botm_recovery_keeps_display_aligned_with_explicit_repair(self):
+        values = dict(catalog_book=self.catalog_one, catalog_edition=None,
+            title_snapshot="Repaired BOTM", author_snapshot="Writer", page_count_snapshot=310,
+            cover_url_snapshot="", source_url_snapshot="")
+        correct_botm_book(book=self.botm_one, values=values, allow_used=True,
+            recovery_request=self.request(action="botm_book.repair", target=self.botm_one,
+                label=str(self.botm_one), tier=3, password="root-password-581!"))
+        self.botm_one.refresh_from_db()
+        self.assertEqual(self.botm_one.display_title, "Repaired BOTM")
+        self.assertEqual(self.botm_one.display_page_count, 310)
+        self.assertIsNone(self.botm_one.display_refreshed_at)
+
     def test_locked_tbr_entry_repair_requires_tier_three_and_reruns_matching(self):
         values = {
             "catalog_book": self.catalog_one, "catalog_edition": None,
@@ -269,6 +281,8 @@ class ModifierDomainRecoveryTests(TestCase):
         )
         self.tbr_one.refresh_from_db()
         self.assertEqual((self.tbr_one.title_snapshot, self.tbr_one.position), ("Corrected Stacked Book", 1))
+        self.assertEqual(self.tbr_one.display_title, "Corrected Stacked Book")
+        self.assertEqual(self.tbr_one.display_page_count, 310)
         self.assertTrue(PersonalTBRMatch.objects.filter(personal_tbr_book=self.tbr_one).exists())
 
     def test_whole_locked_tbr_rebuild_validates_max_duplicates_order_subnine_and_rolls_back(self):
@@ -296,6 +310,9 @@ class ModifierDomainRecoveryTests(TestCase):
         self.assertEqual(list(self.tbr.books.values_list("position", "title_snapshot")), before)
         rebuild_locked_tbr(tbr=self.tbr, books=[duplicate], recovery_request=request)
         self.assertEqual(list(self.tbr.books.values_list("position", "title_snapshot")), [(1, "Same")])
+        rebuilt = self.tbr.books.get()
+        self.assertEqual((rebuilt.display_title, rebuilt.display_author, rebuilt.display_page_count), ("Same", "Writer", 100))
+        self.assertIsNone(rebuilt.display_refreshed_at)
         self.assertFalse(PersonalTBRCompletionAward.objects.filter(personal_tbr=self.tbr, is_qualifying=True).exists())
 
     def test_exact_nine_rebuild_can_qualify_but_shorter_complete_list_never_does(self):

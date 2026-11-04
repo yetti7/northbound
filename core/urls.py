@@ -1,7 +1,12 @@
 from django.urls import path
 from . import views
 
+from . import immersive_ui
+
 urlpatterns = [
+    path('groups/<slug:group_slug>/months/<int:month_pk>/immersive/settings/', immersive_ui.settings_view, name='immersive-settings'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/immersive/', immersive_ui.submission_view, name='submission-immersive'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/immersive/<int:pk>/<str:operation>/', immersive_ui.action_view, name='immersive-action'),
     path("health/", views.health, name="health"),
     path("config/login/", views.RootLoginView.as_view(), name="config-login"),
     path("config/", views.config_dashboard, name="config-dashboard"),
@@ -162,6 +167,8 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/personal-tbr/matches/", views.personal_tbr_match_list, name="personal-tbr-match-list"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/personal-tbr/matches/synchronize/", views.personal_tbr_match_synchronize, name="personal-tbr-match-synchronize"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/personal-tbr/matches/<int:pk>/<str:decision>/", views.personal_tbr_match_review, name="personal-tbr-match-review"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/botm/<int:pk>/refresh/", views.selection_metadata_refresh, {"kind": "botm"}, name="botm-metadata-refresh"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/personal-tbr/books/<int:pk>/refresh/", views.selection_metadata_refresh, {"kind": "tbr"}, name="tbr-metadata-refresh"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/botm/<int:pk>/edit/", views.botm_book_edit, name="botm-book-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/botm/<int:pk>/retire/", views.botm_book_retire, name="botm-book-retire"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/botm/<int:pk>/reactivate/", views.botm_book_reactivate, name="botm-book-reactivate"),
@@ -194,6 +201,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/", views.submission_create, name="submission-create"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/catalog/", views.submission_catalog, name="submission-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/", views.review_queue, name="review-queue"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/", views.submission_edit, name="submission-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/<int:pk>/", views.submission_review, name="submission-review"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/remove/", views.submission_remove, name="submission-remove"),
     path("groups/<slug:group_slug>/participants/<int:pk>/remove/", views.participant_deactivate, name="participant-deactivate"),

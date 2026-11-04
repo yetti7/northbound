@@ -12,6 +12,10 @@ reading tracker and does not import personal reading history.
 - Accounts and multiple Groups with Group Owner, Moderator and Member authority.
 - Challenge registration and lifecycle, teams, Hosts, Team Leaders and Floaters.
 - Completed-book submissions and review, Themes, Book of the Month and Personal TBR.
+- Authorized submission corrections, date-aware Theme selection, and independent
+  Immersive Reading requests with captured percentage rates and staff approval.
+- Optional versioned registration agreements with private acceptance history.
+- Individual Hardcover display-metadata refresh, preserving selection evidence and scores.
 - Staff-assisted Challenge TBR planning and protected corrections through Manage TBR,
   with cover previews, optional manual cover URLs and preserved edition artwork.
 - Manual Rewards / Games, checkpoints, and team/participant reporting, keeping
@@ -117,4 +121,4 @@ See [Hardcover setup and operations](docs/HARDCOVER.md).
 | Architecture and data boundaries | [Project overview](docs/PROJECT_OVERVIEW.md) |
 | Brief authority/lifecycle reference | [Roles and lifecycle](docs/ROLES_AND_LIFECYCLE.md) |
 
-Patch details and acceptance coverage: [release notes, including the v1.0.3 draft](docs/RELEASE_NOTES.md).
+Published patch details and acceptance coverage: [release notes](docs/RELEASE_NOTES.md).

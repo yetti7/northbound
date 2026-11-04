@@ -45,7 +45,12 @@
     active.forEach((card) => {
       const cover = card.querySelector('input[name$="-cover_url_snapshot"]');
       cover.readOnly = Boolean(card.querySelector('input[name$="-catalog_selection"]').value) || card.dataset.catalogCoverLocked === 'true';
-      previewCover(card, cover.value, card.querySelector('input[name$="-title_snapshot"]').value);
+      const title = card.querySelector('input[name$="-title_snapshot"]').value;
+      const newSelection = Boolean(card.querySelector('input[name$="-catalog_selection"]').value);
+      const savedSelection = Boolean(card.querySelector('input[name$="-existing_selection"]')?.value);
+      const savedCover = savedSelection && !newSelection && card.hasAttribute('data-display-cover') && cover.value === card.dataset.evidenceCover;
+      const savedTitle = savedSelection && !newSelection && card.hasAttribute('data-display-title') && title === card.dataset.evidenceTitle;
+      previewCover(card, savedCover ? card.dataset.displayCover : cover.value, savedTitle ? card.dataset.displayTitle : title);
     });
     active.forEach((card, index) => {
       card.querySelector('[data-tbr-number]').textContent = index + 1;
@@ -74,6 +79,7 @@
     if (event.target.matches('[data-tbr-up]') && index > 0) list.insertBefore(card, active[index - 1]);
     if (event.target.matches('[data-tbr-down]') && index < active.length - 1) list.insertBefore(active[index + 1], card);
     if (event.target.matches('[data-tbr-remove]')) {
+      if (target === card) root.querySelector('[data-tbr-cancel-target]')?.click();
       card.querySelector('input[name$="-DELETE"]').checked = true;
       card.hidden = true;
     }
@@ -84,18 +90,24 @@
       const cancelTarget = root.querySelector('[data-tbr-cancel-target]');
       if (status) status.textContent = `The selected edition will replace Book ${index + 1} only.`;
       if (cancelTarget) cancelTarget.hidden = false;
-      root.querySelector('[data-tbr-catalog]')?.scrollIntoView({behavior: 'smooth'});
+      const search = root.querySelector('[data-tbr-catalog]');
+      card.appendChild(search);
+      search.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      search.querySelector('input[type=search]').focus({preventScroll: true});
     }
     sync();
   });
   const catalog = root.querySelector('[data-tbr-catalog]');
   if (catalog) {
+    const home = document.createElement('span');
+    catalog.before(home);
     const status = catalog.querySelector('[data-tbr-catalog-status]');
     const results = catalog.querySelector('[data-tbr-catalog-results]');
     const searchInput = catalog.querySelector('#tbr-catalog-search');
     const cancelTarget = catalog.querySelector('[data-tbr-cancel-target]');
     const csrf = root.querySelector('[name=csrfmiddlewaretoken]').value;
     function resetToGlobal(message) {
+      home.after(catalog);
       selectionMode = 'global-add';
       target = null;
       cancelTarget.hidden = true;
@@ -155,6 +167,12 @@
       }, bookCoverUrl)));
       status.textContent = payload.editions.length ? 'Select an edition.' : 'No editions found. Manual entry remains available.';
     }
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        catalog.querySelector('[data-tbr-search]').click();
+      }
+    });
     catalog.querySelector('[data-tbr-search]').addEventListener('click', async () => {
       const query = searchInput.value.trim();
       if (!query) { status.textContent = 'Enter a title, author, ISBN, or Hardcover link first.'; return; }

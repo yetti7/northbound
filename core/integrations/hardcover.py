@@ -235,3 +235,44 @@ def resolve_scoring_edition(token, selected):
         return None, None
     scoring, _ = lookup_edition(token, candidate["edition_id"])
     return scoring, "hardcover_audio"
+
+
+# Fetch-only: never route through the shared catalog/cache persistence helpers.
+REFRESH_EDITION_QUERY = 'query RefreshEdition($id: Int!) { editions_by_pk(id: $id) { id canonical_id book_id title pages cached_contributors image { url } book { id canonical_id } } }'
+
+
+@sensitive_variables("token")
+def fetch_edition_metadata(token, *, edition_id, book_id):
+    """Return raw display candidates only after unambiguous identity validation."""
+    def identifier(value):
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            raise HardcoverConnectionError("Hardcover returned an invalid edition identity.")
+        text = str(value)
+        if not text.isdecimal() or int(text) <= 0 or str(int(text)) != text:
+            raise HardcoverConnectionError("Hardcover returned an invalid edition identity.")
+        return text
+    expected_edition, expected_book = identifier(edition_id), identifier(book_id)
+    result = execute_graphql(token, REFRESH_EDITION_QUERY, {"id": int(expected_edition)})
+    item = result.get("editions_by_pk")
+    if not isinstance(item, dict) or not isinstance(item.get("book"), dict):
+        raise HardcoverConnectionError("The saved Hardcover edition is unavailable.")
+    parent = item["book"]
+    if ("canonical_id" not in item or "canonical_id" not in parent
+            or identifier(item.get("id")) != expected_edition
+            or identifier(item.get("book_id")) != expected_book
+            or identifier(parent.get("id")) != expected_book
+            or item.get("canonical_id") is not None
+            or parent.get("canonical_id") is not None):
+        raise HardcoverConnectionError("Hardcover edition/work identity changed. The saved selection was preserved.")
+    # Contributor data is provider-controlled JSON; ignore malformed members.
+    names = []
+    contributors = item.get("cached_contributors")
+    for contributor in contributors if isinstance(contributors, list) else []:
+        name = contributor if isinstance(contributor, str) else (
+            contributor.get("author", {}).get("name")
+            if isinstance(contributor, dict) and isinstance(contributor.get("author"), dict) else None
+        )
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return {"title": item.get("title"), "author": ", ".join(names),
+            "cover_url": _image_url(item.get("image")), "page_count": item.get("pages")}

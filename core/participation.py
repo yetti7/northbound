@@ -19,13 +19,27 @@ def _validate_participant(month, participant):
 
 
 @transaction.atomic
-def activate_participation(*, month, participant, actor, origin):
+def activate_participation(*, month, participant, actor, origin, agreement_accepted=False, agreement_version=''):
+    from .models import ChallengeMonth
+    month = ChallengeMonth.objects.select_for_update().get(pk=month.pk)
     _validate_participant(month, participant)
+    new_agreement = month.registration_agreement_enabled and not MonthEnrollment.objects.filter(month=month, participant=participant).exists()
+    if new_agreement:
+        if (getattr(actor, 'pk', None) != participant.user_id or origin != MonthEnrollment.Origin.SELF
+            or not getattr(actor, 'is_active', False)):
+            raise ValidationError('This Reader must self-register and accept the Challenge Agreement before being added to the roster or a team.')
+        if not month.registration_is_open or month.status not in {'upcoming', 'active'}:
+            raise ValidationError('Registration is not currently available for this Challenge.')
+        from .registration_agreements import validate_acceptance
+        validate_acceptance(month=month, actor=actor, accepted=agreement_accepted, version=agreement_version)
     enrollment, created = MonthEnrollment.objects.select_for_update().get_or_create(
         month=month,
         participant=participant,
         defaults={"enrolled_by": actor, "origin": origin, "is_active": True},
     )
+    if created and new_agreement:
+        from .registration_agreements import record_acceptance
+        record_acceptance(enrollment=enrollment, actor=actor, accepted=agreement_accepted, version=agreement_version)
     reactivated = not created and not enrollment.is_active
     if reactivated:
         enrollment.is_active = True
@@ -56,6 +70,8 @@ def activate_participation(*, month, participant, actor, origin):
         synchronize_reader(month=month, participant=participant)
         from .personal_tbr_matching import synchronize_reader as synchronize_personal_tbr_reader
         synchronize_personal_tbr_reader(month=month, participant=participant)
+        from .immersive import synchronize_reader_awards
+        synchronize_reader_awards(month=month, participant=participant)
     return enrollment, created, reactivated
 
 
@@ -138,6 +154,8 @@ def deactivate_participation(*, enrollment, actor, reason, note=""):
     synchronize_reader(month=enrollment.month, participant=enrollment.participant)
     from .personal_tbr_matching import synchronize_reader as synchronize_personal_tbr_reader
     synchronize_personal_tbr_reader(month=enrollment.month, participant=enrollment.participant)
+    from .immersive import synchronize_reader_awards
+    synchronize_reader_awards(month=enrollment.month, participant=enrollment.participant)
     return enrollment, True
 
 

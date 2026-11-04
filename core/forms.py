@@ -1293,6 +1293,15 @@ class GameRewardVoidForm(forms.Form):
 
 
 class CompetitionVisibilityForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Presentation-only labels keep historical model/migration choices intact.
+        for name in ('team_standings_visibility', 'reader_scores_visibility'):
+            self.fields[name].choices = [
+                (value, 'Hosts + Floaters + Team Leaders' if value == 'hosts_leaders' else label)
+                for value, label in self.fields[name].choices
+            ]
+
     class Meta:
         model = ChallengeMonth
         fields = ("team_standings_visibility", "reader_scores_visibility")
@@ -1301,8 +1310,8 @@ class CompetitionVisibilityForm(forms.ModelForm):
             "reader_scores_visibility": "Reader Scores",
         }
         help_texts = {
-            "team_standings_visibility": "Controls which Challenge roles can see team totals and team comparisons.",
-            "reader_scores_visibility": "Controls which Challenge roles can see individual Reader Base, Modifier, and Total scores.",
+            "team_standings_visibility": "Controls which Challenge roles can see team totals and team comparisons. Hosts + Floaters + Team Leaders includes current Challenge Floaters and Team Leaders for their assigned team; administrative oversight is preserved.",
+            "reader_scores_visibility": "Controls which Challenge roles can see individual Reader Base, Modifier, and Total scores. Hosts + Floaters + Team Leaders includes current Challenge Floaters and Team Leaders for their assigned team; administrative oversight is preserved.",
         }
 
 
@@ -1502,6 +1511,8 @@ class TeamAssignmentForm(forms.ModelForm):
             ended_at__isnull=True,
         ).exists():
             self.add_error("participant", "End this member's active Floater assignment before assigning them to a team.")
+        if participant and self.month.registration_agreement_enabled and not self.month.enrollments.filter(participant=participant).exists():
+            self.add_error('participant', 'This Reader must self-register and accept the Challenge Agreement before being added.')
         return cleaned
 
     def save(self, actor, commit=True):
@@ -1539,6 +1550,8 @@ class MonthEnrollmentForm(forms.Form):
             ended_at__isnull=True,
         ).exists():
             self.add_error("participant", "End this member's active Floater assignment before enrolling them as a Reader.")
+        if participant and self.month.registration_agreement_enabled and not self.month.enrollments.filter(participant=participant).exists():
+            self.add_error('participant', 'This Reader must self-register and accept the Challenge Agreement before being added.')
         return cleaned
 
     def save(self, enrolled_by=None, commit=True):
@@ -1609,9 +1622,28 @@ class MembershipRoleForm(forms.ModelForm):
         fields = ("role", "is_active")
 
 
+class ThemeEligibilityWidget(forms.CheckboxSelectMultiple):
+    """Keep every offered Theme visible with its inclusive date window."""
+    option_template_name = 'core/widgets/theme_option.html'
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        theme = getattr(value, 'instance', None)
+        if theme:
+            option['attrs'].update({'data-theme-start': theme.starts_on.isoformat(),
+                                    'data-theme-end': theme.ends_on.isoformat()})
+            option['window'] = f'{theme.starts_on:%b %d, %Y} – {theme.ends_on:%b %d, %Y}, inclusive'
+            completed = getattr(self, 'completed_on', None)
+            eligible = completed and theme.starts_on.isoformat() <= completed <= theme.ends_on.isoformat()
+            if not eligible:
+                option['attrs']['disabled'] = True
+                option['reason'] = 'Unavailable for this completion date.' if completed else 'Choose a completion date first.'
+        return option
+
+
 class BookSubmissionForm(forms.ModelForm):
     catalog_selection = forms.CharField(required=False, widget=forms.HiddenInput())
-    themes = forms.ModelMultipleChoiceField(queryset=MonthTheme.objects.none(), required=False, widget=forms.CheckboxSelectMultiple, label="Theme Claims")
+    themes = forms.ModelMultipleChoiceField(queryset=MonthTheme.objects.none(), required=False, widget=ThemeEligibilityWidget, label="Theme Claims")
 
     class Meta:
         model = BookSubmission
@@ -1637,6 +1669,8 @@ class BookSubmissionForm(forms.ModelForm):
                 )
             else:
                 completion.help_text = "The Challenge schedule must be configured before accepting submissions."
+            date_value = self.data.get(self.add_prefix('completed_on')) if self.is_bound else self.initial.get('completed_on')
+            self.fields['themes'].widget.completed_on = str(date_value or '')
             themes = month.themes.filter(is_active=True, is_visible=True)
             self.fields["themes"].queryset = themes
             for theme in themes.exclude(prompt=""):
@@ -1718,6 +1752,92 @@ class BookSubmissionForm(forms.ModelForm):
         return claims
 
 
+class CorrectionEditionChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, edition):
+        return f"{edition.book.title} — {edition.format_name or 'Edition'} (Hardcover #{edition.provider_edition_id})"
+
+
+class SubmissionCorrectionForm(BookSubmissionForm):
+    confirm_theme_removal = forms.BooleanField(required=False,
+        label='Confirm removal of existing Theme claims',
+        help_text='Required only when removing an existing selection, including one cleared by a date change. Claim history is retained; applicable scores may change.')
+    version = forms.CharField(widget=forms.HiddenInput())
+    edition = CorrectionEditionChoiceField(queryset=CatalogEdition.objects.none(), required=False,
+        empty_label="Keep current edition", label="Hardcover Edition",
+        help_text="Choose a different saved edition to change the association. Leaving this blank keeps the current edition. A different edition supplies its current title, author and pages unless you enter corrections.")
+    manual_page_override = forms.BooleanField(required=False, label="Use a manual page count (not Hardcover-verified)",
+        help_text="Changing the page count is a manual override. Select this to use the entered count for a different edition, even when the number is unchanged.")
+
+    class Meta(BookSubmissionForm.Meta):
+        fields = ("title", "author", "completed_on", "submitted_pages")
+        labels = {**BookSubmissionForm.Meta.labels, "submitted_pages": "Page Count"}
+
+    def __init__(self, *args, **kwargs):
+        submission = kwargs['instance']
+        self.original_status = submission.status
+        self.original_pages = submission.approved_pages if submission.approved_pages is not None else submission.submitted_pages
+        self.original_edition_id = submission.catalog_edition_id
+        self.original_text = {name: getattr(submission, name) for name in ("title", "author")}
+        super().__init__(*args, **kwargs)
+        self.fields.pop('catalog_selection')
+        self.fields['edition'].queryset = CatalogEdition.objects.filter(
+            provider='hardcover', book__provider='hardcover').select_related('book').order_by('book__title', 'provider_edition_id')
+        self.initial['edition'] = self.original_edition_id
+        self.initial['submitted_pages'] = self.original_pages
+        self.initial['manual_page_override'] = bool(submission.catalog_edition_id and submission.verification_method == 'manual')
+        claims = {claim.theme_id: claim for claim in submission.theme_claims.select_related('theme')}
+        from django.db.models import Q
+        themes = self.month.themes.filter(Q(is_active=True, is_visible=True) | Q(pk__in=claims)).distinct()
+        self.fields['themes'].queryset = themes
+        self.original_theme_ids = {key for key, claim in claims.items() if claim.status != 'rejected'}
+        self.initial['themes'] = list(self.original_theme_ids)
+        for theme in themes.exclude(prompt=''):
+            name = f'theme_response_{theme.pk}'
+            if name not in self.fields:
+                self.fields[name] = forms.CharField(label=theme.prompt, required=False,
+                    widget=forms.Textarea(attrs={'rows': 2}))
+            if theme.pk in claims:
+                self.initial[name] = claims[theme.pk].response
+                self.fields[name].disabled = True
+                self.fields[name].help_text = 'The existing claim response is preserved.'
+        # Validation of a pending/rejected historical Hardcover row must not
+        # force automatic approval. The engine alone persists status changes.
+        if self.original_status != 'approved': self.instance.verification_method = 'manual'
+        self.order_fields(['version', 'title', 'author', 'edition', 'completed_on', 'submitted_pages', 'manual_page_override', 'themes', 'confirm_theme_removal'])
+
+    def clean(self):
+        cleaned = forms.ModelForm.clean(self)
+        completed = cleaned.get('completed_on')
+        if completed and self.month.starts_on and self.month.ends_on and not self.month.starts_on <= completed <= self.month.ends_on:
+            self.add_error('completed_on', 'Completion date must fall inside the challenge month.')
+        for theme in cleaned.get('themes') or []:
+            if completed and not theme.starts_on <= completed <= theme.ends_on:
+                self.add_error('themes', f'{theme.name} only applies from {theme.starts_on} through {theme.ends_on}.')
+        if 'themes' in cleaned:
+            removed = self.original_theme_ids - {theme.pk for theme in cleaned['themes']}
+            if removed and not cleaned.get('confirm_theme_removal'):
+                self.add_error('confirm_theme_removal', 'Confirm removal of existing Theme claims before saving, or restore the selections/date.')
+        return cleaned
+
+    def correction_changes(self):
+        values = {'completed_on': self.cleaned_data['completed_on']}
+        for name in ('title', 'author'):
+            if self.cleaned_data[name] != self.original_text[name]:
+                values[name] = self.cleaned_data[name]
+        values['theme_ids'] = [theme.pk for theme in self.cleaned_data['themes']]
+        values['theme_responses'] = {theme.pk: self.cleaned_data.get(f'theme_response_{theme.pk}', '')
+                                    for theme in self.cleaned_data['themes']}
+        edition = self.cleaned_data.get('edition')
+        if edition is not None and edition.pk != self.original_edition_id:
+            values['catalog_edition_id'] = edition.pk
+        if self.cleaned_data['manual_page_override'] or self.cleaned_data['submitted_pages'] != self.original_pages:
+            values['page_count'] = self.cleaned_data['submitted_pages']
+        return values
+
+    def save(self, *args, **kwargs):
+        raise TypeError('Submission corrections must be saved through the correction service.')
+
+
 class SubmissionReviewForm(forms.ModelForm):
     class Meta:
         model = BookSubmission
@@ -1731,3 +1851,24 @@ class ThemeClaimReviewForm(forms.ModelForm):
     class Meta:
         model = ThemeClaim
         fields = ("status",)
+
+
+class ImmersiveSubmissionForm(BookSubmissionForm):
+    immersive_request = forms.BooleanField(required=False,
+        label='I read and listened to this book (Immersive Reading)')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        field = self.fields['immersive_request']
+        if self.month.immersive_enabled:
+            field.help_text = f'Request an additional {self.month.immersive_bonus_percent}% of approved base pages. This bonus requires separate staff approval.'
+        else:
+            field.widget = forms.HiddenInput()
+
+
+class ImmersiveSettingsForm(forms.ModelForm):
+    class Meta:
+        model = ChallengeMonth
+        fields = ('immersive_enabled', 'immersive_bonus_percent')
+        labels = {'immersive_enabled': 'Enable Immersive Reading', 'immersive_bonus_percent': 'Immersive Bonus Percentage'}
+        widgets = {'immersive_bonus_percent': forms.NumberInput(attrs={'min': 0, 'max': 200})}

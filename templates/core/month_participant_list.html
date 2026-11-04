@@ -7,7 +7,7 @@
 </div>
 
 <div class="table-wrap participant-planning-desktop operational-table-region" role="region" aria-label="Challenge participant planning table" tabindex="0">
-  <table class="participant-planning-table">
+  <table class="sticky-identity participant-planning-table">
     <thead><tr>
       <th><a class="table-sort" href="{{ sort_headers.reader.url }}">Reader{% if sort_headers.reader.active %} {% if sort_headers.reader.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
       {% if can_view_planning_data %}

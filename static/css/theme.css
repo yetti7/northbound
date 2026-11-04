@@ -244,3 +244,18 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 [data-book-cover]>[data-book-cover-image],[data-book-cover]>[data-book-cover-placeholder]{position:absolute;inset:0;box-sizing:border-box;height:100%;width:100%;max-width:100%;object-fit:cover}
 .botm-management-card{grid-template-columns:7rem minmax(0,1fr)}
 @media(max-width:520px){.botm-management-card{grid-template-columns:5rem minmax(0,1fr)}}
+.submission-edit-cover{width:7rem;max-width:100%;margin-bottom:1rem}
+@media(max-width:520px){.submission-edit-cover{width:5rem}}
+
+/* Opt-in identities in existing horizontal scroll regions. */
+.sticky-identity > thead > tr > :first-child,
+.sticky-identity > tbody > tr > td:first-child:not([colspan]){position:sticky;left:0;z-index:1;background:var(--panel);box-shadow:2px 0 0 var(--border);max-width:14rem;overflow-wrap:anywhere}
+.sticky-identity > thead > tr > :first-child{z-index:2;background:var(--panel2)}
+.sticky-identity > tbody > tr > td:first-child .participant-cell{white-space:normal}
+.theme-date-note{display:block;margin:0 0 .7rem 1.6rem;color:var(--muted)}
+.theme-date-option:has(input:disabled) label{color:var(--muted)}
+[data-tbr-catalog]{min-width:0;max-width:100%;scroll-margin-top:90px}
+[data-tbr-catalog] .card-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr))}
+[data-tbr-catalog] input{min-width:0;max-width:100%}
+[data-tbr-catalog] .card{min-width:0;overflow-wrap:anywhere}
+.sticky-identity > tbody > .inactive-participation > td:first-child{opacity:1}

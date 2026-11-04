@@ -1,3 +1,4 @@
+from .immersive import review_queue_requests
 from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, ProgressCheckpointResult, ThemeClaim
 from .permissions import challenge_review_scope, is_challenge_host, scope_reviewable_submissions
 
@@ -11,12 +12,14 @@ def challenge_attention_count(user, month):
         month,
         month.submissions.filter(is_removed=False),
     )
+    if month.status not in ACTIONABLE_MONTH_STATUSES:
+        submissions = submissions.none()
     manual_count = submissions.filter(status=BookSubmission.Status.PENDING).count()
     theme_claim_count = ThemeClaim.objects.filter(
         submission_id__in=submissions.values("pk"),
         status=ThemeClaim.Status.PENDING,
     ).count()
-    return manual_count + theme_claim_count
+    return manual_count + theme_claim_count + review_queue_requests(actor=user, month=month).count()
 
 
 def needs_attention_summary(user):
@@ -48,12 +51,25 @@ def needs_attention_summary(user):
             ),
         ).values_list("month_id", flat=True).distinct())
     month_ids.update(assignment.month_id for assignment in host_notices)
+    legacy_month_ids = set(month_ids)
+    # Discover only pending Immersive candidates; the shared queue service makes
+    # the actual authorization/eligibility decision, including Completed reviews.
+    immersive_months = ChallengeMonth.objects.filter(
+        status__in=(*ACTIONABLE_MONTH_STATUSES, ChallengeMonth.Status.COMPLETED),
+        submissions__immersive_requests__status='pending',
+    )
+    if not user.is_superuser:
+        immersive_months = immersive_months.filter(
+            group__memberships__user=user, group__memberships__is_active=True)
+    for month in immersive_months.distinct():
+        if review_queue_requests(actor=user, month=month).exists():
+            month_ids.add(month.pk)
     challenges = []
     for month in ChallengeMonth.objects.filter(pk__in=month_ids).select_related("group"):
         review_count = challenge_attention_count(user, month)
         month_host_notices = [assignment for assignment in host_notices if assignment.month_id == month.pk]
         checkpoint_results = []
-        if user.is_superuser or is_challenge_host(user, month):
+        if month.pk in legacy_month_ids and (user.is_superuser or is_challenge_host(user, month)):
             checkpoint_results = list(ProgressCheckpointResult.objects.filter(
                 checkpoint__month=month,
                 outcome=ProgressCheckpointResult.Outcome.BELOW,
@@ -62,7 +78,7 @@ def needs_attention_summary(user):
             continue
         scope_label = "Entire Challenge"
         if review_count:
-            scope_name, team_ids = challenge_review_scope(user, month)
+            scope_name, team_ids = challenge_review_scope(user, month) or ('challenge', frozenset())
             if scope_name == "team":
                 scope_label = ", ".join(month.teams.filter(pk__in=team_ids).values_list("name", flat=True))
         challenges.append({

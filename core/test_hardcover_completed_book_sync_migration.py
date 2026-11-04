@@ -6,6 +6,13 @@ from django.test import TransactionTestCase
 
 
 class HardcoverCompletedBookSyncMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        try:
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+        finally:
+            super().tearDown()
+
     migrate_from = [("core", "0056_hardcover_sync_foundation")]
     migrate_to = [("core", "0057_hardcover_completed_book_sync")]
 
