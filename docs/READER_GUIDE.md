@@ -297,7 +297,10 @@ each group. Contact a Host about assignment problems—you do not move yourself
 between teams.
 
 Team totals, **Team Comparison**, Reader scores and some planning/progress columns
-depend on competition visibility. Hidden information is not a zero score or an
+depend on competition visibility. Under **Hosts + Floaters + Team Leaders**,
+current Floaters can see competition information across the Challenge; current
+Team Leaders can see it only for their assigned team. This does not grant review
+permissions. Hidden information is not a zero score or an
 error. If reporting filters are available, check **From**, **To** and **Show
 Bonuses**, then use **Apply Filters**. **Reset Filters** helps you compare totals
 on the same basis. A filtered **Displayed Team Total** need not match an unfiltered
@@ -450,3 +453,32 @@ and Challenge name. Do not create duplicate submissions just to fix an existing 
 **Personal sync is unavailable or waiting.** Read the My Account connection and
 health messages. Reconnect if requested; use Sync Now only for existing eligible
 work. A failed external sync does not mean your Northbound score was rejected.
+
+
+## v1.0.8 registration and book updates
+
+If a Challenge enables **Challenge Agreement**, read the displayed terms and check
+**I have read and agree to the terms above.** before reviewing registration. The box
+is never prechecked. Final confirmation records the exact wording you saw; changed
+or expired forms require a new review. Existing registrations are not automatically
+required to accept later wording, and editing answers does not rewrite acceptance.
+
+When enabled, **Immersive Reading** lets you request a percentage bonus for both
+reading and listening to a book. Select the checkbox when submitting, or open
+**Immersive Reading** from an existing submission. Its captured percentage stays
+fixed even if the Challenge rate changes. Hardcover book approval does not approve
+this request: independent staff review is required, after book approval. You can
+explicitly withdraw a pending request and request again after rejection/withdrawal
+while eligible; a new request captures the current rate. Only staff may revoke an
+approved award. Disabling the feature does not cancel existing requests or awards.
+
+Themes remain visible with their inclusive dates. Changing the completion date
+clears selections outside those dates; the server also rejects ineligible claims.
+Contact authorized staff for book corrections rather than making duplicate entries.
+Readers do not gain unrestricted submission editing.
+
+**Refresh Metadata**, when available for your Personal TBR, updates display details
+from its saved Hardcover edition without changing completion matching or scoring.
+Completed/pending selections refresh cover artwork only. Missing or broken covers
+retain the shared placeholder. Hardcover search opens beside the selected TBR book;
+Enter searches without saving your registration form.

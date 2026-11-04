@@ -1,0 +1,2 @@
+{% if submission.can_edit %}<a class="button secondary" href="{% url 'submission-edit' submission.month.group.slug submission.month_id submission.pk %}">Edit Submission</a>{% endif %}
+ {% if submission.can_view_immersive %}{% if submission.month.immersive_enabled or submission.immersive_requests.exists %}<a class="button secondary" href="{% url 'submission-immersive' submission.month.group.slug submission.month_id submission.pk %}">Immersive Reading</a>{% endif %}{% endif %}

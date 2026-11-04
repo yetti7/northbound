@@ -300,6 +300,15 @@ class HardcoverBackupRoundTripTests(SyncFixtureMixin, TransactionTestCase):
 
 
 class HardcoverReleaseMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        from django.db import connection
+        from django.db.migrations.executor import MigrationExecutor
+        try:
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+        finally:
+            super().tearDown()
+
     def test_0059_adds_empty_replay_fence_without_changing_existing_credentials(self):
         from django.db import connection
         from django.db.migrations.executor import MigrationExecutor

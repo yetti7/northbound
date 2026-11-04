@@ -249,6 +249,9 @@ def correct_botm_book(*, book, values, recovery_request, allow_used=False):
             raise ValidationError("BOTM title, author, and positive page count are required.")
         BotmBook.objects.filter(pk=locked.pk).update(
             **values, normalized_title=normalized_title, normalized_author=normalized_author,
+            display_title=values["title_snapshot"], display_author=values["author_snapshot"],
+            display_cover_url=values["cover_url_snapshot"], display_page_count=values["page_count_snapshot"],
+            display_refreshed_at=None,
         )
         BotmMatch.objects.filter(botm_book=locked).update(
             botm_title_snapshot=values["title_snapshot"],
@@ -422,6 +425,11 @@ def repair_tbr_entry(*, book, values, recovery_request, fail_after_step=None):
             "catalog_edition_id": locked.catalog_edition_id, "page_count_snapshot": locked.page_count_snapshot,
         }
         update = {key: value for key, value in candidate.items() if key != "position"}
+        update.update(
+            display_title=candidate["title_snapshot"], display_author=candidate["author_snapshot"],
+            display_cover_url=candidate.get("cover_url_snapshot", ""),
+            display_page_count=candidate.get("page_count_snapshot"), display_refreshed_at=None,
+        )
         PersonalTBRBook.objects.filter(pk=locked.pk).update(**update)
         PersonalTBRCompletionAwardBook.objects.filter(personal_tbr_book=locked).update(
             title_snapshot=candidate["title_snapshot"], author_snapshot=candidate["author_snapshot"],
@@ -474,7 +482,12 @@ def rebuild_locked_tbr(*, tbr, books, recovery_request, fail_after_step=None):
         if fail_after_step == "cleared":
             raise RuntimeError("Injected whole locked TBR rebuild failure.")
         PersonalTBRBook.objects.bulk_create([
-            PersonalTBRBook(personal_tbr=locked, **candidate) for candidate in candidates
+            PersonalTBRBook(
+                personal_tbr=locked, **candidate,
+                display_title=candidate["title_snapshot"], display_author=candidate["author_snapshot"],
+                display_cover_url=candidate.get("cover_url_snapshot", ""),
+                display_page_count=candidate.get("page_count_snapshot"),
+            ) for candidate in candidates
         ])
         if fail_after_step == "created":
             raise RuntimeError("Injected whole locked TBR rebuild failure after creation.")

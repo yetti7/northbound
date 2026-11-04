@@ -1,5 +1,26 @@
 # Release notes
 
+## v1.0.8 — November 4, 2026
+
+### New features
+
+- Immersive Reading: optional, configurable percentage bonuses for reading and listening to a book, with separate staff approval.
+- Registration Agreements: customizable Challenge terms with recorded acceptance and preserved wording history.
+- Authorized submission editing and corrections, with updated scores and retained submission history.
+- Individual Hardcover metadata refresh for Personal TBR and Book of the Month selections.
+
+### Improvements
+
+- Display metadata stays separate from original TBR/BOTM matching evidence.
+- Themes show eligibility dates and update selections when completion dates change.
+- Hardcover TBR search opens beside the relevant book; Enter searches without saving the form.
+- The combined Competition Visibility option includes Hosts, Floaters, and Team Leaders while preserving Team Leader team scope.
+- Sticky identifying columns keep Readers and books visible in wide tables.
+
+### Upgrading
+
+Back up before upgrading. Existing SQLite installations upgrade through migrations **0061–0064**. Immersive Reading and Registration Agreements are **disabled by default**. Existing registrations and historical scoring records are preserved.
+
 ## v1.0.7 — November 3, 2026
 
 ### Submission and Personal TBR hotfixes

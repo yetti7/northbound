@@ -515,6 +515,10 @@ and **Team Standings** separately. Choose the audience your community expects,
 from **Hosts only** through team-limited options to **Everybody**. Everybody
 means Group members, not anonymous visitors. Hosts retain oversight visibility;
 seeing scores does not by itself grant a Reader review authority.
+**Hosts + Floaters + Team Leaders** gives current Challenge Floaters visibility
+across the Challenge and current Team Leaders visibility only for their assigned
+team. Existing Challenges using this option also gain Floater visibility; the
+other audiences are unchanged.
 
 ## End the Challenge in the right stage
 
@@ -597,3 +601,41 @@ check the displayed stage and registration status again before announcing a chan
 stage/lock message. Ask the Group Owner about new Host assignments or Group-only
 settings; do not change a Reader's permanent role to solve a Challenge task.
 For general Group responsibilities, see the [Group Owner Guide](GROUP_OWNER_GUIDE.md).
+
+
+## v1.0.8 registration and submission tools
+
+**Registration Agreements** are configured separately in **Signup Questions**.
+They default to disabled with editable sample wording. Agreement settings remain
+editable in Draft, Upcoming and Active even after questions lock. New Readers must
+accept before final confirmation; staff cannot accept on their behalf or add a new
+Reader to a roster/team first. Existing enrollments and reactivations remain valid.
+Wording changes affect new registrations only. The private registration-detail page
+shows acceptance time, version and exact accepted text; missing historical records
+are labeled **Not recorded**, not fabricated.
+
+**Edit Submission** is available to authorized Hosts, Floaters, scoped Team Leaders,
+Group Owners and Platform Owners during Active/Finalizing. Readers do not gain
+self-edit access. Approved corrections update current scores and applicable bonuses;
+pending books stay pending, and rejected books return to pending. Changing Hardcover
+pages creates a manual override while retaining the edition unless explicitly changed.
+Saved editions are available for edition changes. Theme windows are inclusive;
+removing an existing Theme selection requires explicit confirmation and retains its
+claim history. Stale edits require reloading.
+
+**Immersive Reading** is configured in Challenge Settings, initially disabled at
+100%. Rates may range from 0–200 and affect new requests only. Approval is separate
+from book approval, including Hardcover auto-approval. The shared Review Queue shows
+eligible Immersive requests as separate entries once the book is approved. Independent
+reviewers retain their existing team scope; Group Owners and Platform Owners retain
+oversight. Existing requests may be reviewed in Finalizing and Completed without
+reopening normal book reviews; Archived remains read-only. Approval adds rounded
+base-page-only bonus provenance, including explicit zero-page awards. Revocation
+requires confirmation and preserves history. Disabling blocks new requests but does
+not cancel existing requests/awards; legitimate page corrections retain captured rates.
+
+**Refresh Metadata** updates presentation only, using the saved Hardcover edition.
+Hosts, Group Owners and Platform Owners can refresh shared BOTM selections; eligible
+Readers can refresh their own TBR. Completed or pending selections refresh artwork
+only. Manual selections cannot refresh. Original selection evidence, matching,
+approved pages and awards are preserved; there is no Refresh All action.

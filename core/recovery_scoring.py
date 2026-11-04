@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import (
-    AuditEvent, BookSubmission, BotmCompletionAward,
+    ImmersiveRequest, AuditEvent, BookSubmission, BotmCompletionAward,
     BotmCompletionAwardBook, BotmMatch, ModifierProvenance, MonthTheme,
     PersonalTBRCompletionAward, PersonalTBRCompletionAwardBook,
     PersonalTBRMatch, ThemeClaim,
@@ -108,6 +108,7 @@ def submission_purge_impact(submission):
         month=submission.month, participant=submission.participant,
     ) if tbr_matches.filter(is_qualifying=True).exists() else PersonalTBRCompletionAward.objects.none()
     counts = (
+        ("Blocking Immersive requests", ImmersiveRequest.objects.filter(submission=submission).count()),
         ("Affected Reader", 1),
         ("Affected Challenge", 1),
         ("Theme claims", theme_claims.count()),
@@ -137,12 +138,15 @@ def submission_purge_impact(submission):
             object_type="BookSubmission", object_id=str(submission.pk),
         ).count()),
     )
+    warnings = (
+        ('Purge blocked: protected Immersive requests must be preserved. No records will be deleted.',)
+        if ImmersiveRequest.objects.filter(submission=submission).exists() else
+        ('The submission and its directly linked Theme, BOTM, TBR, and modifier relationships are permanently removed. Shared Reader, Challenge, catalog, completion-award history, and unrelated submissions remain.',)
+    )
     return RecoveryImpactPreview(
         target_label=submission_recovery_label(submission),
         items=tuple(RecoveryImpactItem(label, count) for label, count in counts),
-        warnings=(
-            "The submission and its directly linked Theme, BOTM, TBR, and modifier relationships are permanently removed. Shared Reader, Challenge, catalog, completion-award history, and unrelated submissions remain.",
-        ),
+        warnings=warnings,
     )
 
 
@@ -156,6 +160,8 @@ def purge_submission(*, submission, recovery_request, fail_after_step=None):
             "month__group", "participant__user", "catalog_book", "catalog_edition",
         ).get(pk=submission.pk)
         impact = submission_purge_impact(locked)
+        if ImmersiveRequest.objects.filter(submission=locked).exists():
+            raise ValidationError('Purge blocked: protected Immersive requests must be preserved. No records were deleted.')
         before_score = _reader_score(locked.month, locked.participant)
         target_id = locked.pk
         target_title = locked.title

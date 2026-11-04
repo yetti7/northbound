@@ -1,12 +1,12 @@
 from django.contrib import messages
 from django.conf import settings
 from django.core import signing
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db import connection
 from django.db.models import Count, F, OuterRef, Prefetch, Q, Subquery
 from django.db.models.deletion import ProtectedError
@@ -3383,6 +3383,10 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
         month=month, participant=participant, is_active=True
     ).select_related("submission").order_by("effective_date", "pk")) if score_access else []
 
+    _annotate_submission_edit(request.user, submissions)
+    if tbr_presentation:
+        _annotate_metadata_refresh(request.user, tbr_presentation["books"])
+    _annotate_metadata_refresh(request.user, botm_books)
     return render(request, "core/challenge_participant_detail.html", {
         "month": month, "participant": participant, "enrollment": enrollment,
         "team": team, "challenge_role": challenge_role,
@@ -3803,6 +3807,7 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
 
 
 @login_required
+@transaction.atomic
 def submission_remove(request, group_slug, month_pk, pk):
     submission = get_object_or_404(BookSubmission.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_removed=False)
     if not can_operate_challenge(request.user, submission.month):
@@ -3817,6 +3822,8 @@ def submission_remove(request, group_slug, month_pk, pk):
         submission.save(update_fields=["is_removed", "removed_at", "removed_by", "removal_reason"])
         synchronize_submission(submission)
         synchronize_personal_tbr_submission(submission)
+        from .scoring import refresh_submission_score
+        refresh_submission_score(submission)
         AuditEvent.objects.create(actor=request.user, group=submission.month.group, action="submission.removed", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Removed {submission.title} by {submission.participant.display_name}. Reason: {submission.removal_reason or 'Not provided'}")
         messages.success(request, "Book entry removed from active totals. Its audit record was preserved.")
         return redirect(submission.month)
@@ -4002,6 +4009,25 @@ def challenge_signup_settings(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
     if not can_configure_challenge_registration(request.user, month):
         return HttpResponseForbidden("Challenge registration configuration authority is required.")
+    from .registration_agreements import AgreementSettingsForm, configure_agreement
+    agreement_settings_form = AgreementSettingsForm(
+        request.POST if request.method == 'POST' and request.POST.get('action') == 'save_agreement_settings' else None,
+        instance=month, prefix='agreement')
+    if request.method == 'POST' and request.POST.get('action') == 'save_agreement_settings':
+        if not month_is_configurable(month):
+            return HttpResponseForbidden('Registration configuration is read-only in this Challenge stage.')
+        if agreement_settings_form.is_valid():
+            try:
+                configure_agreement(month=month, actor=request.user,
+                    enabled=agreement_settings_form.cleaned_data['registration_agreement_enabled'],
+                    text=agreement_settings_form.cleaned_data['registration_agreement_text'])
+            except PermissionDenied:
+                return HttpResponseForbidden('Registration configuration authority is no longer available.')
+            except (ValidationError, DatabaseError):
+                agreement_settings_form.add_error(None, 'Settings could not be saved. Reload and check the current Challenge state.')
+            else:
+                messages.success(request, 'Registration Agreement updated. Existing acceptances were preserved.')
+                return redirect('challenge-signup-settings', group_slug=group_slug, month_pk=month.pk)
     questions = list(month.signup_questions.all())
     schema_locked = month.signup_schema_is_locked
     lifecycle_locked = not month_is_configurable(month)
@@ -4040,6 +4066,7 @@ def challenge_signup_settings(request, group_slug, month_pk):
             "lifecycle_locked": lifecycle_locked,
             "configuration_read_only": True,
             "tbr_settings_form": tbr_settings_form,
+            "agreement_settings_form": agreement_settings_form,
         })
     initial = [
         {
@@ -4051,14 +4078,14 @@ def challenge_signup_settings(request, group_slug, month_pk):
         }
         for question in questions
     ]
-    registration_post = request.POST if request.method == "POST" and request.POST.get("action") != "save_tbr_settings" else None
+    registration_post = request.POST if request.method == "POST" and request.POST.get("action") not in {"save_tbr_settings", "save_agreement_settings"} else None
     settings_form = ChallengeRegistrationSettingsForm(registration_post, instance=month, prefix="settings")
     question_formset = ChallengeSignupQuestionFormSet(
         registration_post,
         initial=initial,
         prefix="questions",
     )
-    if request.method == "POST" and request.POST.get("action") != "save_tbr_settings" and settings_form.is_valid() and question_formset.is_valid():
+    if request.method == "POST" and request.POST.get("action") not in {"save_tbr_settings", "save_agreement_settings"} and settings_form.is_valid() and question_formset.is_valid():
         with transaction.atomic():
             locked_month = ChallengeMonth.objects.select_for_update().get(pk=month.pk)
             if locked_month.enrollments.exists():
@@ -4101,6 +4128,7 @@ def challenge_signup_settings(request, group_slug, month_pk):
         "lifecycle_locked": False,
         "configuration_read_only": False,
         "tbr_settings_form": tbr_settings_form,
+        "agreement_settings_form": agreement_settings_form,
     })
 
 
@@ -4348,6 +4376,7 @@ def month_detail(request, group_slug, pk):
     else:
         visible_submissions = visible_submissions.filter(participant=membership)
         submission_heading = "My Submissions"
+    _annotate_submission_edit(request.user, visible_submissions)
     pending_submissions = scope_reviewable_submissions(
         request.user,
         month,
@@ -4376,6 +4405,8 @@ def month_detail(request, group_slug, pk):
         "can_manage_challenge_announcements": month_is_configurable(month) and can_manage_challenge_announcements(request.user, month),
         "can_manage_teams": month_is_configurable(month) and can_operate_challenge(request.user, month),
         "can_review": month.status in REVIEWABLE_MONTH_STATUSES and can_review_challenge(request.user, month),
+        "can_review_immersive": month.status in {'active', 'finalizing', 'completed'} and request.user.is_active and (
+            can_review_challenge(request.user, month) or bool(membership and membership.role == Membership.Role.OWNER)),
         "can_remove_submission": month_is_configurable(month) and can_operate_challenge(request.user, month),
         "is_enrolled": bool(enrollment and enrollment.is_active),
         "reader_enrollment": enrollment,
@@ -4805,9 +4836,13 @@ def team_assignment_create(request, group_slug, month_pk):
         return redirect(month)
     form = TeamAssignmentForm(request.POST or None, month=month)
     if request.method == "POST" and form.is_valid():
-        assignment = form.save(actor=request.user)
-        messages.success(request, "Participant assigned to the team.")
-        return redirect(month)
+        try:
+            assignment = form.save(actor=request.user)
+        except ValidationError as exc:
+            _add_validation_error(form, exc)
+        else:
+            messages.success(request, "Participant assigned to the team.")
+            return redirect(month)
     return render(request, "core/form_page.html", {"form": form, "title": "Assign Participant", "eyebrow": month.name})
 
 
@@ -4921,11 +4956,15 @@ def month_participant_add(request, group_slug, month_pk):
         return redirect(month)
     form = MonthEnrollmentForm(request.POST or None, month=month)
     if request.method == "POST" and form.is_valid():
-        enrollment = form.save(enrolled_by=request.user)
-        team = form.cleaned_data.get("team")
-        team_message = f" and was assigned to {team.name}" if team else " without a team assignment"
-        messages.success(request, f"{enrollment.participant.display_name} was added to {month.name}{team_message}.")
-        return redirect("month-participant-list", group_slug=month.group.slug, month_pk=month.pk)
+        try:
+            enrollment = form.save(enrolled_by=request.user)
+        except ValidationError as exc:
+            _add_validation_error(form, exc)
+        else:
+            team = form.cleaned_data.get("team")
+            team_message = f" and was assigned to {team.name}" if team else " without a team assignment"
+            messages.success(request, f"{enrollment.participant.display_name} was added to {month.name}{team_message}.")
+            return redirect("month-participant-list", group_slug=month.group.slug, month_pk=month.pk)
     return render(request, "core/form_page.html", {"form": form, "title": "Add Participant to Month", "eyebrow": month.name})
 
 
@@ -5029,6 +5068,9 @@ def challenge_register(request, group_slug, month_pk):
         enrollment=existing,
         answers_editable=answers_editable,
     )
+    from .registration_agreements import AgreementAcceptanceForm
+    agreement_form = AgreementAcceptanceForm(request.POST if request.method == 'POST' else None,
+        month=month, actor=request.user, existing=bool(existing))
     tbr_data = None
     if request.method == "POST":
         tbr_data = request.POST
@@ -5037,7 +5079,7 @@ def challenge_register(request, group_slug, month_pk):
     tbr_formset = None
     if month.tbr_enabled and not locked_tbr:
         tbr_formset = PersonalTbrRegistrationBookFormSet(tbr_data, prefix="tbr-books")
-    forms_valid = form.is_valid() and (tbr_formset is None or tbr_formset.is_valid())
+    forms_valid = form.is_valid() and agreement_form.is_valid() and (tbr_formset is None or tbr_formset.is_valid())
     if request.method == "POST" and forms_valid:
         request.session[draft_key] = {
             "registration": _registration_draft_values(request.POST, exclude_prefix="tbr-books-"),
@@ -5047,9 +5089,15 @@ def challenge_register(request, group_slug, month_pk):
             "locked_tbr_id": locked_tbr.pk if locked_tbr else None,
         }
         books = tbr_formset.book_values() if tbr_formset else list(locked_tbr.books.all()) if locked_tbr else []
+        if tbr_formset:
+            # Unsaved draft dictionaries share the saved selections' display interface.
+            for book in books:
+                for name in ("title", "author", "cover_url", "page_count"):
+                    book[f"effective_display_{name}"] = book[f"{name}_snapshot"]
         return render(request, "core/challenge_registration_confirm.html", {
             "month": month,
             "form": form,
+            "agreement_form": agreement_form,
             "books": books,
             "locked_tbr": locked_tbr,
             "tbr_enabled": month.tbr_enabled,
@@ -5058,6 +5106,7 @@ def challenge_register(request, group_slug, month_pk):
     return render(request, "core/challenge_registration.html", {
         "month": month,
         "form": form,
+        "agreement_form": agreement_form,
         "tbr_formset": tbr_formset,
         "tbr_enabled": month.tbr_enabled or bool(locked_tbr),
         "tbr_feature_enabled": month.tbr_enabled,
@@ -5168,6 +5217,11 @@ def challenge_register_confirm(request, group_slug, month_pk):
             )
             if not form.is_valid():
                 raise ValidationError("Registration questions changed or are no longer valid. Review your registration again.")
+            from .registration_agreements import AgreementAcceptanceForm
+            agreement_form = AgreementAcceptanceForm(_registration_draft_querydict(draft['registration']),
+                month=month, actor=request.user, existing=bool(existing))
+            if not agreement_form.is_valid():
+                raise ValidationError('The agreement changed or acceptance is missing. Review the current agreement and check the box again.')
             tbr_formset = None
             if month.tbr_enabled and not locked_tbr:
                 tbr_formset = PersonalTbrRegistrationBookFormSet(
@@ -5181,6 +5235,8 @@ def challenge_register_confirm(request, group_slug, month_pk):
                 participant=participant,
                 actor=request.user,
                 origin=MonthEnrollment.Origin.SELF,
+                agreement_accepted=agreement_form.cleaned_data.get('agreement_accepted', False),
+                agreement_version=agreement_form.cleaned_data.get('agreement_version', ''),
             )
             form.save_answers(enrollment)
             if month.tbr_enabled and not locked_tbr:
@@ -5348,6 +5404,7 @@ def challenge_registration_detail(request, group_slug, month_pk, enrollment_pk):
         "enrollment": enrollment,
         "rows": rows,
         "correction_form": correction_form,
+        "agreement_acceptance": enrollment.month.agreement_acceptances.filter(enrollment=enrollment).first(),
     })
 
 
@@ -5393,7 +5450,8 @@ def submission_create(request, group_slug, month_pk):
     if not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists():
         messages.error(request, "You are not enrolled in this Challenge. Ask a Host to add you to the Challenge or one of its teams.")
         return redirect(month)
-    form = BookSubmissionForm(request.POST or None, month=month)
+    from .forms import ImmersiveSubmissionForm
+    form = ImmersiveSubmissionForm(request.POST or None, month=month)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             submission = form.save(commit=False)
@@ -5408,12 +5466,25 @@ def submission_create(request, group_slug, month_pk):
             except ValidationError as exc:
                 _add_validation_error(form, exc)
             else:
-                submission.save()
-                form.save_theme_claims(submission)
-                submission.recalculate_score()
-                synchronize_submission(submission)
-                synchronize_personal_tbr_submission(submission)
-                AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
+                def create_book():
+                    submission.save()
+                    form.save_theme_claims(submission)
+                    submission.recalculate_score()
+                    synchronize_submission(submission)
+                    synchronize_personal_tbr_submission(submission)
+                    AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
+                    return submission
+                try:
+                    with transaction.atomic():
+                        if form.cleaned_data['immersive_request']:
+                            from .immersive import create_with_immersive
+                            create_with_immersive(actor=request.user, create_submission=create_book)
+                        else:
+                            create_book()
+                except (ValidationError, PermissionDenied):
+                    form.add_error(None, 'The submission or Immersive request could not be saved. Nothing was saved. Reload and check eligibility before retrying.')
+                except DatabaseError:
+                    form.add_error(None, 'Another update prevented saving. Nothing was saved. Reload before retrying.')
         if not form.errors:
             if submission.status == BookSubmission.Status.APPROVED:
                 messages.success(request, "Book submitted and verified through Hardcover.")
@@ -5480,6 +5551,71 @@ def _botm_view_context(request, month):
     return {"membership": membership, "can_manage": can_manage}
 
 
+def _annotate_metadata_refresh(user, books):
+    from .metadata_refresh import can_refresh, cover_only, refresh_version, selection_month
+    for book in books:
+        book.metadata_refresh_url = ""
+        if not can_refresh(user, book):
+            continue
+        try:
+            book.metadata_refresh_version = refresh_version(book, user)
+        except ValidationError:
+            continue
+        month = selection_month(book)
+        book.metadata_refresh_cover_only = cover_only(book)
+        book.metadata_refresh_url = reverse(
+            "botm-metadata-refresh" if isinstance(book, BotmBook) else "tbr-metadata-refresh",
+            args=[month.group.slug, month.pk, book.pk],
+        )
+
+
+@login_required
+@sensitive_variables("token")
+def selection_metadata_refresh(request, group_slug, month_pk, pk, kind):
+    from .metadata_refresh import can_refresh, refresh_selection, selection_month, _identity
+    from .permissions import can_refresh_challenge_metadata
+    model = BotmBook if kind == "botm" else PersonalTBRBook
+    scope = {"month_id": month_pk, "month__group__slug": group_slug} if kind == "botm" else {
+        "personal_tbr__enrollment__month_id": month_pk,
+        "personal_tbr__enrollment__month__group__slug": group_slug,
+    }
+    book = get_object_or_404(model, pk=pk, **scope)
+    if not can_refresh(request.user, book):
+        return HttpResponseForbidden("You may not refresh metadata for this selection.")
+    if request.method != "POST":
+        return HttpResponse("A POST request is required.", status=405)
+    month = selection_month(book)
+    if kind == "botm":
+        destination = reverse("botm-list", args=[group_slug, month_pk])
+    elif book.personal_tbr.enrollment.participant.user_id == request.user.pk and not request.user.is_superuser:
+        destination = reverse("personal-tbr-detail" if book.personal_tbr.confirmed_at else "challenge-register", args=[group_slug, month_pk])
+    else:
+        destination = reverse("challenge-participant-detail", args=[group_slug, month_pk, book.personal_tbr.enrollment.participant_id])
+    try:
+        # Resolve credentials outside the write transaction, after authorization.
+        _identity(book)
+        token = (_staff_tbr_search_token(request.user, month.group)
+                 if can_refresh_challenge_metadata(request.user, month)
+                 else get_reader_hardcover_token(request.user))
+        result = refresh_selection(selection=book, actor=request.user, token=token,
+                                   version=request.POST.get("version", ""))
+    except PermissionDenied:
+        return HttpResponseForbidden("Refresh authority changed. Reload before trying again.")
+    except DatabaseError:
+        messages.error(request, "Metadata refresh could not be saved. The selection was preserved. Reload and try again.")
+    except (ValidationError, HardcoverConnectionError, ReaderHardcoverUnavailable, TokenDecryptionError) as exc:
+        message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+        messages.error(request, message)
+    else:
+        if not result["changed_fields"]:
+            messages.success(request, "No display metadata changed. Existing values were preserved.")
+        elif result["cover_only"]:
+            messages.success(request, "Cover artwork refreshed. Other metadata and scoring were preserved.")
+        else:
+            messages.success(request, "Display metadata refreshed. Approved pages and scoring were preserved.")
+    return redirect(destination)
+
+
 @login_required
 def botm_list(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
@@ -5488,6 +5624,7 @@ def botm_list(request, group_slug, month_pk):
         return HttpResponseForbidden("Book of the Month is not available for this Challenge.")
     books = list(month.botm_books.select_related("catalog_book", "catalog_edition").order_by("position", "pk"))
     active_books = [book for book in books if not book.is_retired]
+    _annotate_metadata_refresh(request.user, active_books)
     botm_reader = build_botm_reader_presentation(
         month=month,
         participant=access["membership"],
@@ -5516,6 +5653,7 @@ def personal_tbr_detail(request, group_slug, month_pk):
         confirmed_at__isnull=False,
     )
     presentation = build_personal_tbr_reader_presentation(personal_tbr=personal_tbr)
+    _annotate_metadata_refresh(request.user, presentation["books"])
     return render(request, "core/personal_tbr_detail.html", {
         "month": month,
         "personal_tbr": personal_tbr,
@@ -6051,9 +6189,11 @@ def game_delete(request, group_slug, month_pk, pk):
 def review_queue(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug)
     review_scope = challenge_review_scope(request.user, month)
-    if not review_scope:
-        return HttpResponseForbidden("A current Challenge review staffing assignment is required.")
-    if month.status not in REVIEWABLE_MONTH_STATUSES:
+    member = membership_for(request.user, month.group)
+    immersive_oversight = bool(request.user.is_active and member and member.role == Membership.Role.OWNER)
+    if not review_scope and not immersive_oversight:
+        return HttpResponseForbidden("Challenge review authority is required.")
+    if month.status not in REVIEWABLE_MONTH_STATUSES | {ChallengeMonth.Status.COMPLETED}:
         messages.error(request, f"{month.get_status_display()} Challenges cannot be reviewed.")
         return redirect(month)
     submissions = scope_reviewable_submissions(
@@ -6066,9 +6206,99 @@ def review_queue(request, group_slug, month_pk):
     ).select_related(
         "participant", "catalog_book", "catalog_edition"
     ).prefetch_related("theme_claims__theme").distinct()
-    scope_name, team_ids = review_scope
+    if month.status not in REVIEWABLE_MONTH_STATUSES:
+        submissions = submissions.none()
+    _annotate_submission_edit(request.user, submissions)
+    scope_name, team_ids = review_scope or ('challenge', frozenset())
     scope_label = "Entire Challenge" if scope_name == "challenge" else ", ".join(month.teams.filter(pk__in=team_ids).values_list("name", flat=True))
-    return render(request, "core/review_queue.html", {"month": month, "submissions": submissions, "review_scope_label": scope_label})
+    from .immersive import review_queue_requests
+    return render(request, "core/review_queue.html", {"month": month, "submissions": submissions, "review_scope_label": scope_label,
+        "immersive_requests": review_queue_requests(actor=request.user, month=month),
+        "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
+
+
+def _annotate_submission_edit(user, submissions):
+    from .permissions import can_edit_submission
+    from .immersive_ui import _readable
+    for submission in submissions:
+        submission.can_edit = can_edit_submission(user, submission)
+        submission.can_view_immersive = _readable(user, submission)
+
+
+def _submission_edit_destination(user, submission):
+    if can_review_submission(user, submission):
+        return reverse('submission-review', args=[submission.month.group.slug, submission.month_id, submission.pk])
+    return reverse('challenge-participant-detail', args=[submission.month.group.slug, submission.month_id, submission.participant_id])
+
+
+@login_required
+@sensitive_variables('token')
+def submission_edit(request, group_slug, month_pk, pk):
+    from .forms import SubmissionCorrectionForm
+    from .permissions import can_edit_submission
+    from .submission_corrections import correction_version, correct_submission
+    submission = get_object_or_404(BookSubmission.objects.select_related(
+        'month__group', 'participant__user', 'catalog_book', 'catalog_edition'),
+        pk=pk, month_id=month_pk, month__group__slug=group_slug)
+    if not can_edit_submission(request.user, submission):
+        return HttpResponseForbidden('You no longer have permission to edit this submission, or the Challenge is read-only.')
+    if request.method not in {'GET', 'POST'}:
+        return HttpResponse('Use GET or POST.', status=405)
+    destination = _submission_edit_destination(request.user, submission)
+    initial = {'version': correction_version(submission, request.user)} if request.method == 'GET' else None
+    # Retain a separate display object: ModelForm validation mutates its instance.
+    from copy import copy
+    form = SubmissionCorrectionForm(request.POST if request.method == 'POST' else None,
+        instance=copy(submission), month=submission.month, initial=initial)
+    reload_required = False
+    if request.method == 'POST' and form.is_valid():
+        changes = form.correction_changes()
+        try:
+            token = None
+            if 'catalog_edition_id' in changes:
+                token = _staff_tbr_search_token(request.user, submission.month.group)
+            corrected = correct_submission(submission=submission, actor=request.user, changes=changes,
+                version=form.cleaned_data['version'], hardcover_token=token)
+        except PermissionDenied:
+            return HttpResponseForbidden('Your correction permission changed. Nothing was saved. Reload before trying again.')
+        except DatabaseError:
+            form.add_error(None, 'Another update prevented saving. Nothing was saved. Reload the submission and try again.')
+            reload_required = True
+        except (HardcoverConnectionError, ReaderHardcoverUnavailable, TokenDecryptionError):
+            form.add_error('edition', 'Hardcover could not verify that edition. Check the connection and select the edition again, or keep the current edition.')
+        except ValidationError as exc:
+            text = '; '.join(exc.messages)
+            if any(word in text.lower() for word in ('provenance', 'modifier source', 'frozen', 'durable', 'concurrent personal tbr match', 'concurrent botm match')):
+                form.add_error(None, 'Corrections could not be saved safely. Nothing was changed. Ask a Host to review the bonus history.')
+            elif 'changed' in text.lower() or 'expired' in text.lower() or 'removed' in text.lower():
+                reload_required = True
+                form.add_error(None, 'The submission or its scoring evidence changed. Reload before editing again; your corrections were not saved.')
+            elif hasattr(exc, 'message_dict'):
+                for field, errors in exc.message_dict.items():
+                    target = 'submitted_pages' if field == 'approved_pages' else field
+                    form.add_error(target if target in form.fields else None, errors)
+            elif 'page count' in text.lower() or 'page override' in text.lower():
+                form.add_error('submitted_pages', text)
+            elif 'edition' in text.lower():
+                form.add_error('edition', text)
+            elif 'theme' in text.lower():
+                form.add_error('themes', text)
+            else:
+                form.add_error(None, 'Corrections could not be saved. No changes were made. Review the fields or ask a Host for help.')
+        else:
+            messages.success(request, 'Submission corrections saved. Scores and applicable bonuses are up to date.'
+                if corrected.status == 'approved' else 'Submission corrections saved. The submission is pending review.')
+            return redirect(_submission_edit_destination(request.user, corrected))
+    if request.method == 'POST' and 'version' in form.errors:
+        form.errors.pop('version')
+        form.add_error(None, 'The edit session is unavailable. Reload the submission before editing again.')
+        reload_required = True
+    return render(request, 'core/submission_edit.html', {
+        'submission': submission, 'month': submission.month, 'form': form,
+        'cancel_url': destination, 'reload_required': reload_required,
+        'edit_url': reverse('submission-edit', args=[group_slug, month_pk, pk]),
+        'cover_url': submission.catalog_book.cover_url if submission.catalog_book_id else '',
+    })
 
 
 @login_required
@@ -6093,6 +6323,7 @@ def submission_review(request, group_slug, month_pk, pk):
             AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
         messages.success(request, "Review saved.")
         return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
+    _annotate_submission_edit(request.user, [submission])
     return render(request, "core/submission_review.html", {"form": form, "claim_formset": claim_formset, "submission": submission})
 
 
@@ -6193,6 +6424,8 @@ def staff_challenge_tbr(request, group_slug, month_pk, pk):
                 "title_snapshot": book.title_snapshot, "author_snapshot": book.author_snapshot,
                 "page_count_snapshot": book.page_count_snapshot, "ORDER": book.position,
                 "cover_url_snapshot": book.cover_url_snapshot,
+                "display_cover_url": book.effective_display_cover_url,
+                "display_title": book.effective_display_title,
                 "catalog_cover_locked": bool(book.catalog_book_id),
                 "existing_selection": signing.dumps({"book": book.pk}, salt="staff-tbr-existing"),
             })

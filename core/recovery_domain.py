@@ -4,10 +4,11 @@ from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
-    AuditEvent, BookSubmission, BotmBook, BotmCompletionAward,
+    ImmersiveRequest, RegistrationAgreementAcceptance, AuditEvent, BookSubmission, BotmBook, BotmCompletionAward,
     BotmCompletionAwardBook, BotmMatch, ChallengeMonth,
     ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment,
     Game, GameRewardApplication, GameRewardRecipient, Membership,
@@ -25,6 +26,8 @@ from .recovery import (
 
 def challenge_purge_impact(month):
     counts = (
+        ("Blocking Immersive requests", ImmersiveRequest.objects.filter(submission__month=month).count()),
+        ("Blocking Registration Agreement acceptances", RegistrationAgreementAcceptance.objects.filter(Q(month=month) | Q(enrollment__month=month)).count()),
         ("Signup questions", ChallengeSignupQuestion.objects.filter(month=month).count()),
         ("Enrollments", MonthEnrollment.objects.filter(month=month).count()),
         ("Signup answers", ChallengeSignupAnswer.objects.filter(enrollment__month=month).count()),
@@ -54,6 +57,8 @@ def challenge_purge_impact(month):
         "This permanently removes the Challenge and every listed competition record. "
         "Users, Group memberships, shared catalog records, and unrelated Challenges are preserved."
     )
+    if ImmersiveRequest.objects.filter(submission__month=month).exists() or RegistrationAgreementAcceptance.objects.filter(Q(month=month) | Q(enrollment__month=month)).exists():
+        warning = 'Purge blocked: protected Immersive requests or Registration Agreement acceptances must be preserved. No competition records will be deleted.'
     if month.status != ChallengeMonth.Status.DRAFT:
         warning = f"{month.get_status_display()} Challenge: " + warning
     return RecoveryImpactPreview(
@@ -71,6 +76,9 @@ def purge_challenge(*, month, recovery_request, fail_after_step=None):
     def mutation():
         locked = ChallengeMonth.objects.select_for_update().select_related("group").get(pk=month.pk)
         impact = challenge_purge_impact(locked)
+        if (ImmersiveRequest.objects.filter(submission__month=locked).exists()
+            or RegistrationAgreementAcceptance.objects.filter(Q(month=locked) | Q(enrollment__month=locked)).exists()):
+            raise ValidationError('Purge blocked: protected Immersive requests or Registration Agreement acceptances must be preserved. No records were deleted.')
 
         def remove(step, queryset):
             queryset.delete()

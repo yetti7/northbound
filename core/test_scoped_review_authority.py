@@ -98,7 +98,7 @@ class ScopedReviewAuthorityTests(TestCase):
     def test_host_sees_and_reviews_manual_submissions_and_claims_challenge_wide(self):
         response = self.assert_queue_scope(self.host_user, ("North Pending", "South Pending"))
         self.assertEqual(response.context["review_scope_label"], "Entire Challenge")
-        self.assertContains(response, "Entire Challenge. Review pending submissions and theme claims")
+        self.assertContains(response, "Entire Challenge. Review pending submissions, Theme claims and separate Immersive requests.")
         submitted_at = self.submission_two.submitted_at
         result = self.client.post(self.review_url(self.submission_two), self.review_payload(self.submission_two, claim=self.claim_two))
         self.assertRedirects(result, self.queue_url)
@@ -116,7 +116,7 @@ class ScopedReviewAuthorityTests(TestCase):
         for user in (self.leader_one_user, self.leader_two_user):
             response = self.assert_queue_scope(user, ("North Pending",), ("South Pending",))
             self.assertEqual(response.context["review_scope_label"], "North Team")
-            self.assertContains(response, "North Team. Review pending submissions and theme claims")
+            self.assertContains(response, "North Team. Review pending submissions, Theme claims and separate Immersive requests.")
             self.assertEqual(self.client.get(self.review_url(self.submission_two)).status_code, 403)
             self.assertEqual(self.client.post(self.review_url(self.submission_two), self.review_payload(self.submission_two, claim=self.claim_two)).status_code, 403)
         self.client.force_login(self.leader_one_user)
@@ -144,7 +144,14 @@ class ScopedReviewAuthorityTests(TestCase):
     def test_group_authority_without_staffing_cannot_review(self):
         for user in (self.reader_one_user, self.owner_user, self.moderator_user, self.other_host_user, self.ended_user):
             self.client.force_login(user)
-            self.assertEqual(self.client.get(self.queue_url).status_code, 403)
+            queue = self.client.get(self.queue_url)
+            if user == self.owner_user:
+                # Owners have approved Immersive oversight, not book review scope.
+                self.assertEqual(queue.status_code, 200)
+                self.assertFalse(queue.context['submissions'].exists())
+                self.assertFalse(queue.context['can_review_books'])
+            else:
+                self.assertEqual(queue.status_code, 403)
             self.assertEqual(self.client.get(self.review_url(self.submission_one)).status_code, 403)
             self.assertFalse(can_review_challenge(user, self.month))
 

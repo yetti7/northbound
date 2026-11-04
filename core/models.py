@@ -419,6 +419,12 @@ class Membership(models.Model):
         return f"{self.display_name} — {self.group}"
 
 
+DEFAULT_REGISTRATION_AGREEMENT = (
+    "If your team loses, you agree to purchase a $10–$15 gift from an opposing team member's wish list. "
+    "Shadow gifting is prohibited and will result in a ban."
+)
+
+
 class ChallengeMonth(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
@@ -482,6 +488,11 @@ class ChallengeMonth(models.Model):
         choices=CompetitionVisibility.choices,
         default=CompetitionVisibility.HOSTS,
     )
+    registration_agreement_enabled = models.BooleanField(default=False)
+    registration_agreement_text = models.TextField(default=DEFAULT_REGISTRATION_AGREEMENT, blank=True)
+    immersive_enabled = models.BooleanField(default=False)
+    immersive_bonus_percent = models.PositiveSmallIntegerField(default=100,
+        validators=[MinValueValidator(0), MaxValueValidator(200)])
     games_enabled = models.BooleanField(default=False)
     botm_enabled = models.BooleanField(default=False)
     botm_completion_bonus_pages = models.PositiveIntegerField(default=0)
@@ -495,6 +506,7 @@ class ChallengeMonth(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["group", "name"], name="unique_group_challenge_month"),
             models.CheckConstraint(condition=Q(tbr_book_bonus_pages__gte=0), name="tbr_book_bonus_nonnegative"),
+            models.CheckConstraint(condition=Q(immersive_bonus_percent__gte=0, immersive_bonus_percent__lte=200), name="immersive_rate_range"),
             models.CheckConstraint(condition=Q(tbr_completion_bonus_pages__gte=0), name="tbr_completion_bonus_nonnegative"),
         ]
         ordering = ["-starts_on"]
@@ -1020,7 +1032,29 @@ class PersonalTBRBook(models.Model):
     source_url_snapshot = models.URLField(max_length=1000, blank=True)
     normalized_title = models.CharField(max_length=300, editable=False)
     normalized_author = models.CharField(max_length=300, editable=False)
+    # Presentation only: matching and awards continue to use the snapshots.
+    display_title = models.CharField(max_length=300, null=True, blank=True)
+    display_author = models.CharField(max_length=300, null=True, blank=True)
+    display_cover_url = models.URLField(max_length=1000, null=True, blank=True)
+    display_page_count = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    display_refreshed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def effective_display_title(self):
+        return self.title_snapshot if self.display_title is None else self.display_title
+
+    @property
+    def effective_display_author(self):
+        return self.author_snapshot if self.display_author is None else self.display_author
+
+    @property
+    def effective_display_cover_url(self):
+        return self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url
+
+    @property
+    def effective_display_page_count(self):
+        return self.page_count_snapshot if self.display_page_count is None else self.display_page_count
 
     @property
     def hardcover_url(self):
@@ -1080,6 +1114,16 @@ class PersonalTBRBook(models.Model):
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
+        if self._state.adding:
+            # Initialize only new selections; never overwrite refreshed display.
+            if self.display_title is None:
+                self.display_title = self.title_snapshot
+            if self.display_author is None:
+                self.display_author = self.author_snapshot
+            if self.display_cover_url is None:
+                self.display_cover_url = self.cover_url_snapshot
+            if self.display_page_count is None:
+                self.display_page_count = self.page_count_snapshot
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -1412,8 +1456,30 @@ class BotmBook(models.Model):
     normalized_author = models.CharField(max_length=300, editable=False)
     bonus_pages = models.PositiveIntegerField(default=0)
     is_retired = models.BooleanField(default=False)
+    # Presentation only: matching and awards continue to use the snapshots.
+    display_title = models.CharField(max_length=300, null=True, blank=True)
+    display_author = models.CharField(max_length=300, null=True, blank=True)
+    display_cover_url = models.URLField(max_length=1000, null=True, blank=True)
+    display_page_count = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    display_refreshed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def effective_display_title(self):
+        return self.title_snapshot if self.display_title is None else self.display_title
+
+    @property
+    def effective_display_author(self):
+        return self.author_snapshot if self.display_author is None else self.display_author
+
+    @property
+    def effective_display_cover_url(self):
+        return self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url
+
+    @property
+    def effective_display_page_count(self):
+        return self.page_count_snapshot if self.display_page_count is None else self.display_page_count
 
     @property
     def hardcover_url(self):
@@ -1496,6 +1562,16 @@ class BotmBook(models.Model):
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
+        if self._state.adding:
+            # Initialize only new selections; never overwrite refreshed display.
+            if self.display_title is None:
+                self.display_title = self.title_snapshot
+            if self.display_author is None:
+                self.display_author = self.author_snapshot
+            if self.display_cover_url is None:
+                self.display_cover_url = self.cover_url_snapshot
+            if self.display_page_count is None:
+                self.display_page_count = self.page_count_snapshot
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -1959,7 +2035,9 @@ class ThemeClaim(models.Model):
         if self.submission_id and self.theme_id:
             if self.submission.month_id != self.theme.month_id:
                 raise ValidationError("The theme must belong to the submission month.")
-            if not (self.theme.starts_on <= self.submission.completed_on <= self.theme.ends_on):
+            # Corrections retain rejected claim history even when the book's
+            # corrected date no longer falls in this Theme's window.
+            if self.status != self.Status.REJECTED and not (self.theme.starts_on <= self.submission.completed_on <= self.theme.ends_on):
                 raise ValidationError("The book completion date must fall inside the theme dates.")
 
     def save(self, *args, **kwargs):
@@ -1990,6 +2068,7 @@ class ModifierProvenance(models.Model):
         BOTM_COMPLETION = "botm_completion", "Book of the Month completion bonus"
         TBR_BOOK = "tbr_book", "Personal TBR book bonus"
         TBR_COMPLETION = "tbr_completion", "Personal TBR completion bonus"
+        IMMERSIVE = "immersive", "Immersive Reading bonus"
         GAME_REWARD = "game_reward", "Game/manual reward"
 
     month = models.ForeignKey(ChallengeMonth, on_delete=models.PROTECT, related_name="modifier_provenance")
@@ -2031,7 +2110,7 @@ class ModifierProvenance(models.Model):
     class Meta:
         ordering = ["effective_date", "pk"]
         constraints = [
-            models.CheckConstraint(condition=Q(amount__gt=0), name="modifier_provenance_amount_positive"),
+            models.CheckConstraint(condition=Q(amount__gt=0) | Q(source_type="immersive", amount=0), name="modifier_provenance_amount_positive"),
             models.CheckConstraint(condition=~Q(source_reference=""), name="modifier_provenance_source_present"),
             models.UniqueConstraint(
                 fields=["source_type", "source_reference"],
@@ -2403,3 +2482,78 @@ class RecoveryOperation(models.Model):
 
     def __str__(self):
         return f"{self.operation_id} — {self.action} — {self.get_result_display()}"
+
+
+class ImmersiveRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+        WITHDRAWN = 'withdrawn', 'Withdrawn'
+        REVOKED = 'revoked', 'Revoked'
+
+    submission = models.ForeignKey(BookSubmission, on_delete=models.PROTECT, related_name='immersive_requests')
+    requester = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='immersive_requests')
+    captured_percent = models.PositiveSmallIntegerField(validators=[MinValueValidator(0), MaxValueValidator(200)])
+    requested_at = models.DateTimeField(default=timezone.now, editable=False)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='immersive_reviews')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_reason = models.TextField(blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawal_reason = models.TextField(blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='immersive_revocations')
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revocation_reason = models.TextField(blank=True)
+    awarded_pages = models.PositiveIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['requested_at', 'pk']
+        constraints = [
+            models.CheckConstraint(condition=Q(captured_percent__gte=0, captured_percent__lte=200), name='immersive_captured_rate_range'),
+            models.UniqueConstraint(fields=['submission'], condition=Q(status__in=['pending', 'approved']), name='one_live_immersive_request'),
+            models.CheckConstraint(condition=Q(is_active=False) | Q(status='approved', awarded_pages__isnull=False), name='immersive_active_approved'),
+        ]
+
+    @property
+    def calculated_bonus(self):
+        from .immersive import bonus_pages
+        return bonus_pages(self.submission.approved_pages, self.captured_percent)
+
+    @property
+    def entry_type(self):
+        return 'immersive'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).values('submission_id', 'requester_id', 'captured_percent', 'requested_at').first()
+            if old and any(getattr(self, key) != value for key, value in old.items()):
+                raise ValidationError('Immersive request identity and captured rate are immutable.')
+        return super().save(*args, **kwargs)
+
+
+class RegistrationAgreementAcceptance(models.Model):
+    month = models.ForeignKey(ChallengeMonth, on_delete=models.PROTECT, related_name='agreement_acceptances')
+    reader = models.ForeignKey(Membership, on_delete=models.PROTECT, related_name='agreement_acceptances')
+    enrollment = models.OneToOneField(MonthEnrollment, on_delete=models.PROTECT, related_name='agreement_acceptance')
+    accepted_at = models.DateTimeField(default=timezone.now, editable=False)
+    agreement_text = models.TextField()
+    agreement_version = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['month', 'reader'], name='one_agreement_acceptance_per_reader')]
+        ordering = ['accepted_at', 'pk']
+
+    def clean(self):
+        if self.enrollment_id and (self.enrollment.month_id != self.month_id or self.enrollment.participant_id != self.reader_id):
+            raise ValidationError('Agreement acceptance must belong to its registration and Reader.')
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError('Historical agreement acceptance cannot be overwritten.')
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Historical agreement acceptance must be preserved.')

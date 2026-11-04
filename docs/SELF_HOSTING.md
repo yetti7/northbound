@@ -200,6 +200,22 @@ Plan a maintenance window; there is no zero-downtime or automatic rollback guara
 4. Startup migrates automatically. Verify health, owner login, expected Groups/
    Challenges, media, backups and Reader sync status. Retain the pre-upgrade backup.
 
+### v1.0.8 migration considerations
+
+The v1.0.8 source adds core migrations **0061–0064**. Display metadata is
+backfilled from existing TBR/BOTM selection snapshots without changing matching
+evidence. Immersive Reading and Registration Agreements default to disabled;
+no historical requests or agreement acceptances are created. Existing registrations,
+answers and scoring provenance are retained. No new environment variables or
+runtime dependencies are required.
+
+SQLite rebuilds Challenge/provenance tables for the new fields and constraints.
+Allow disk space and a maintenance window, and keep a verified pre-upgrade backup.
+Immersive awards may have explicit zero-page provenance, which older constraints
+do not accept. Rolling back requires a compatible database restore; changing the
+image alone is insufficient. Startup applies migrations but does not run historical
+TBR reconciliation or Hardcover metadata refresh.
+
 After editing `.env`, use `docker compose up -d` to recreate the service;
 `docker compose restart` does not apply environment changes.
 Do not run an older image against a newer schema unless compatibility is established.

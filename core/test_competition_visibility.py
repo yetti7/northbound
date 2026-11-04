@@ -1,3 +1,4 @@
+from django.utils import timezone
 from datetime import date
 from importlib import import_module
 
@@ -117,13 +118,30 @@ class CompetitionVisibilityMatrixTests(TestCase):
                         expected = True
                     elif visibility == level.HOSTS_FLOATERS and key == "floater":
                         expected = True
-                    elif visibility == level.HOSTS_TEAM_LEADERS and key == "leader" and team == self.north:
+                    elif visibility == level.HOSTS_TEAM_LEADERS and (key == "floater" or (key == "leader" and team == self.north)):
                         expected = True
                     elif visibility == level.TEAM_MEMBERS:
                         expected = expected or (key in {"leader", "same"} and team == self.north) or (key == "other" and team == self.south)
                     with self.subTest(visibility=visibility, user=key, team=team.name):
                         self.assertEqual(can_view_team_standings(user, self.month, team=team), expected)
                         self.assertEqual(can_view_reader_scores(user, self.month, team=team), expected)
+
+    def test_combined_audience_uses_current_floaters_and_preserves_stored_value(self):
+        self.set_levels('hosts_leaders')
+        for helper in (can_view_team_standings, can_view_reader_scores):
+            self.assertTrue(helper(self.users['floater'], self.month))
+            self.assertFalse(helper(self.users['leader'], self.month))
+        self.client.force_login(self.users['owner'])
+        settings_url = reverse('challenge-settings', kwargs={'group_slug': self.group.slug, 'month_pk': self.month.pk})
+        self.assertContains(self.client.get(settings_url), 'Hosts + Floaters + Team Leaders', count=2)
+        assignment = ChallengeStaffAssignment.objects.get(month=self.month, membership=self.members['floater'])
+        assignment.ended_at = timezone.now()
+        assignment.save(update_fields=['ended_at'])
+        for helper in (can_view_team_standings, can_view_reader_scores):
+            self.assertFalse(helper(self.users['floater'], self.month, team=self.north))
+        self.month.refresh_from_db()
+        self.assertEqual(self.month.team_standings_visibility, 'hosts_leaders')
+        self.assertEqual(self.month.reader_scores_visibility, 'hosts_leaders')
 
     def test_team_scoped_surfaces_and_hidden_sort_do_not_leak(self):
         self.set_levels(ChallengeMonth.CompetitionVisibility.TEAM_MEMBERS)
@@ -200,8 +218,8 @@ class CompetitionVisibilityMatrixTests(TestCase):
         editor = self.client.get(visibility_url)
         self.assertEqual(editor.context["logical_parent_url"], settings_url)
         self.assertContains(editor, f'href="{settings_url}">Cancel</a>')
-        for label in ("Hosts only", "Hosts + Floaters", "Hosts + Team Leaders", "Team Members", "Everybody"):
-            self.assertContains(editor, label, count=2)
+        for label in ("Hosts only", "Hosts + Floaters", "Hosts + Floaters + Team Leaders", "Team Members", "Everybody"):
+            self.assertContains(editor, f">{label}</option>", count=2)
         self.assertNotContains(editor, "Owner only")
         self.assertNotContains(editor, "Moderator + Owner")
         self.assertContains(editor, "administrative oversight separately")
@@ -219,6 +237,13 @@ class CompetitionVisibilityMatrixTests(TestCase):
 
 
 class CompetitionVisibilityMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        try:
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+        finally:
+            super().tearDown()
+
     migrate_from = ("core", "0040_challenge_creation_handoff")
     migrate_to = ("core", "0041_challenge_competition_visibility")
 
@@ -248,6 +273,13 @@ class CompetitionVisibilityMigrationTests(TransactionTestCase):
 
 
 class ChallengeRoleVisibilityMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        try:
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+        finally:
+            super().tearDown()
+
     migrate_from = ("core", "0041_challenge_competition_visibility")
     migrate_to = ("core", "0042_challenge_role_visibility_audiences")
 

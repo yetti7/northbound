@@ -222,13 +222,16 @@ def _can_view_competition_domain(user, month, visibility, *, team=None):
         return True
     if visibility == level.HOSTS:
         return False
-    if visibility == level.HOSTS_FLOATERS:
-        return ChallengeStaffAssignment.objects.filter(
+    if visibility in {level.HOSTS_FLOATERS, level.HOSTS_TEAM_LEADERS}:
+        if ChallengeStaffAssignment.objects.filter(
             month=month,
             membership=membership,
             role=ChallengeStaffAssignment.Role.FLOATER,
             ended_at__isnull=True,
-        ).exists()
+        ).exists():
+            return True
+        if visibility == level.HOSTS_FLOATERS:
+            return False
     if team is None or team.month_id != month.pk:
         return False
     if visibility == level.HOSTS_TEAM_LEADERS:
@@ -317,3 +320,39 @@ def can_reconcile_personal_tbr(user, month):
         return True
     member = membership_for(user, month.group)
     return bool(member and (member.role == Membership.Role.OWNER or is_challenge_host(user, month)))
+
+
+def can_refresh_challenge_metadata(user, month):
+    if not user.is_authenticated or not user.is_active or month.status not in {'draft', 'upcoming', 'active'}:
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, month.group)
+    return bool(member and (member.role == Membership.Role.OWNER or is_challenge_host(user, month)))
+
+
+def can_refresh_tbr_metadata(user, book):
+    enrollment = book.personal_tbr.enrollment
+    if can_refresh_challenge_metadata(user, enrollment.month):
+        return True
+    return bool(user.is_authenticated and user.is_active
+        and enrollment.month.status in {'draft', 'upcoming', 'active'}
+        and enrollment.is_active and enrollment.participant.is_active
+        and enrollment.participant.user_id == user.pk)
+
+
+def can_refresh_botm_metadata(user, book):
+    return not book.is_retired and can_refresh_challenge_metadata(user, book.month)
+
+
+def can_edit_submission(user, submission):
+    """Correction authority; does not broaden ordinary review or Reader access."""
+    if (not user.is_authenticated or not user.is_active or submission.is_removed
+            or submission.month.status not in {'active', 'finalizing'}):
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, submission.month.group)
+    if member and member.role == Membership.Role.OWNER:
+        return True
+    return can_review_submission(user, submission)

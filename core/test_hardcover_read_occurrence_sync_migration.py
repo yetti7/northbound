@@ -4,6 +4,13 @@ from django.test import TransactionTestCase
 
 
 class HardcoverReadOccurrenceMigrationTests(TransactionTestCase):
+    def tearDown(self):
+        try:
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+        finally:
+            super().tearDown()
+
     migrate_from = [("core", "0057_hardcover_completed_book_sync")]
     migrate_to = [("core", "0058_hardcover_read_occurrence_sync")]
 

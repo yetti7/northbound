@@ -410,10 +410,10 @@ class PercentageMigrationTests(TransactionTestCase):
     def test_additive_migration_preserves_legacy_awards_caches_and_checkpoints(self):
         executor=MigrationExecutor(connection)
         before=[('core','0059_hardcover_oauth_state_use')]
-        executor.migrate(before)
-        apps=executor.loader.project_state(before).apps
-        def model(n):return apps.get_model('core',n)
         try:
+            executor.migrate(before)
+            apps=executor.loader.project_state(before).apps
+            def model(n):return apps.get_model('core',n)
             user=apps.get_model('auth','User').objects.create(username='migration-reader')
             group=model('ReadingGroup').objects.create(name='Migration',slug='migration')
             member=model('Membership').objects.create(group=group,user=user,display_name='Reader',role='member')
@@ -429,15 +429,18 @@ class PercentageMigrationTests(TransactionTestCase):
             model('ProgressCheckpointResult').objects.create(checkpoint=checkpoint,participant=member,evaluated_at=timezone.now(),threshold_percentage=50,progress_basis='total',target_basis='fixed',target_pages=600,required_pages=300,progress_pages=450,outcome='met')
             preserved={n:list(model(n).objects.values()) for n in ['BookSubmission','ModifierProvenance','ProgressCheckpointResult']}
             executor=MigrationExecutor(connection);executor.migrate([('core','0060_theme_percentage_awards')])
+            migrated=executor.loader.project_state([('core','0060_theme_percentage_awards')]).apps
             for name,rows in preserved.items():
-                self.assertEqual(list(globals()[name].objects.values()),rows)
+                self.assertEqual(list(migrated.get_model('core',name).objects.values()),rows)
             for pk,amount in [(theme.pk,50),(zero_theme.pk,0)]:
-                t=MonthTheme.objects.get(pk=pk)
+                t=migrated.get_model('core','MonthTheme').objects.get(pk=pk)
                 self.assertEqual((t.bonus_rule,t.bonus_pages),('legacy_fixed',amount))
             for pk,amount in [(claim.pk,50),(zero.pk,0),(pending.pk,0)]:
-                c=ThemeClaim.objects.get(pk=pk)
+                c=migrated.get_model('core','ThemeClaim').objects.get(pk=pk)
                 self.assertEqual(c.approved_bonus_pages,amount)
                 self.assertFalse(c.award_finalized)
+            # Runtime scoring uses current models only after restoring the current schema.
+            executor=MigrationExecutor(connection);executor.migrate(executor.loader.graph.leaf_nodes())
             self.assertEqual(challenge_score_totals(month=ChallengeMonth.objects.get(pk=month.pk))[member.pk]['total_pages'],450)
         finally:
             executor=MigrationExecutor(connection);executor.migrate(executor.loader.graph.leaf_nodes())

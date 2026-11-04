@@ -72,6 +72,12 @@ def update_botm_book(*, month, book, actor, values):
         if displaced:
             displaced.is_retired = True
             displaced.save(update_fields=["is_retired"])
+    # Intentional evidence edits on configurable books update the corresponding
+    # display value; unrelated saves preserve any distinct display metadata.
+    for name in ("title", "author", "cover_url", "page_count"):
+        evidence_field = {"page_count": "page_count_snapshot"}.get(name, f"{name}_snapshot")
+        if evidence_field in values and values[evidence_field] != getattr(book, evidence_field):
+            setattr(book, f"display_{name}", values[evidence_field])
     for field, value in values.items():
         setattr(book, field, value)
     _save(book)

@@ -244,8 +244,10 @@ def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at):
 
 @transaction.atomic
 def refresh_submission_score(submission):
-    """Synchronize Theme provenance and persist the submission score caches."""
+    """Synchronize Theme/Immersive provenance and persist submission score caches."""
     locked_submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
+    from .immersive import synchronize_awards
+    synchronize_awards(locked_submission)
     claims = ThemeClaim.objects.select_for_update().select_related("theme", "reviewed_by").filter(
         submission=locked_submission,
     )

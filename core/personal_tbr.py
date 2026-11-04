@@ -31,10 +31,20 @@ def replace_draft_personal_tbr(*, enrollment, books):
     positions = [candidate.position for candidate in candidates]
     if len(positions) != len(set(positions)):
         raise ValidationError("Personal TBR book positions must be unique.")
-    personal_tbr.books.all().delete()
+    def signature(book):
+        return tuple(getattr(book, name) for name in (
+            "position", "catalog_book_id", "catalog_edition_id", "title_snapshot",
+            "author_snapshot", "page_count_snapshot", "cover_url_snapshot", "source_url_snapshot",
+        ))
+    existing = {signature(book): book for book in personal_tbr.books.select_for_update()}
+    retained_ids = [existing[signature(book)].pk for book in candidates if signature(book) in existing]
+    personal_tbr.books.exclude(pk__in=retained_ids).delete()
     identities = set()
     catalog_ids = set()
     for candidate in candidates:
+        retained = existing.get(signature(candidate))
+        if retained is not None:
+            candidate = retained
         candidate.full_clean(validate_constraints=False)
         identity = (candidate.normalized_title, candidate.normalized_author)
         if identity in identities:
@@ -46,7 +56,8 @@ def replace_draft_personal_tbr(*, enrollment, books):
             catalog_ids.add(candidate.catalog_book_id)
 
     for candidate in candidates:
-        candidate.save()
+        if signature(candidate) not in existing:
+            candidate.save()
     personal_tbr.save(update_fields=["updated_at"])
     _record_tbr_change(personal_tbr, enrollment.participant.user, staff=False)
     return personal_tbr
