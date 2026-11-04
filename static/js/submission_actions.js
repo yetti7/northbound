@@ -39,14 +39,17 @@
     position();
     (last ? items(menu).at(-1) : items(menu)[0])?.focus();
   }
-  document.querySelectorAll('[data-submission-actions] button').forEach(button => {
-    button.addEventListener('click', () => active?.button === button ? close(true) : open(button));
-    button.addEventListener('keydown', event => {
-      if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
-        event.preventDefault(); event.stopPropagation(); open(button, event.key === 'ArrowUp');
-      }
-    });
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-submission-actions] button');
+    if (button) active?.button === button ? close(true) : open(button);
   });
+  document.addEventListener('keydown', event => {
+    const button = event.target.closest('[data-submission-actions] button');
+    if (button && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault(); event.stopImmediatePropagation(); open(button, event.key === 'ArrowUp');
+    }
+  });
+  document.addEventListener('submission-results-replacing', () => close());
   document.addEventListener('pointerdown', event => {
     if (active && !active.menu.contains(event.target) && !active.button.contains(event.target)) close();
   });
@@ -54,7 +57,7 @@
     if (active && !active.menu.contains(event.target) && event.target !== active.button) close();
   });
   document.addEventListener('click', event => {
-    if (active && active.menu.contains(event.target)) close();
+    if (active && event.target.closest('[role="menuitem"]') && active.menu.contains(event.target)) close();
   });
   document.addEventListener('keydown', event => {
     if (!active) return;

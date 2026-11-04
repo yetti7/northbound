@@ -459,7 +459,7 @@ class DraftChallengeVisibilityTests(TestCase):
         detail = self.client.get(reverse("participant-detail", kwargs={"group_slug": self.group.slug, "pk": self.member.pk}))
         self.assertContains(detail, "Private Draft Challenge")
         challenge = self.client.get(self.month.get_absolute_url())
-        self.assertContains(challenge, "All Submissions · Platform Administration")
+        self.assertContains(challenge, "All Submissions")
         self.assertContains(challenge, "Administrative Read Test")
         self.assertFalse(Membership.objects.filter(user=self.platform_owner).exists())
         self.assertFalse(ChallengeStaffAssignment.objects.filter(membership__user=self.platform_owner).exists())

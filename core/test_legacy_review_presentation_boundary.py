@@ -145,7 +145,7 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
             response = self.client.get(self.month.get_absolute_url())
             with self.subTest(user=user.username):
                 self.assertEqual(response.status_code, 200)
-                self.assertContains(response, "My Submissions")
+                self.assertContains(response, "All Submissions")
                 self.assertNotContains(response, "Recent Submissions")
                 for title in all_titles:
                     if title == own_title:
@@ -155,7 +155,7 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
 
         self.client.force_login(self.platform_owner)
         response = self.client.get(self.month.get_absolute_url())
-        self.assertContains(response, "All Submissions · Platform Administration")
+        self.assertContains(response, "All Submissions")
         for title in all_titles:
             self.assertContains(response, title)
 

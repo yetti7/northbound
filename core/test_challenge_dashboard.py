@@ -90,7 +90,7 @@ class ChallengeDashboardCleanupTests(TestCase):
         response = self.client.get(self.detail_url)
         content = response.content.decode()
         self.assertLess(content.index("Team Comparison"), content.index('class="challenge-themes-preview"'))
-        self.assertLess(content.index('class="challenge-themes-preview"'), content.index("My Submissions"))
+        self.assertLess(content.index('class="challenge-themes-preview"'), content.index("All Submissions"))
         self.assertContains(response, f'<a class="challenge-section-heading-link" href="{self.themes_url}">')
         self.assertContains(response, "Alpha Theme")
         self.assertContains(response, "Read something adventurous.")

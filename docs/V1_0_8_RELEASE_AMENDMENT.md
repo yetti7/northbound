@@ -1,6 +1,6 @@
 # v1.0.8 release amendment record
 
-Status: prepared for PR review; existing release, tag, and images are unchanged.
+Status: first amendment published; the All Submissions follow-up below is prepared for PR review only.
 
 ## Original publication
 
@@ -34,7 +34,7 @@ The existing workflow builds PR images without publication. Main pushes publish 
 
 After CI passes and separate approval is received: merge the PR, record the new main commit here, replace the annotated v1.0.8 tag, allow the existing workflow to publish, verify amd64/arm64 digests and version metadata, and append the notes below to the existing release. Do not delete the GitHub release.
 
-Amended release commit and image digests: pending separate approval and publication.
+First amended release commit: `cee7ab3e41ce9680f08950899f27b04ee700c395`. Its observed image digests are recorded in the follow-up baseline below.
 
 Consumers with cached images or digest pins will retain the original image until explicitly updated. Preserve this record and the original commit/digests. Production deployment is a separate step.
 
@@ -42,7 +42,7 @@ Consumers with cached images or digest pins will retain the original image until
 
 54 focused Django tests passed in 43.454 seconds. Django system checks, migration consistency, JavaScript syntax, and git diff whitespace checks passed. No full-suite rerun or production access was performed.
 
-## Prepared release-note addendum (not yet published)
+## First amendment release-note addendum (published)
 
 ### Submission management and administration update
 
@@ -51,3 +51,31 @@ Consumers with cached images or digest pins will retain the original image until
 - The Platform Administration Groups overview is more compact and easier to scan.
 
 This amends v1.0.8; no additional database migrations are required. Existing scoring and recovery safeguards are preserved.
+
+## All Submissions follow-up amendment preparation
+
+Status: pending a main-targeting PR, passing CI, and separate merge/publication approval. Version remains v1.0.8; no new release or version is planned.
+
+### Current published baseline
+
+- Current v1.0.8 target: `cee7ab3e41ce9680f08950899f27b04ee700c395`.
+- Current annotated tag object: `87209dc40178515f240400f5a6343a79bc15437d`.
+- Registry observation (UTC): `2026-11-04T23:10:52.235147+00:00`.
+- Current `v1.0.8` index: `sha256:87a4ecf64e15460714a539b2d75abb7dc3d01012ae7f02f3e1635e70a83bc927`.
+  - linux/amd64: `sha256:86b6fe52040bf1ba86cc7af8c4fd93148a5b27bb5f43ed9a6850c5040ed3faac`; `NORTHBOUND_VERSION=v1.0.8`; revision `cee7ab3e41ce9680f08950899f27b04ee700c395`.
+  - linux/arm64: `sha256:3f49e943ffbfc5285cc97227c00a8ea1c86656c370a4fb68332a087680ef5d67`; `NORTHBOUND_VERSION=v1.0.8`; revision `cee7ab3e41ce9680f08950899f27b04ee700c395`.
+- Current `latest` index: `sha256:a4d205c90a3b8e780dcbf4ee34f2c6e79a02b658c4bc939345d055c63a915a04`.
+  - linux/amd64: `sha256:dd049ec0070d86c1394844cdfdb90805881c71c4adc2ae1d446bdfa85ef3e486`; `NORTHBOUND_VERSION=cee7ab3e41ce9680f08950899f27b04ee700c395`; revision `cee7ab3e41ce9680f08950899f27b04ee700c395`.
+  - linux/arm64: `sha256:3848501aeb132ef2cb33d547dbabe031758dd05707ba73bd9c39f5760ee6497f`; `NORTHBOUND_VERSION=cee7ab3e41ce9680f08950899f27b04ee700c395`; revision `cee7ab3e41ce9680f08950899f27b04ee700c395`.
+
+Both versioned architectures identify the current release commit and v1.0.8. The observed latest images have the same source revision but commit-based version metadata and different digests: the main publication finished after the tag publication. This is the existing workflow race described above. Do not assume latest equals the versioned tag; verify both before a later approved publication is declared complete. No CI change is included.
+
+The existing release ID remains 434409105, public/stable and mutable; current repository rulesets are empty. No release artifacts are modified in this preparation.
+
+### Approved follow-up scope and validation
+
+Challenge-wide All Submissions table, live search with 300 ms debounce, removal-flag-based Voided filtering, server-side pages of 25/50/100, dynamic floating action menus, accessible Reader ellipsis and single-line status badges, neutral heading, and one visible counter with screen-reader announcements. Existing viewer scopes and action permissions remain unchanged; the participant table is unchanged. View as User and Act as User remain deferred.
+
+Reuse the latest 28 passing focused tests and the previously passing search, pagination, ordering, status, permission, and submission-management checks. Reused synthetic browser checks cover live updates, cancellation, stale responses, focus/cursor preservation, errors/retry, the single visible counter, and desktop/narrow layout. No application code changed after those validations. Fresh Django, migration consistency, JavaScript syntax, and diff checks passed. No full-suite rerun is needed.
+
+User-facing draft notes are under v1.0.8 in RELEASE_NOTES.md. After the follow-up PR passes CI and separate approval is received, merge it, record its merge commit in the replacement annotated tag and release amendment notes, replace only v1.0.8, let the established workflow publish, and verify both architectures and latest/version metadata. Preserve every prior commit and digest recorded here. Production deployment is separate.

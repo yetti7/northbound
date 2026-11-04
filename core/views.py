@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.conf import settings
 from django.core import signing
+from django.core.paginator import Paginator
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.views import LoginView, PasswordChangeView
@@ -4301,6 +4302,46 @@ def member_create(request, group_slug):
     return render(request, "core/form_page.html", {"form": form, "title": "Add Member", "eyebrow": group.name})
 
 
+def _challenge_submission_page(request, month):
+    """Platform overview only; filter the authorized queryset before pagination."""
+    query = request.GET.get("submission_q", "").strip()[:300]
+    status = request.GET.get("submission_status", "all")
+    if status not in {"all", "pending", "approved", "rejected", "voided"}:
+        status = "all"
+    size = request.GET.get("submission_size", "25")
+    size = int(size) if size in {"25", "50", "100"} else 25
+    try:
+        number = max(1, int(request.GET.get("submission_page", "1")))
+    except ValueError:
+        number = 1
+    submissions = month.submissions.select_related(
+        "month__group", "participant__user__northbound_profile", "catalog_book", "catalog_edition"
+    )
+    if status == "voided":
+        submissions = submissions.filter(is_removed=True)
+    elif status != "all":
+        submissions = submissions.filter(is_removed=False, status=status)
+    if query:
+        submissions = submissions.filter(
+            Q(participant__user__username__icontains=query)
+            | Q(participant__display_name__icontains=query) | Q(title__icontains=query)
+        )
+    page = Paginator(submissions.order_by("-submitted_at", "-pk"), size).get_page(number)
+    page.object_list = list(page.object_list)
+    _annotate_submission_edit(request.user, page.object_list)
+    def page_url(number):
+        params = request.GET.copy()
+        params.pop("submissions_fragment", None)
+        for key, value in {"submission_q": query, "submission_status": status,
+                           "submission_size": str(size), "submission_page": str(number)}.items():
+            params[key] = value
+        return "?" + params.urlencode()
+    return {"submission_page": page, "submission_query": query,
+            "submission_status": status, "submission_size": size,
+            "submission_previous": page_url(page.previous_page_number()) if page.has_previous() else None,
+            "submission_next": page_url(page.next_page_number()) if page.has_next() else None}
+
+
 @login_required
 def month_detail(request, group_slug, pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=pk, group__slug=group_slug)
@@ -4309,6 +4350,14 @@ def month_detail(request, group_slug, pk):
         return HttpResponseForbidden("You are not a member of this reading group.")
     if not can_view_challenge(request.user, month):
         raise Http404("Challenge not found.")
+    if request.GET.get("submissions_fragment") == "1":
+        if not request.user.is_superuser or not request.user.is_active:
+            return HttpResponseForbidden("Platform owner access is required.")
+        response = render(request, "core/includes/challenge_submission_results.html",
+                          {"month": month, **_challenge_submission_page(request, month)})
+        response["Cache-Control"] = "private, no-store"
+        response["X-Submission-Fragment"] = "1"
+        return response
     leader_assignments = ChallengeStaffAssignment.objects.filter(
         role=ChallengeStaffAssignment.Role.TEAM_LEADER,
         ended_at__isnull=True,
@@ -4367,16 +4416,16 @@ def month_detail(request, group_slug, pk):
     personal_tbr_reader = build_personal_tbr_reader_presentation(
         personal_tbr=personal_tbr,
     ) if personal_tbr else None
-    visible_submissions = month.submissions.filter(is_removed=False).select_related(
-        "participant", "participant__user", "participant__user__northbound_profile",
-        "catalog_book", "catalog_edition",
-    ).prefetch_related("theme_claims__theme")
+    submission_context = {}
+    submission_heading = "All Submissions"
     if request.user.is_superuser:
-        submission_heading = "All Submissions · Platform Administration"
+        submission_context = _challenge_submission_page(request, month)
+        visible_submissions = submission_context["submission_page"].object_list
     else:
-        visible_submissions = visible_submissions.filter(participant=membership)
-        submission_heading = "My Submissions"
-    _annotate_submission_edit(request.user, visible_submissions)
+        visible_submissions = month.submissions.filter(is_removed=False, participant=membership).select_related(
+            "participant__user__northbound_profile", "catalog_book", "catalog_edition"
+        ).prefetch_related("theme_claims__theme")
+        _annotate_submission_edit(request.user, visible_submissions)
     pending_submissions = scope_reviewable_submissions(
         request.user,
         month,
@@ -4455,6 +4504,7 @@ def month_detail(request, group_slug, pk):
         ).select_related("membership"),
         "can_manage_floaters": can_operate_challenge(request.user, month),
     }
+    context.update(submission_context)
     return render(request, "core/month_detail.html", context)
 
 

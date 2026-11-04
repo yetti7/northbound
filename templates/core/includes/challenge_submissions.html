@@ -1,0 +1,18 @@
+<section data-challenge-submissions>
+  <div class="section-heading"><h2>All Submissions</h2></div>
+  <form class="challenge-submission-tools" data-submission-filters method="get">
+    <label for="submission-search">Search submissions</label>
+    <div class="submission-search-controls"><input id="submission-search" name="submission_q" value="{{ submission_query }}" type="search" maxlength="300" placeholder="Reader username, display name, or book title" autocomplete="off"><button type="button" data-submission-clear>Clear search</button></div>
+    <fieldset><legend>Status</legend>
+      <label><input type="radio" name="submission_status" value="all" {% if submission_status == 'all' %}checked{% endif %}> All</label>
+      <label><input type="radio" name="submission_status" value="pending" {% if submission_status == 'pending' %}checked{% endif %}> Pending</label>
+      <label><input type="radio" name="submission_status" value="approved" {% if submission_status == 'approved' %}checked{% endif %}> Approved</label>
+      <label><input type="radio" name="submission_status" value="rejected" {% if submission_status == 'rejected' %}checked{% endif %}> Rejected</label>
+      <label><input type="radio" name="submission_status" value="voided" {% if submission_status == 'voided' %}checked{% endif %}> Voided</label>
+    </fieldset>
+    <label>Per page <select name="submission_size"><option value="25" {% if submission_size == 25 %}selected{% endif %}>25</option><option value="50" {% if submission_size == 50 %}selected{% endif %}>50</option><option value="100" {% if submission_size == 100 %}selected{% endif %}>100</option></select></label>
+  </form>
+  <p class="sr-only" data-submission-feedback role="status" aria-live="polite"></p>
+  <p data-submission-error role="alert" hidden>Unable to load submissions. Check your connection or sign in again. <button type="button" data-submission-retry>Retry</button></p>
+  <div data-submission-results aria-busy="false">{% include "core/includes/challenge_submission_results.html" %}</div>
+</section>
