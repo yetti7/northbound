@@ -1222,7 +1222,7 @@ class SubmissionPrivacyTests(TestCase):
     def test_reader_sees_only_own_submissions(self):
         self.client.force_login(self.reader_one)
         response = self.client.get(self.month.get_absolute_url())
-        self.assertContains(response, "My Submissions")
+        self.assertContains(response, "All Submissions")
         self.assertContains(response, "My Visible Book")
         self.assertNotContains(response, "Other Secret Book")
         self.assertNotContains(response, "987")
@@ -1231,7 +1231,7 @@ class SubmissionPrivacyTests(TestCase):
     def test_moderator_sees_no_other_reader_month_submissions(self):
         self.client.force_login(self.moderator)
         response = self.client.get(self.month.get_absolute_url())
-        self.assertContains(response, "My Submissions")
+        self.assertContains(response, "All Submissions")
         self.assertNotContains(response, "My Visible Book")
         self.assertNotContains(response, "Other Secret Book")
         self.assertNotContains(response, "Reader One")

@@ -2,6 +2,16 @@
 
 ## v1.0.8 — November 4, 2026
 
+### Prepared All Submissions amendment (not yet published)
+
+- Platform Owners can search Challenge submissions by Reader username, display name, or book title. Results update while typing without reloading the page.
+- Filter by All, Pending, Approved, Rejected, or Voided, with server-side pages of 25, 50, or 100 submissions.
+- A cleaner table keeps Reader identities, book titles, base/bonus/total pages, status, and authorized actions easy to scan.
+- Floating action menus remain usable after results update. Pending badges stay on one line, and long Reader names retain accessible full names.
+- The neutral All Submissions heading and a single visible result counter preserve existing access boundaries and accessible announcements.
+
+No additional database migrations are required. Submission permissions, scoring, voiding, and permanent-deletion safeguards are unchanged. View as User and Act as User are deferred.
+
 ### New features
 
 - Immersive Reading: optional, configurable percentage bonuses for reading and listening to a book, with separate staff approval.
