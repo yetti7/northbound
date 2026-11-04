@@ -197,6 +197,18 @@ def can_review_submission(user, submission):
     ).exists()
 
 
+def can_void_submission(user, submission):
+    """Soft-removal authority; callers also enforce the Challenge lifecycle."""
+    if not user.is_authenticated or not user.is_active or submission.is_removed:
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, submission.month.group)
+    if member and member.role in {Membership.Role.OWNER, Membership.Role.MODERATOR}:
+        return True
+    return can_review_submission(user, submission)
+
+
 def _has_competition_staff_access(user, month, membership):
     if user.is_superuser:
         return True

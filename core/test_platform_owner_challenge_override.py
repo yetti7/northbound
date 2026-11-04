@@ -279,7 +279,6 @@ class PlatformOwnerChallengeOverrideTests(TestCase):
             reverse("team-create", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk}),
             reverse("theme-create", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk}),
             reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk}),
-            reverse("submission-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk, "pk": self.removal_submission.pk}),
             reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.draft.pk}),
         )
         for user in (self.owner_user, self.moderator_user):

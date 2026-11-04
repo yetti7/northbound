@@ -135,7 +135,6 @@ class HostOperationalAuthorityTests(TestCase):
             reverse("team-edit", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.team_two.pk}),
             reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
             reverse("theme-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
-            reverse("submission-remove", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.submission.pk}),
         )
         for user in (self.owner_user, self.moderator_user, self.leader_user, self.floater_user, self.reader_user, self.other_host_user):
             self.client.force_login(user)

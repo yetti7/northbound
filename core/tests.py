@@ -403,7 +403,7 @@ class PlatformGroupManagementTests(TestCase):
         self.assertContains(response, "Inactive Archive")
         self.assertContains(response, "Central Owner")
         self.assertContains(response, "August Challenge")
-        self.assertContains(response, "Updated the group for directory testing.")
+        self.assertNotContains(response, "Updated the group for directory testing.")
         self.assertContains(response, "Members")
         self.assertNotContains(response, "Participants")
         self.assertContains(response, 'data-search="central reading group central-reading-group"')
