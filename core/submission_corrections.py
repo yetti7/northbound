@@ -12,11 +12,11 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.debug import sensitive_variables
 
-from .integrations.hardcover import fetch_edition_metadata
+from .integrations.hardcover import fetch_edition_metadata, resolve_scoring_edition
 from .models import (
     AuditEvent, BookSubmission, CatalogEdition, ThemeClaim, MonthTheme,
     PersonalTBRMatch, BotmMatch, ModifierProvenance, PersonalTBRCompletionAward,
-    BotmCompletionAward, PersonalTBRBook, BotmBook,
+    BotmCompletionAward, PersonalTBRBook, BotmBook, ImmersiveRequest,
 )
 from .permissions import can_edit_submission
 from .scoring import establish_theme_award, refresh_submission_score
@@ -30,7 +30,7 @@ FIELDS = ('title', 'author', 'catalog_book_id', 'catalog_edition_id', 'scoring_c
           'reviewed_by_id', 'reviewed_at')
 CLAIM_FIELDS = ('id', 'theme_id', 'status', 'approved_bonus_pages', 'award_finalized', 'award_rule',
                 'award_version', 'award_percentage', 'award_basis_pages', 'award_bonus_pages')
-ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses'}
+ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode'}
 PER_BOOK = (ModifierProvenance.SourceType.THEME_BONUS, ModifierProvenance.SourceType.TBR_BOOK,
             ModifierProvenance.SourceType.BOTM_BOOK)
 
@@ -69,6 +69,8 @@ def _reader_state(submission):
         (BotmCompletionAward, ('id', 'is_qualifying', 'bonus_amount_snapshot', 'effective_date', 'completion_set_fingerprint')),
     ):
         state[model.__name__] = _rows(model.objects.filter(**scope), fields)
+    state['ImmersiveRequest'] = _rows(ImmersiveRequest.objects.filter(submission=submission),
+        ('id', 'status', 'captured_percent', 'awarded_pages', 'is_active'))
     return state
 
 
@@ -85,6 +87,7 @@ def _fingerprint(submission):
     state['botm_evidence'] = _rows(BotmBook.objects.filter(month_id=submission.month_id),
         ('id', 'catalog_book_id', 'catalog_edition_id', 'normalized_title', 'normalized_author',
          'title_snapshot', 'author_snapshot', 'page_count_snapshot', 'bonus_pages', 'is_retired'))
+    state['immersive'] = _rows(ImmersiveRequest.objects.filter(submission=submission))
     state['correction_revision'] = AuditEvent.objects.filter(action='submission.corrected',
         object_type='BookSubmission', object_id=str(submission.pk)).order_by('-pk').values_list('pk', flat=True).first()
     state['themes'] = _rows(MonthTheme.objects.filter(month_id=submission.month_id))
@@ -124,11 +127,37 @@ def _prepare_edition(submission, changes, token):
     if not token:
         raise ValidationError('A Hardcover credential is required to verify the corrected edition.')
     metadata = fetch_edition_metadata(token, edition_id=edition.provider_edition_id, book_id=edition.book.provider_book_id)
+    scoring = edition
+    method = 'hardcover'
+    if changes.get('association_mode', 'update') != 'only':
+        selected = {'edition_id': edition.provider_edition_id, 'book_id': edition.book.provider_book_id,
+                    'format': edition.format_name, 'audio_seconds': edition.audio_seconds,
+                    'pages': metadata.get('page_count')}
+        resolved, method = resolve_scoring_edition(token, selected)
+        if resolved:
+            try:
+                scoring = CatalogEdition.objects.select_related('book').get(
+                    provider='hardcover', provider_edition_id=resolved['edition_id'])
+            except CatalogEdition.DoesNotExist:
+                raise ValidationError('The scoring edition is unavailable. Select it again.') from None
+            if scoring.book_id != edition.book_id:
+                raise ValidationError('The scoring edition must belong to the selected Hardcover work.')
+            if scoring.pk != edition.pk:
+                scoring_metadata = fetch_edition_metadata(token, edition_id=scoring.provider_edition_id,
+                                                         book_id=edition.book.provider_book_id)
+                metadata['page_count'] = scoring_metadata.get('page_count')
+        else:
+            scoring = None
+            metadata['page_count'] = None
     return {'id': edition.pk, 'book_id': edition.book_id, 'provider_id': edition.provider_edition_id,
-            'work_id': edition.book.provider_book_id, 'metadata': metadata}
+            'work_id': edition.book.provider_book_id, 'metadata': metadata,
+            'scoring_id': scoring.pk if scoring else None, 'method': method}
+
 
 
 def _apply_fields(submission, changes, edition_data):
+    if changes.get('association_mode', 'update') not in {'update', 'only'}:
+        raise ValidationError('Choose a valid association mode.')
     old_status = submission.status
     submission.status = 'approved' if old_status == 'approved' else 'pending'
     if edition_data is not None:
@@ -146,9 +175,24 @@ def _apply_fields(submission, changes, edition_data):
                 selected.provider, selected.book.provider) != (
                     edition_data['book_id'], edition_data['provider_id'], edition_data['work_id'], 'hardcover', 'hardcover'):
                 raise ValidationError('The selected Hardcover identity changed during lookup.')
+            if changes.get('association_mode') == 'only':
+                # No title, page, claim, provenance, approval, or match changes.
+                allowed = {'catalog_edition_id', 'association_mode'}
+                if any(key not in allowed for key in changes):
+                    raise ValidationError('Associate Only cannot be combined with other corrections.')
+                submission.catalog_book = selected.book
+                submission.catalog_edition = selected
+                if submission.scoring_catalog_edition_id and submission.scoring_catalog_edition.book_id != selected.book_id:
+                    submission.scoring_catalog_edition = None
+                    submission.metadata_pages = None
+                    submission.verification_method = 'manual'
+                    submission.verification_url = ''
+                submission.status = old_status
+                submission.full_clean()
+                return
             metadata = edition_data['metadata']
             submission.catalog_book = selected.book
-            submission.catalog_edition = submission.scoring_catalog_edition = selected
+            submission.catalog_edition = selected
             for field in ('title', 'author'):
                 value = metadata.get(field)
                 limit = 200 if field == 'author' else 300
@@ -162,10 +206,11 @@ def _apply_fields(submission, changes, edition_data):
             submission.book_format = ('audio' if 'audio' in fmt or selected.audio_seconds else
                 'paperback' if 'paperback' in fmt else 'hardcover' if 'hardcover' in fmt or 'hardback' in fmt else
                 'ebook' if any(term in fmt for term in ('ebook', 'e-book', 'kindle', 'digital')) else 'other')
-            submission.scoring_catalog_edition = selected if valid_pages else None
+            submission.scoring_catalog_edition_id = edition_data['scoring_id'] if valid_pages else None
             submission.metadata_pages = pages if valid_pages else None
-            submission.verification_url = selected.source_url
-            submission.verification_method = 'hardcover' if valid_pages else 'manual'
+            submission.verification_url = (submission.scoring_catalog_edition.source_url
+                                           if submission.scoring_catalog_edition_id else selected.source_url)
+            submission.verification_method = edition_data['method'] if valid_pages else 'manual'
             if valid_pages:
                 submission.submitted_pages = pages
                 if submission.status == 'approved': submission.approved_pages = pages
@@ -242,14 +287,19 @@ def _themes(submission, actor, plan):
 
 
 @sensitive_variables('hardcover_token')
-def correct_submission(*, submission, actor, changes, version, hardcover_token=None):
+def correct_submission(*, submission, actor, changes, version, hardcover_token=None, _preview=False, _expected_impact=None):
     if connection.in_atomic_block:
         raise ValidationError('Begin correction outside an existing write transaction.')
     if not isinstance(changes, dict) or set(changes) - ALLOWED:
         raise ValidationError('Unsupported correction fields.')
+    if changes.get('association_mode') == 'only' and (
+            set(changes) != {'catalog_edition_id', 'association_mode'} or type(changes['catalog_edition_id']) is not int):
+        raise ValidationError('Associate Only requires a selected edition and no other corrections.')
     current = _load(submission.pk)
     _authorize(actor, current)
     _check_version(current, actor, version)
+    if changes.get('association_mode') == 'only' and changes['catalog_edition_id'] == current.catalog_edition_id:
+        raise ValidationError('Choose a different edition for Associate Only, or keep the current association.')
     edition_data = _prepare_edition(current, changes, hardcover_token)
     with transaction.atomic():
         try: actor = get_user_model().objects.get(pk=actor.pk)
@@ -263,28 +313,96 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
         _check_version(current, actor, version)
         before = _reader_state(current)
         _apply_fields(current, changes, edition_data)
-        theme_plan = _theme_plan(current, changes)
-        current.reviewed_by = actor
-        current.reviewed_at = timezone.now()
-        current.save()
-        _themes(current, actor, theme_plan)
-        refresh_submission_score(current)
-        # Corrected row first releases obsolete credit; existing qualifying
-        # alternatives keep priority while other approved occurrences are retried.
-        synchronize_tbr(current)
-        synchronize_botm(current)
-        for other in BookSubmission.objects.filter(month=current.month, participant=current.participant,
-                status='approved', is_removed=False).exclude(pk=current.pk).order_by('pk'):
-            synchronize_tbr(other)
-            synchronize_botm(other)
-        if before['submission']['completed_on'] != current.completed_on:
-            ModifierProvenance.objects.filter(submission=current, source_type__in=PER_BOOK).update(effective_date=current.completed_on)
-        refresh_submission_score(current)
+        if changes.get('association_mode') == 'only':
+            current.save()
+        else:
+            theme_plan = _theme_plan(current, changes)
+            current.reviewed_by = actor
+            current.reviewed_at = timezone.now()
+            current.save()
+            _themes(current, actor, theme_plan)
+            refresh_submission_score(current)
+            # Corrected row first releases obsolete credit; existing qualifying
+            # alternatives keep priority while other approved occurrences are retried.
+            synchronize_tbr(current)
+            synchronize_botm(current)
+            for other in BookSubmission.objects.filter(month=current.month, participant=current.participant,
+                    status='approved', is_removed=False).exclude(pk=current.pk).order_by('pk'):
+                synchronize_tbr(other)
+                synchronize_botm(other)
+            if before['submission']['completed_on'] != current.completed_on:
+                ModifierProvenance.objects.filter(submission=current, source_type__in=PER_BOOK).update(effective_date=current.completed_on)
+            refresh_submission_score(current)
         current.refresh_from_db()
         after = _reader_state(current)
+        impact = _correction_impact(current)
+        if _expected_impact is not None and impact != _expected_impact:
+            raise ValidationError('The correction preview changed. Preview again before confirming.')
+        if _preview:
+            result = {'before': before, 'after': after, 'impact': impact,
+                      'selected': str(current.catalog_edition) if current.catalog_edition_id else '',
+                      'scoring': str(current.scoring_catalog_edition) if current.scoring_catalog_edition_id else ''}
+            transaction.set_rollback(True)
+            return result
         AuditEvent.objects.create(actor=actor, group=current.month.group, action='submission.corrected',
             object_type='BookSubmission', object_id=str(current.pk), summary=_json({
                 'manual_page_override': 'page_count' in changes,
+                'association_mode': changes.get('association_mode', 'update'),
                 'before': before, 'after': after,
             }))
         return current
+
+
+PREVIEW_SALT = 'northbound.correction-preview.v1'
+
+
+def _correction_impact(submission):
+    from .score_aggregation import challenge_score_totals
+    # Stable values: do not compare generated IDs or review timestamps across rollback.
+    data = {field: getattr(submission, field) for field in FIELDS
+            if field not in {'reviewed_at', 'reviewed_by_id'}}
+    data['reader_score'] = challenge_score_totals(month=submission.month,
+                                                participant_ids=[submission.participant_id])[submission.participant_id]
+    for model, fields in ((PersonalTBRMatch, ('submission_id', 'personal_tbr_book_id', 'method', 'status', 'is_qualifying')),
+                          (BotmMatch, ('submission_id', 'botm_book_id', 'method', 'status', 'is_qualifying')),
+                          (ModifierProvenance, ('submission_id', 'source_type', 'source_label', 'amount', 'effective_date', 'is_active'))):
+        rows = list(model.objects.filter(month=submission.month, participant=submission.participant).values_list(*fields))
+        data[model.__name__] = sorted(rows, key=_json)
+    data['themes'] = list(submission.theme_claims.order_by('theme_id').values_list(
+        'theme_id', 'status', 'approved_bonus_pages', 'award_percentage'))
+    data['immersive'] = list(ImmersiveRequest.objects.filter(submission=submission).order_by('pk').values_list(
+        'id', 'status', 'captured_percent', 'awarded_pages', 'is_active'))
+    # JSON normalization makes date/tuple values stable after signing.
+    return json.loads(_json(data))
+
+
+def preview_correction(*, submission, actor, changes, version, hardcover_token=None):
+    result = correct_submission(submission=submission, actor=actor, changes=changes,
+                                version=version, hardcover_token=hardcover_token, _preview=True)
+    current = _load(submission.pk)
+    selected_id = changes.get('catalog_edition_id')
+    selected = CatalogEdition.objects.select_related('book').get(pk=selected_id) if selected_id else None
+    result['work_changed'] = bool(selected and current.catalog_book_id != selected.book_id)
+    result['approved_confirmation'] = current.status == 'approved'
+    payload = {'submission': current.pk, 'actor': actor.pk, 'version': version,
+               'changes': _json(changes), 'impact': result['impact'],
+               'work_changed': result['work_changed'], 'approved_confirmation': result['approved_confirmation']}
+    result['token'] = signing.dumps(payload, salt=PREVIEW_SALT, compress=True)
+    return result
+
+
+def apply_previewed_correction(*, submission, actor, changes, version, preview_token,
+                               confirm_approved=False, confirm_work=False, hardcover_token=None):
+    try:
+        expected = signing.loads(preview_token, salt=PREVIEW_SALT, max_age=600)
+    except (signing.BadSignature, TypeError):
+        raise ValidationError('Correction preview expired. Preview again.') from None
+    if (expected.get('submission'), expected.get('actor'), expected.get('version'), expected.get('changes')) != (
+            submission.pk, actor.pk, version, _json(changes)):
+        raise ValidationError('Correction preview is stale or the inputs changed. Preview again.')
+    if expected['approved_confirmation'] and not confirm_approved:
+        raise ValidationError('Confirm the approved submission changes before applying.')
+    if expected['work_changed'] and not confirm_work:
+        raise ValidationError('Confirm the different Hardcover work before applying.')
+    return correct_submission(submission=submission, actor=actor, changes=changes, version=version,
+                              hardcover_token=hardcover_token, _expected_impact=expected['impact'])

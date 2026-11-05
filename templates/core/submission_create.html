@@ -12,8 +12,10 @@
   </div>
   <p class="muted" data-catalog-status aria-live="polite"></p>
   <div class="card-grid" data-catalog-results></div>
+  <div data-audio-scoring hidden></div>
 </section>
 {% else %}<section class="empty-state submission-hardcover-disconnected"><strong>Hardcover search is not connected.</strong><br>Manual entry remains available below.</section>{% endif %}
-<section class="form-card submission-book-details"><div class="section-heading"><div><h2>Book Details</h2><p class="muted">Hardcover page counts are locked and verified automatically. Manual entries are sent for review.</p></div><button class="button secondary" type="button" data-clear-book>Clear and Enter Manually</button></div><form method="post" class="stacked-form standard-form" data-submission-form>{% csrf_token %}{{ form.as_p }}<p class="muted" data-entry-mode>Manual Entry</p><div class="form-actions"><button class="button primary">Submit Book</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+<section class="form-card submission-book-details"><div class="section-heading"><div><h2>Book Details</h2><p class="muted">Hardcover page counts are locked and verified automatically. Manual entries are sent for review.</p></div><button class="button secondary" type="button" data-clear-book>Clear and Enter Manually</button></div><form method="post" class="stacked-form standard-form" data-submission-form>{% csrf_token %}{{ form.as_p }}<p class="muted" data-entry-mode>Manual Entry</p>{% if month.immersive_enabled %}<div data-immersive-preview data-percent="{{ month.immersive_bonus_percent }}" role="status" aria-live="polite"></div>{% endif %}<div class="form-actions"><button class="button primary">Submit Book</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
 <script src="{% static 'js/theme_eligibility.js' %}" defer></script>
+<script src="{% static 'js/submission_scoring_preview.js' %}" defer></script>
 {% endblock %}

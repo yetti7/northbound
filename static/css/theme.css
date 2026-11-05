@@ -301,3 +301,5 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 .challenge-submissions-table .submission-reader-username{max-width:100%}
 .challenge-submissions-table th:nth-child(6),.challenge-submissions-table td:nth-child(6){min-width:10rem;white-space:nowrap}
 .challenge-submissions-table td:nth-child(6) .pill{white-space:nowrap}
+
+.development-banner{text-align:center;padding:.5rem 1rem;border-bottom:1px solid var(--border);font-weight:700}

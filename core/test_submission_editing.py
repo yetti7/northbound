@@ -115,7 +115,11 @@ class SubmissionEditingTests(TransactionTestCase):
 
     def test_manual_page_override_and_no_duplicate_awards(self):
         item=self.submission(catalog=True);actor=self.actor();self.client.force_login(actor)
-        response=self.client.post(self.edit_url,self.payload(item,actor,submitted_pages=400),follow=True)
+        data=self.payload(item,actor,submitted_pages=400)
+        preview=self.client.post(self.edit_url,data)
+        self.assertContains(preview,'Preview before confirmation')
+        data.update(preview_token=preview.context['preview']['token'],confirm_approved='on')
+        response=self.client.post(self.edit_url,data,follow=True)
         self.assertContains(response,'Submission corrections saved.')
         item.refresh_from_db()
         self.assertEqual((item.approved_pages,item.metadata_pages,item.verification_method),(400,350,'manual'))
@@ -204,6 +208,9 @@ class SubmissionEditingTests(TransactionTestCase):
             self.assertNotContains(response,'PRIVATE CREDENTIAL')
             item.refresh_from_db();self.assertEqual(item.catalog_edition_id,self.edition.pk)
             data['manual_page_override']='on'
+            response=self.client.post(self.edit_url,data)
+            self.assertContains(response,'Preview before confirmation')
+            data.update(preview_token=response.context['preview']['token'],confirm_approved='on',confirm_work='on')
             response=self.client.post(self.edit_url,data)
         self.assertEqual(response.status_code,302)
         item.refresh_from_db()

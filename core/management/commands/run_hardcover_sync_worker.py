@@ -1,5 +1,6 @@
 import time
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
@@ -15,6 +16,9 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=20)
 
     def handle(self, *args, **options):
+        if not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+            self.stdout.write("Hardcover write-back is disabled for this environment.")
+            return
         call_command("safeguard_restored_hardcover_sync", stdout=self.stdout)
         interval = max(1, options["interval"])
         while True:

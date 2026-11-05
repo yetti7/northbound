@@ -201,6 +201,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/", views.submission_create, name="submission-create"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/catalog/", views.submission_catalog, name="submission-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/", views.review_queue, name="review-queue"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/catalog/", views.submission_edit_catalog, name="submission-edit-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/", views.submission_edit, name="submission-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/<int:pk>/", views.submission_review, name="submission-review"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/remove/", views.submission_remove, name="submission-remove"),

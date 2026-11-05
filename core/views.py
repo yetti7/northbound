@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.conf import settings
 from django.core import signing
+from django.core.serializers.json import DjangoJSONEncoder
 from django.core.paginator import Paginator
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.auth import get_user_model, login
@@ -5574,10 +5575,12 @@ def submission_catalog(request, group_slug, month_pk):
             selected, cached = lookup_edition(token, request.POST.get("edition_id", ""))
             scoring, method = resolve_scoring_edition(token, selected)
             if not scoring:
-                return JsonResponse({"ok": True, "manual_required": True, "message": "Hardcover does not have a usable ebook or print page count for this edition. Continue with manual entry and add a reference link."})
+                return JsonResponse({"ok": True, "manual_required": True, "message": "No suitable ebook or print equivalent could be found. Use Clear and Enter Manually, add a reference link, and submit manual pages for staff review."})
             selected_record = CatalogEdition.objects.get(provider="hardcover", provider_edition_id=selected["edition_id"])
             scoring_record = CatalogEdition.objects.get(provider="hardcover", provider_edition_id=scoring["edition_id"])
             signed_selection = signing.dumps({"selected": selected_record.pk, "scoring": scoring_record.pk, "method": method}, salt="northbound.catalog-selection")
+            selected["scoring_edition"] = {key: scoring.get(key) for key in
+                ("edition_id", "title", "format", "pages", "source_url")}
             selected["pages"] = scoring["pages"]
             selected["catalog_selection"] = signed_selection
             selected["scoring_format"] = scoring["format"]
@@ -6285,10 +6288,48 @@ def _submission_edit_destination(user, submission):
 
 @login_required
 @sensitive_variables('token')
+def submission_edit_catalog(request, group_slug, month_pk, pk):
+    from .permissions import can_edit_submission
+    submission = get_object_or_404(BookSubmission.objects.select_related('month__group', 'participant'),
+                                  pk=pk, month_id=month_pk, month__group__slug=group_slug)
+    if not can_edit_submission(request.user, submission):
+        return HttpResponseForbidden('Submission correction permission is required.')
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': 'Use POST.'}, status=405)
+    try:
+        token = _staff_tbr_search_token(request.user, submission.month.group)
+        action = request.POST.get('action')
+        if action == 'search':
+            results, _ = search_books(token, request.POST.get('query', '')[:300])
+            return JsonResponse({'ok': True, 'results': results})
+        book_id = request.POST.get('book_id', '')
+        if not book_id.isdecimal() or int(book_id) <= 0:
+            raise ValidationError('Select a valid Hardcover work.')
+        if action == 'editions':
+            return JsonResponse({'ok': True, 'editions': list_book_editions(token, book_id)})
+        if action == 'edition':
+            selected, _ = lookup_edition(token, request.POST.get('edition_id', ''))
+            if str(selected['book_id']) != book_id:
+                raise ValidationError('The selected edition does not belong to that work.')
+            scoring, method = resolve_scoring_edition(token, selected)
+            edition = CatalogEdition.objects.get(provider='hardcover', provider_edition_id=selected['edition_id'])
+            return JsonResponse({'ok': True, 'edition_pk': edition.pk, 'selected': selected,
+                                 'scoring': scoring, 'method': method})
+        raise ValidationError('Unknown search action.')
+    except DatabaseError:
+        return JsonResponse({'ok': False, 'message': 'The catalog database is busy. Please try again; no submission changes were saved.'}, status=503)
+    except (HardcoverConnectionError, ReaderHardcoverUnavailable, TokenDecryptionError):
+        return JsonResponse({'ok': False, 'message': 'Hardcover is unavailable. Existing values are unchanged.'}, status=503)
+    except (ValidationError, ValueError, KeyError, CatalogEdition.DoesNotExist):
+        return JsonResponse({'ok': False, 'message': 'Select a valid work and an edition belonging to it.'}, status=400)
+
+
+@login_required
+@sensitive_variables('token')
 def submission_edit(request, group_slug, month_pk, pk):
     from .forms import SubmissionCorrectionForm
     from .permissions import can_edit_submission
-    from .submission_corrections import correction_version, correct_submission
+    from .submission_corrections import correction_version, correct_submission, preview_correction, apply_previewed_correction
     submission = get_object_or_404(BookSubmission.objects.select_related(
         'month__group', 'participant__user', 'catalog_book', 'catalog_edition'),
         pk=pk, month_id=month_pk, month__group__slug=group_slug)
@@ -6303,14 +6344,28 @@ def submission_edit(request, group_slug, month_pk, pk):
     form = SubmissionCorrectionForm(request.POST if request.method == 'POST' else None,
         instance=copy(submission), month=submission.month, initial=initial)
     reload_required = False
+    preview = None
     if request.method == 'POST' and form.is_valid():
-        changes = form.correction_changes()
         try:
+            changes = form.correction_changes()
             token = None
             if 'catalog_edition_id' in changes:
                 token = _staff_tbr_search_token(request.user, submission.month.group)
-            corrected = correct_submission(submission=submission, actor=request.user, changes=changes,
-                version=form.cleaned_data['version'], hardcover_token=token)
+            needs_preview = ('catalog_edition_id' in changes
+                             or (submission.status == 'approved' and 'page_count' in changes))
+            if needs_preview and not form.cleaned_data.get('preview_token'):
+                preview = preview_correction(submission=submission, actor=request.user, changes=changes,
+                    version=form.cleaned_data['version'], hardcover_token=token)
+                form.data = form.data.copy()
+                form.data['preview_token'] = preview['token']
+            elif needs_preview:
+                corrected = apply_previewed_correction(submission=submission, actor=request.user, changes=changes,
+                    version=form.cleaned_data['version'], preview_token=form.cleaned_data['preview_token'],
+                    confirm_approved=form.cleaned_data['confirm_approved'], confirm_work=form.cleaned_data['confirm_work'],
+                    hardcover_token=token)
+            else:
+                corrected = correct_submission(submission=submission, actor=request.user, changes=changes,
+                    version=form.cleaned_data['version'], hardcover_token=token)
         except PermissionDenied:
             return HttpResponseForbidden('Your correction permission changed. Nothing was saved. Reload before trying again.')
         except DatabaseError:
@@ -6331,6 +6386,8 @@ def submission_edit(request, group_slug, month_pk, pk):
                     form.add_error(target if target in form.fields else None, errors)
             elif 'page count' in text.lower() or 'page override' in text.lower():
                 form.add_error('submitted_pages', text)
+            elif 'confirm' in text.lower() or 'preview' in text.lower() or 'associate only' in text.lower():
+                form.add_error(None, text)
             elif 'edition' in text.lower():
                 form.add_error('edition', text)
             elif 'theme' in text.lower():
@@ -6338,15 +6395,17 @@ def submission_edit(request, group_slug, month_pk, pk):
             else:
                 form.add_error(None, 'Corrections could not be saved. No changes were made. Review the fields or ask a Host for help.')
         else:
-            messages.success(request, 'Submission corrections saved. Scores and applicable bonuses are up to date.'
-                if corrected.status == 'approved' else 'Submission corrections saved. The submission is pending review.')
-            return redirect(_submission_edit_destination(request.user, corrected))
+            if preview is None:
+                messages.success(request, 'Submission corrections saved. Scores and applicable bonuses are up to date.'
+                    if corrected.status == 'approved' else 'Submission corrections saved. The submission is pending review.')
+                return redirect(_submission_edit_destination(request.user, corrected))
     if request.method == 'POST' and 'version' in form.errors:
         form.errors.pop('version')
         form.add_error(None, 'The edit session is unavailable. Reload the submission before editing again.')
         reload_required = True
     return render(request, 'core/submission_edit.html', {
-        'submission': submission, 'month': submission.month, 'form': form,
+        'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
+        'preview_details': json.dumps({'before': preview['before'], 'after': preview['after']}, cls=DjangoJSONEncoder, indent=2) if preview else '',
         'cancel_url': destination, 'reload_required': reload_required,
         'edit_url': reverse('submission-edit', args=[group_slug, month_pk, pk]),
         'cover_url': submission.catalog_book.cover_url if submission.catalog_book_id else '',

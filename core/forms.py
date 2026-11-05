@@ -1758,12 +1758,17 @@ class CorrectionEditionChoiceField(forms.ModelChoiceField):
 
 
 class SubmissionCorrectionForm(BookSubmissionForm):
+    association_mode = forms.ChoiceField(choices=[('update', 'Associate and Update'), ('only', 'Associate Only')],
+        required=False, initial='update', help_text='Associate Only preserves existing titles, pages, matching awards and scoring. It cannot be combined with other corrections.')
+    preview_token = forms.CharField(required=False, widget=forms.HiddenInput())
+    confirm_approved = forms.BooleanField(required=False, label='Confirm changes to this approved submission and its displayed scoring impact')
+    confirm_work = forms.BooleanField(required=False, label='Confirm association with a different Hardcover work')
     confirm_theme_removal = forms.BooleanField(required=False,
         label='Confirm removal of existing Theme claims',
         help_text='Required only when removing an existing selection, including one cleared by a date change. Claim history is retained; applicable scores may change.')
     version = forms.CharField(widget=forms.HiddenInput())
     edition = CorrectionEditionChoiceField(queryset=CatalogEdition.objects.none(), required=False,
-        empty_label="Keep current edition", label="Hardcover Edition",
+        empty_label="Keep current edition", label="Hardcover Edition", widget=forms.HiddenInput(),
         help_text="Choose a different saved edition to change the association. Leaving this blank keeps the current edition. A different edition supplies its current title, author and pages unless you enter corrections.")
     manual_page_override = forms.BooleanField(required=False, label="Use a manual page count (not Hardcover-verified)",
         help_text="Changing the page count is a manual override. Select this to use the entered count for a different edition, even when the number is unchanged.")
@@ -1774,17 +1779,21 @@ class SubmissionCorrectionForm(BookSubmissionForm):
 
     def __init__(self, *args, **kwargs):
         submission = kwargs['instance']
+        self.original_completion = submission.completed_on
         self.original_status = submission.status
         self.original_pages = submission.approved_pages if submission.approved_pages is not None else submission.submitted_pages
         self.original_edition_id = submission.catalog_edition_id
         self.original_text = {name: getattr(submission, name) for name in ("title", "author")}
         super().__init__(*args, **kwargs)
         self.fields.pop('catalog_selection')
+        chosen = self.data.get('edition', '') if self.is_bound else self.original_edition_id
+        ids = [self.original_edition_id] if self.original_edition_id else []
+        if str(chosen).isdecimal(): ids.append(int(chosen))
         self.fields['edition'].queryset = CatalogEdition.objects.filter(
-            provider='hardcover', book__provider='hardcover').select_related('book').order_by('book__title', 'provider_edition_id')
+            pk__in=ids, provider='hardcover', book__provider='hardcover').select_related('book')
         self.initial['edition'] = self.original_edition_id
         self.initial['submitted_pages'] = self.original_pages
-        self.initial['manual_page_override'] = bool(submission.catalog_edition_id and submission.verification_method == 'manual')
+        self.initial['manual_page_override'] = False
         claims = {claim.theme_id: claim for claim in submission.theme_claims.select_related('theme')}
         from django.db.models import Q
         themes = self.month.themes.filter(Q(is_active=True, is_visible=True) | Q(pk__in=claims)).distinct()
@@ -1830,8 +1839,17 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         edition = self.cleaned_data.get('edition')
         if edition is not None and edition.pk != self.original_edition_id:
             values['catalog_edition_id'] = edition.pk
+            values['association_mode'] = self.cleaned_data.get('association_mode') or 'update'
         if self.cleaned_data['manual_page_override'] or self.cleaned_data['submitted_pages'] != self.original_pages:
             values['page_count'] = self.cleaned_data['submitted_pages']
+        if values.get('association_mode') == 'only':
+            if self.cleaned_data['submitted_pages'] == self.original_pages:
+                values.pop('page_count', None)
+            if (any(name in values for name in ('title', 'author', 'page_count'))
+                    or values['completed_on'] != self.original_completion
+                    or set(values['theme_ids']) != self.original_theme_ids):
+                raise forms.ValidationError('Associate Only cannot be combined with other corrections.')
+            values = {key: values[key] for key in ('catalog_edition_id', 'association_mode')}
         return values
 
     def save(self, *args, **kwargs):

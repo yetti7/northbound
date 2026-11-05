@@ -304,7 +304,7 @@ class SubmissionCorrectionTests(TransactionTestCase):
         item=self.submission(catalog=True)
         work=CatalogBook.objects.create(provider='hardcover',provider_book_id='101',title='Audio',author='Writer')
         edition=CatalogEdition.objects.create(provider='hardcover',provider_edition_id='202',book=work,format_name='Audiobook')
-        with patch('core.submission_corrections.fetch_edition_metadata',return_value={'title':'Audio','author':'Writer','page_count':None}):
+        with patch('core.submission_corrections.resolve_scoring_edition',return_value=(None,None)), patch('core.submission_corrections.fetch_edition_metadata',return_value={'title':'Audio','author':'Writer','page_count':None}):
             with self.assertRaises(ValidationError):
                 self.correct(item,{'catalog_edition_id':edition.pk},hardcover_token='credential')
             corrected=self.correct(item,{'catalog_edition_id':edition.pk,'page_count':400},hardcover_token='credential')

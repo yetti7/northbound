@@ -15,6 +15,7 @@
   <script src="{% static 'js/app.js' %}?v=12" defer></script>
 </head>
 <body>
+  {% if development_banner_enabled %}<div class="development-banner status-warning" role="note"><strong>DEVELOPMENT</strong> — Test environment</div>{% endif %}
   <header class="site-header">
     <a class="brand" href="{% if user.is_superuser %}{% url 'config-dashboard' %}{% else %}{% url 'dashboard' %}{% endif %}" aria-label="Northbound dashboard">
       <img class="brand-logo brand-logo-dark" src="{% static 'branding/northbound-header-dark.png' %}?v=2" alt="Northbound">
