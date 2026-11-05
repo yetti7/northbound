@@ -77,7 +77,7 @@ jobs:
           done
           if [ "$ready" != true ]; then docker logs northbound-dev-smoke; exit 1; fi
           docker exec northbound-dev-smoke python manage.py shell -c "from pathlib import Path; from django.conf import settings; from django.db import connection; assert Path(connection.settings_dict['NAME']) == Path('/data/northbound.sqlite3'); assert connection.cursor().execute('PRAGMA integrity_check').fetchone() == ('ok',); assert settings.SESSION_COOKIE_NAME == 'northbound_dev_sessionid'; assert settings.CSRF_COOKIE_NAME == 'northbound_dev_csrftoken'; assert not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED; assert settings.NORTHBOUND_DEVELOPMENT_BANNER; p=Path('/data/media/dev-persistence-check.txt'); p.parent.mkdir(exist_ok=True); p.write_text('development smoke test')"
-          docker top northbound-dev-smoke -eo args > "$RUNNER_TEMP/northbound-dev-processes.txt"
+          docker top northbound-dev-smoke -eo pid,args > "$RUNNER_TEMP/northbound-dev-processes.txt"
           if grep -E 'manage.py run_(backup_scheduler|challenge_scheduler|hardcover_sync_worker)' "$RUNNER_TEMP/northbound-dev-processes.txt"; then exit 1; fi
           curl --fail --silent http://127.0.0.1:18061/setup/ > "$RUNNER_TEMP/northbound-dev-setup.html"
           grep -q DEVELOPMENT "$RUNNER_TEMP/northbound-dev-setup.html"
