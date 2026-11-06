@@ -1,8 +1,38 @@
 # Release notes
 
+## v1.0.9
+
+### Submission management and challenge credit
+
+- A compact Manage Submission panel separates book information, Link Only, Update Book Information, Pages/Themes, challenge credit and Advanced Corrections. Platform Administrators can inspect submission-specific history.
+- Reader Submit Book now includes responsive BOTM and confirmed Personal TBR cards. Readers may select either or both, change or remove selections, and retain their intent while searching Hardcover or entering books manually.
+- Matching distinguishes Reader intent, book identity and awarded credit. Strong shared Hardcover work identities qualify across editions and formats; uncertain subtitles or incomplete identities produce reviewable suggestions. Different volumes, adaptations and conflicting catalog identities remain protected.
+- Floaters and Team Leaders can confirm supported BOTM/TBR suggestions during normal, scoped approval. Approving the book alone leaves uncertain credit unconfirmed. Signed review snapshots reject changed or repeated requests.
+- Platform Administrators, Group Owners and scoped Hosts can preview exceptional BOTM/TBR assignments, reversals and restorations. Reasons are required, hard identity conflicts need acknowledgement, and decisions/audits survive automatic synchronization.
+- Existing reward services remain authoritative. Duplicate credit, unrelated record changes and historical Hardcover write-back are prevented. Operations that change an existing frozen completion award are blocked for separate historical review.
+
+### Challenge visibility
+
+- Before Completed, challenge-card aggregate pages and book counts are visible only to Platform Administrators (`is_superuser`). Completed and Archived cards retain their existing formatting for authorized viewers.
+- Completed/Archived competitive standings and Reader Scores are available to active Group members without requiring enrollment or team assignment. Earlier states retain configured audiences; challenge discovery and private review/administrative permissions remain separate.
+
+### Upgrade and compatibility
+
+- Apply additive migration `core.0065_reader_intent_and_matching_evidence`. It adds optional Reader selections and matching evidence with neutral defaults; it does not backfill selections, create matches, recalculate historical scores or queue provider writes.
+- Keep the existing database, media, deployment environment and Django/encryption keys. No new production secrets or runtime dependencies are required.
+- Optional development isolation flags retain production defaults: schedulers and Hardcover write-back remain enabled when their flags are unset; the development banner remains off. Do not copy the Dev environment, override or synthetic fixtures into production.
+- Retain a verified database/media backup and the previous immutable image. Older matching code does not understand new administrative decision evidence; an image-only rollback is not a supported recovery plan.
+
+### Validation and accepted limits
+
+- Functional Dev acceptance used an isolated synthetic Group, real Reader/Floater/Host browser actions and deployed endpoint checks. All original 3,402 rows across 55 tables, including 274 community submissions, remained unchanged; no Hardcover outbox entries were created.
+- Final review covered 251 targeted Django cases, including the corrected history-locked BOTM regression. One legacy POST fixture was updated to include the required review snapshot; its focused rerun passed. JavaScript interaction/syntax and migration checks passed.
+- Live Hardcover testing in Dev could not authenticate because copied credentials do not decrypt under Dev's encryption key. Cached/simulated checks passed. This is an accepted limitation; perform a read-only live catalog smoke check in the authorized production environment after deployment. No key recovery, credential copying or OAuth changes are part of this release.
+- Different-work translations still require explicit reviewed resolution. General fuzzy matching, supplemental historical associations, historical repairs, library features, Discord integrations and new competition features remain deferred.
+
 ## v1.0.8 — November 4, 2026
 
-### Prepared All Submissions amendment (not yet published)
+### All Submissions improvements
 
 - Platform Owners can search Challenge submissions by Reader username, display name, or book title. Results update while typing without reloading the page.
 - Filter by All, Pending, Approved, Rejected, or Voided, with server-side pages of 25, 50, or 100 submissions.

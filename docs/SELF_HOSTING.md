@@ -200,6 +200,28 @@ Plan a maintenance window; there is no zero-downtime or automatic rollback guara
 4. Startup migrates automatically. Verify health, owner login, expected Groups/
    Challenges, media, backups and Reader sync status. Retain the pre-upgrade backup.
 
+### v1.0.9 migration considerations
+
+The v1.0.9 upgrade adds only **core.0065_reader_intent_and_matching_evidence**
+after v1.0.8. Optional Reader intent references, matching evidence and conflict
+fields receive neutral defaults. No historical selections, matches, scores or
+provider synchronization events are backfilled. Existing catalog associations,
+credentials and original award evidence are retained.
+
+Keep the existing Django secret and Hardcover encryption key unchanged. No new
+production secrets or dependencies are required. New development isolation flags
+are optional: production scheduler/write-back defaults remain enabled, the banner
+remains disabled, and default cookie names remain unchanged. Do not reuse the
+separate Dev environment/override or copy its synthetic data into production.
+
+SQLite may rebuild tables while adding fields; provide space for the temporary
+copy and retain a verified database/media backup. Do not use an old image alone as
+a rollback: old matching code does not understand v1.0.9 administrative decisions.
+Use the verified pre-upgrade database/media with its compatible old image during
+an approved maintenance window. Never overwrite concurrent activity; preserve a
+failed-upgrade snapshot first and follow the mandatory restored-sync safeguards in
+[Backup and restore](BACKUP_RESTORE.md#external-restores).
+
 ### v1.0.8 migration considerations
 
 The v1.0.8 source adds core migrations **0061–0064**. Display metadata is
