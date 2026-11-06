@@ -136,7 +136,8 @@ class SubmissionHotfixTests(TestCase):
     def test_pending_submission_grants_no_tbr_credit(self):
         self.assertEqual(self.client.post(self.url, self.payload()).status_code, 302)
         synchronize_submission(BookSubmission.objects.get())
-        self.assertFalse(PersonalTBRMatch.objects.exists())
+        self.assertFalse(PersonalTBRMatch.objects.filter(is_qualifying=True).exists())
+        self.assertEqual(PersonalTBRMatch.objects.get().status, 'pending_review')
         self.assertFalse(ModifierProvenance.objects.exists())
         self.assertEqual(build_personal_tbr_reader_presentation(personal_tbr=self.tbr)['completed_count'], 0)
 

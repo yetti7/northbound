@@ -1,4 +1,5 @@
 """Focused Hardcover association/preview safeguards; providers are always mocked."""
+import time
 from unittest.mock import patch
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.test import TransactionTestCase
@@ -10,6 +11,7 @@ from .models import (CatalogBook, CatalogEdition, BookSubmission, AuditEvent, Im
                      ModifierProvenance, ProgressCheckpoint, ProgressCheckpointResult)
 from .submission_corrections import correction_version, preview_correction, apply_previewed_correction
 from .immersive import configure_immersive, request_immersive, review_immersive
+from .submission_corrections import correct_submission
 
 
 class SubmissionAssociationTests(TransactionTestCase):
@@ -17,6 +19,77 @@ class SubmissionAssociationTests(TransactionTestCase):
     actor = editing.SubmissionEditingTests.actor
     submission = editing.SubmissionEditingTests.submission
     payload = editing.SubmissionEditingTests.payload
+
+    def safety_state(self):
+        from .models import (ThemeClaim, PersonalTBRMatch, BotmMatch, PersonalTBRCompletionAward,
+                             BotmCompletionAward, HardcoverSyncOutbox, HardcoverSyncProvenance)
+        return {model.__name__: list(model.objects.order_by('pk').values()) for model in (
+            BookSubmission, ThemeClaim, PersonalTBRMatch, BotmMatch, PersonalTBRCompletionAward,
+            BotmCompletionAward, ModifierProvenance, ImmersiveRequest, AuditEvent,
+            ProgressCheckpointResult, HardcoverSyncOutbox, HardcoverSyncProvenance)}
+
+    def test_associate_only_missing_invalid_or_unchanged_edition_fails_closed(self):
+        item=self.submission(catalog=True);actor=self.actor();self.client.force_login(actor)
+        before=self.safety_state()
+        for edition in ('', 'invalid', str(item.catalog_edition_id), '999999'):
+            with self.subTest(edition=edition):
+                response=self.client.post(self.edit_url,self.payload(item,actor,edition=edition,association_mode='only'))
+                self.assertEqual(response.status_code,200)
+                self.assertTrue(response.context['form'].errors)
+                self.assertEqual(response.context['form']['association_mode'].value(),'only')
+                self.assertEqual(self.safety_state(),before)
+
+    def test_preview_cannot_downgrade_to_direct_correction(self):
+        item=self.submission();actor=self.actor();selected,_=self.selection();self.audio=False
+        self.client.force_login(actor)
+        data=self.payload(item,actor,edition=selected.pk,association_mode='only')
+        with patch('core.views._staff_tbr_search_token',return_value='synthetic'),patch(
+                'core.submission_corrections.fetch_edition_metadata',side_effect=self.metadata):
+            response=self.client.post(self.edit_url,data)
+            self.assertEqual(response.context['form']['association_mode'].value(),'only')
+            self.assertEqual(str(response.context['form']['edition'].value()),str(selected.pk))
+            token=response.context['form']['preview_token'].value()
+            self.assertTrue(token)
+            before=self.safety_state()
+            for edition,mode,preview in [('', 'update',token),('', 'only',token),
+                    (self.edition.pk,'only',token),(selected.pk,'update',token),
+                    (selected.pk,'only',token+'tampered')]:
+                with self.subTest(edition=edition,mode=mode):
+                    altered={**data,'edition':edition,'association_mode':mode,'preview_token':preview,
+                             'confirm_approved':'on','confirm_work':'on'}
+                    response=self.client.post(self.edit_url,altered)
+                    self.assertEqual(response.status_code,200)
+                    self.assertTrue(response.context['form'].errors)
+                    self.assertEqual(self.safety_state(),before)
+            # Expired confirmations fail without touching correction state.
+            with patch('django.core.signing.time.time',return_value=time.time()+601):
+                response=self.client.post(self.edit_url,{**data,'preview_token':token,
+                    'confirm_approved':'on','confirm_work':'on'})
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(self.safety_state(),before)
+            self.assertEqual(self.client.post(self.edit_url,{**data,'preview_token':token,
+                'confirm_approved':'on','confirm_work':'on'}).status_code,302)
+        item.refresh_from_db()
+        self.assertEqual(item.catalog_edition_id,selected.pk)
+        original=next(row for row in before['BookSubmission'] if row['id']==item.pk)
+        self.assertEqual((item.approved_pages,item.final_scored_pages),
+                         (original['approved_pages'],original['final_scored_pages']))
+        audit=AuditEvent.objects.get(action='submission.corrected')
+        self.assertIn('"association_mode": "only"',audit.summary)
+
+    def test_noop_rejected_in_view_and_service_without_reconciliation(self):
+        item=self.submission();actor=self.actor();self.client.force_login(actor)
+        before=self.safety_state()
+        with patch('core.submission_corrections.refresh_submission_score') as scoring,patch(
+                'core.submission_corrections.synchronize_tbr') as tbr,patch(
+                'core.submission_corrections.synchronize_botm') as botm:
+            response=self.client.post(self.edit_url,self.payload(item,actor))
+            self.assertContains(response,'No changes to save')
+            for changes in ({},{'title':item.title,'completed_on':item.completed_on,'theme_ids':[]}):
+                with self.assertRaisesMessage(ValidationError,'No changes to save'):
+                    correct_submission(submission=item,actor=actor,changes=changes,version=correction_version(item,actor))
+            scoring.assert_not_called();tbr.assert_not_called();botm.assert_not_called()
+        self.assertEqual(self.safety_state(),before)
 
     def selection(self, audio=False, same_work=False):
         book = self.book if same_work else CatalogBook.objects.create(provider='hardcover',
@@ -88,9 +161,27 @@ class SubmissionAssociationTests(TransactionTestCase):
 
     def test_associate_only_preserves_scores_awards_approval_and_matches(self):
         item=self.submission(catalog=True);actor=self.actor();selected,_=self.selection();self.audio=False
+        from .models import MonthTheme, ThemeClaim, BotmBook
+        from .scoring import apply_submission_review
+        from .botm_matching import synchronize_submission
+        self.month.botm_enabled=True;self.month.botm_completion_bonus_pages=80;self.month.save()
+        BotmBook.objects.create(month=self.month,position=1,catalog_book=self.book,
+            catalog_edition=self.edition,title_snapshot=item.title,author_snapshot=item.author,
+            page_count_snapshot=350,bonus_pages=30)
+        synchronize_submission(item)
+        theme=MonthTheme.objects.create(month=self.month,name='Preserved percentage',
+            starts_on=self.month.starts_on,ends_on=self.month.ends_on,bonus_percentage=25)
+        theme_claim=ThemeClaim.objects.create(submission=item,theme=theme,status='approved')
+        apply_submission_review(item,[theme_claim],actor,timezone.now())
         configure_immersive(month=self.month,actor=actor,enabled=True,percent=100)
         claim=review_immersive(request=request_immersive(submission=item,actor=self.reader.user),actor=actor,decision='approved')
         item.refresh_from_db()
+        checkpoint=ProgressCheckpoint.objects.create(month=self.month,scheduled_at=timezone.now(),
+            fixed_target_pages=100,target_basis='fixed',evaluation_state='evaluated')
+        ProgressCheckpointResult.objects.create(checkpoint=checkpoint,participant=self.reader,
+            evaluated_at=timezone.now(),threshold_percentage=25,progress_basis='base',
+            target_basis='fixed',target_pages=100,required_pages=25,progress_pages=350,outcome='met')
+        preserved=self.safety_state()
         old=(item.title,item.approved_pages,item.bonus_pages,item.final_scored_pages,item.status,item.verification_method)
         sources=list(ModifierProvenance.objects.values());matches=list(item.personal_tbr_matches.values());requests=list(ImmersiveRequest.objects.values())
         changes={'catalog_edition_id':selected.pk,'association_mode':'only'}
@@ -103,6 +194,10 @@ class SubmissionAssociationTests(TransactionTestCase):
         self.assertEqual(list(item.personal_tbr_matches.values()),matches)
         self.assertEqual(list(ImmersiveRequest.objects.values()),requests)
         self.assertEqual(corrected.verification_method,'manual')
+        after=self.safety_state()
+        for model in preserved:
+            if model not in {'BookSubmission','AuditEvent'}:
+                self.assertEqual(after[model],preserved[model],model)
 
     def test_audio_equivalent_recalculates_captured_immersive_once_and_preserves_checkpoints(self):
         item=self.submission();actor=self.actor();selected,scoring=self.selection(audio=True);self.audio=True

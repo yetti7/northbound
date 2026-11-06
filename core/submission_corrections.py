@@ -22,12 +22,13 @@ from .permissions import can_edit_submission
 from .scoring import establish_theme_award, refresh_submission_score
 from .personal_tbr_matching import synchronize_submission as synchronize_tbr
 from .botm_matching import synchronize_submission as synchronize_botm
+from .personal_tbr_matching import select_candidates
 
 SALT = 'northbound.submission-correction.v1'
 FIELDS = ('title', 'author', 'catalog_book_id', 'catalog_edition_id', 'scoring_catalog_edition_id',
           'submitted_pages', 'metadata_pages', 'approved_pages', 'completed_on', 'book_format',
           'status', 'verification_method', 'verification_url', 'bonus_pages', 'final_scored_pages',
-          'reviewed_by_id', 'reviewed_at')
+          'reviewed_by_id', 'reviewed_at', 'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent')
 CLAIM_FIELDS = ('id', 'theme_id', 'status', 'approved_bonus_pages', 'award_finalized', 'award_rule',
                 'award_version', 'award_percentage', 'award_basis_pages', 'award_bonus_pages')
 ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode'}
@@ -62,8 +63,8 @@ def _reader_state(submission):
              'claims': _rows(submission.theme_claims.all(), CLAIM_FIELDS),
              'reader_submissions': _rows(BookSubmission.objects.filter(**scope), ('id',) + FIELDS)}
     for model, fields in (
-        (PersonalTBRMatch, ('id', 'submission_id', 'personal_tbr_book_id', 'method', 'status', 'is_qualifying')),
-        (BotmMatch, ('id', 'submission_id', 'botm_book_id', 'method', 'status', 'is_qualifying')),
+        (PersonalTBRMatch, ('id', 'submission_id', 'personal_tbr_book_id', 'method', 'status', 'is_qualifying', 'suggestion_fingerprint', 'decision_evidence', 'conflict_reason')),
+        (BotmMatch, ('id', 'submission_id', 'botm_book_id', 'method', 'status', 'is_qualifying', 'suggestion_fingerprint', 'decision_evidence', 'conflict_reason')),
         (ModifierProvenance, ('id', 'submission_id', 'source_type', 'source_reference', 'amount', 'effective_date', 'is_active')),
         (PersonalTBRCompletionAward, ('id', 'is_qualifying', 'bonus_amount_snapshot', 'effective_date', 'completion_set_fingerprint')),
         (BotmCompletionAward, ('id', 'is_qualifying', 'bonus_amount_snapshot', 'effective_date', 'completion_set_fingerprint')),
@@ -286,6 +287,29 @@ def _themes(submission, actor, plan):
         claim.save()
 
 
+def _promote_released_matches(submission, released_tbr, released_botm):
+    """Retry only alternatives whose current identity targets released credit."""
+    if not released_tbr and not released_botm:
+        return
+    from .models import normalize_book_identity
+    tbr_books = list(PersonalTBRBook.objects.filter(
+        personal_tbr__enrollment__month=submission.month,
+        personal_tbr__enrollment__participant=submission.participant,
+        personal_tbr__confirmed_at__isnull=False)) if released_tbr else []
+    botm_books = list(BotmBook.objects.filter(month=submission.month, is_retired=False)) if released_botm else []
+    for other in BookSubmission.objects.filter(month=submission.month, participant=submission.participant,
+            status='approved', is_removed=False).exclude(pk=submission.pk).order_by('pk'):
+        identity = dict(submission_catalog_book_id=other.catalog_book_id,
+                        normalized_title=normalize_book_identity(other.title),
+                        normalized_author=normalize_book_identity(other.author))
+        for books, released, synchronize in (
+                (tbr_books, released_tbr, synchronize_tbr),
+                (botm_books, released_botm, synchronize_botm)):
+            _, candidates = select_candidates(books=books, **identity)
+            if released.intersection(book.pk for book in candidates):
+                synchronize(other)
+
+
 @sensitive_variables('hardcover_token')
 def correct_submission(*, submission, actor, changes, version, hardcover_token=None, _preview=False, _expected_impact=None):
     if connection.in_atomic_block:
@@ -317,19 +341,26 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
             current.save()
         else:
             theme_plan = _theme_plan(current, changes)
+            meaningful_fields = set(FIELDS) - {'status', 'reviewed_by_id', 'reviewed_at'}
+            original_themes = {key for key, claim in theme_plan[0].items() if claim.status != 'rejected'}
+            if (not any(before['submission'][key] != getattr(current, key) for key in meaningful_fields)
+                    and set(theme_plan[1]) == original_themes):
+                raise ValidationError('No changes to save. Change a field or select a new Hardcover edition.')
+            matching_changed = any(before['submission'][key] != getattr(current, key)
+                                   for key in ('title', 'author', 'catalog_book_id', 'status', 'completed_on'))
+            old_tbr = set(current.personal_tbr_matches.filter(is_qualifying=True).values_list('personal_tbr_book_id', flat=True)) if matching_changed else set()
+            old_botm = set(current.botm_matches.filter(is_qualifying=True).values_list('botm_book_id', flat=True)) if matching_changed else set()
             current.reviewed_by = actor
             current.reviewed_at = timezone.now()
             current.save()
             _themes(current, actor, theme_plan)
             refresh_submission_score(current)
-            # Corrected row first releases obsolete credit; existing qualifying
-            # alternatives keep priority while other approved occurrences are retried.
-            synchronize_tbr(current)
-            synchronize_botm(current)
-            for other in BookSubmission.objects.filter(month=current.month, participant=current.participant,
-                    status='approved', is_removed=False).exclude(pk=current.pk).order_by('pk'):
-                synchronize_tbr(other)
-                synchronize_botm(other)
+            if matching_changed:
+                synchronize_tbr(current)
+                synchronize_botm(current)
+                released_tbr = old_tbr - set(current.personal_tbr_matches.filter(is_qualifying=True).values_list('personal_tbr_book_id', flat=True))
+                released_botm = old_botm - set(current.botm_matches.filter(is_qualifying=True).values_list('botm_book_id', flat=True))
+                _promote_released_matches(current, released_tbr, released_botm)
             if before['submission']['completed_on'] != current.completed_on:
                 ModifierProvenance.objects.filter(submission=current, source_type__in=PER_BOOK).update(effective_date=current.completed_on)
             refresh_submission_score(current)

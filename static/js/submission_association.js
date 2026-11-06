@@ -1,17 +1,21 @@
 (() => {
   const panel = document.querySelector('[data-edit-association]');
-  if (!panel) return;
   const form = document.querySelector('[data-correction-form]');
-  const results = panel.querySelector('[data-association-results]');
-  const status = panel.querySelector('[data-association-status]');
-  const selection = panel.querySelector('[data-association-selection]');
+  if (!form) return;
   let generation = 0, controller;
   const clearPreview = () => {
     document.querySelector('[data-correction-preview]')?.setAttribute('hidden', '');
     form.elements.preview_token.value = '';
-    form.elements.confirm_approved.checked = false; form.elements.confirm_work.checked = false;
+    form.elements.confirm_approved.checked = false;
+    if (form.elements.confirm_work) form.elements.confirm_work.checked = false;
     form.querySelector('[data-correction-submit]').textContent = 'Preview Changes';
   };
+  form.addEventListener('input', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
+  form.addEventListener('change', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
+  if (!panel) return;
+  const results = panel.querySelector('[data-association-results]');
+  const status = panel.querySelector('[data-association-status]');
+  const selection = panel.querySelector('[data-association-selection]');
   async function request(action, values) {
     const ticket = ++generation;
     controller?.abort(); controller = new AbortController();
@@ -62,6 +66,4 @@
   });
   panel.querySelector('[data-association-search]').addEventListener('click', search);
   panel.querySelector('input').addEventListener('keydown', event => {if (event.key === 'Enter') {event.preventDefault(); search();}});
-  form.addEventListener('input', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
-  form.addEventListener('change', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
 })();

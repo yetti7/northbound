@@ -168,7 +168,7 @@ class SubmissionEditingTests(TransactionTestCase):
 
     def test_stale_permissions_and_lock_feedback(self):
         item=self.submission();actor=self.actor();self.client.force_login(actor)
-        data=self.payload(item,actor)
+        data=self.payload(item,actor,title='Corrected title')
         self.client.post(self.edit_url,data)
         response=self.client.post(self.edit_url,data)
         self.assertContains(response,'Reload before editing again')
@@ -187,9 +187,10 @@ class SubmissionEditingTests(TransactionTestCase):
     def test_edit_actions_and_audit_visibility(self):
         item=self.submission();actor=self.actor();self.client.force_login(actor)
         review=reverse('submission-review',args=['hotfix',self.month.pk,item.pk])
-        self.assertContains(self.client.get(review),self.edit_url)
+        manage=reverse('submission-manage',args=['hotfix',self.month.pk,item.pk])
+        self.assertContains(self.client.get(review),manage)
         participant=reverse('challenge-participant-detail',args=['hotfix',self.month.pk,self.reader.pk])
-        self.assertContains(self.client.get(participant),self.edit_url)
+        self.assertContains(self.client.get(participant),manage)
         self.client.force_login(self.reader.user)
         self.assertNotContains(self.client.get(self.month.get_absolute_url()),self.edit_url)
         platform=self.actor('platform');self.client.force_login(platform)
@@ -243,7 +244,7 @@ class SubmissionEditingTests(TransactionTestCase):
     def test_cross_group_and_queue_action_visibility(self):
         item=self.submission(status='pending');actor=self.actor('floater');self.client.force_login(actor)
         queue=reverse('review-queue',args=['hotfix',self.month.pk])
-        self.assertContains(self.client.get(queue),self.edit_url)
+        self.assertContains(self.client.get(queue),reverse('submission-manage',args=['hotfix',self.month.pk,item.pk]))
         self.assertEqual(self.client.get(reverse('submission-edit',args=['foreign',self.month.pk,item.pk])).status_code,404)
         self.assertEqual(self.client.post(reverse('submission-edit',args=['foreign',self.month.pk,item.pk]),{}).status_code,404)
         self.month.__class__.objects.filter(pk=self.month.pk).update(status='completed')

@@ -121,59 +121,8 @@ def select_candidates(*, submission_catalog_book_id, normalized_title, normalize
 
 @transaction.atomic
 def synchronize_submission(submission):
-    submission = BookSubmission.objects.select_for_update().select_related(
-        "month", "participant__user", "catalog_book",
-    ).get(pk=submission.pk)
-    existing_matches = PersonalTBRMatch.objects.select_for_update().filter(submission=submission)
-    existing_matches.filter(is_qualifying=True).update(is_qualifying=False, updated_at=timezone.now())
-    if not _submission_is_eligible(submission) or not submission.month.tbr_enabled:
-        return _finalize_submission_matches(submission, list(existing_matches))
-
-    tbr = getattr(
-        MonthEnrollment.objects.filter(
-            month=submission.month, participant=submission.participant,
-        ).select_related("personal_tbr").first(),
-        "personal_tbr", None,
-    )
-    if tbr is None or tbr.confirmed_at is None:
-        return _finalize_submission_matches(submission, list(existing_matches))
-    books = list(PersonalTBRBook.objects.select_for_update().select_related("catalog_book").filter(personal_tbr=tbr))
-    if not books:
-        return _finalize_submission_matches(submission, list(existing_matches))
-
-    normalized_title = normalize_book_identity(submission.title)
-    normalized_author = normalize_book_identity(submission.author)
-    method, candidates = select_candidates(
-        submission_catalog_book_id=submission.catalog_book_id,
-        normalized_title=normalized_title,
-        normalized_author=normalized_author,
-        books=books,
-    )
-    if method == PersonalTBRMatch.Method.CATALOG_WORK:
-        if len(candidates) == 1:
-            return _finalize_submission_matches(submission, [_confirm_candidate(
-                candidates[0], submission, method=method,
-                evidence_summary=f"CatalogBook {submission.catalog_book_id} equals CatalogBook {submission.catalog_book_id}.",
-            )])
-        return _finalize_submission_matches(submission, [_pending_candidate(book, submission, "Multiple locked TBR books share the canonical catalog work.") for book in candidates])
-    if len(candidates) == 1:
-        return _finalize_submission_matches(submission, [_confirm_candidate(
-            candidates[0], submission, method=PersonalTBRMatch.Method.NORMALIZED_TITLE_AUTHOR,
-            evidence_summary="Unique deterministic normalized title and author match.",
-        )])
-    if len(candidates) > 1:
-        reviewed = existing_matches.filter(
-            personal_tbr_book__in=candidates, status=PersonalTBRMatch.Status.CONFIRMED,
-            method=PersonalTBRMatch.Method.MANUAL_REVIEW,
-        ).first()
-        if reviewed is not None:
-            reviewed.is_qualifying = _can_qualify(reviewed.personal_tbr_book, submission, reviewed)
-            reviewed.save(update_fields=["is_qualifying", "updated_at"])
-            return _finalize_submission_matches(submission, [reviewed])
-        return _finalize_submission_matches(submission, [_pending_candidate(
-            book, submission, "Multiple locked TBR books share the normalized title and author.",
-        ) for book in candidates])
-    return _finalize_submission_matches(submission, list(existing_matches))
+    from .matching_resolution import synchronize_domain
+    return synchronize_domain(submission, 'tbr')
 
 
 @transaction.atomic
@@ -195,35 +144,5 @@ def synchronize_challenge(month):
 
 @transaction.atomic
 def adjudicate_match(*, match, actor, decision):
-    match = PersonalTBRMatch.objects.select_for_update().select_related(
-        "month__group", "personal_tbr_book", "submission__month", "submission__participant", "participant",
-    ).get(pk=match.pk)
-    if not can_review_submission(actor, match.submission):
-        raise ValidationError("You do not have review authority for this Personal TBR match.")
-    if match.status != PersonalTBRMatch.Status.PENDING_REVIEW:
-        raise ValidationError("Only pending Personal TBR matches can be adjudicated.")
-    if decision not in {PersonalTBRMatch.Status.CONFIRMED, PersonalTBRMatch.Status.REJECTED}:
-        raise ValidationError("Choose Confirmed or Rejected.")
-    if decision == PersonalTBRMatch.Status.CONFIRMED:
-        if not _submission_is_eligible(match.submission):
-            raise ValidationError("This candidate is no longer eligible for confirmation.")
-        if not _can_qualify(match.personal_tbr_book, match.submission, match):
-            raise ValidationError("This submission or TBR book already has an active confirmed match.")
-    match.method = PersonalTBRMatch.Method.MANUAL_REVIEW
-    match.status = decision
-    match.is_qualifying = decision == PersonalTBRMatch.Status.CONFIRMED
-    match.reviewer = actor
-    match.decided_at = timezone.now()
-    match.save(update_fields=["method", "status", "is_qualifying", "reviewer", "decided_at", "updated_at"])
-    from .personal_tbr_rewards import synchronize_personal_tbr_book_reward
-    synchronize_personal_tbr_book_reward(match)
-    from .personal_tbr_completion import synchronize_personal_tbr_completion_for_reader
-    synchronize_personal_tbr_completion_for_reader(month=match.month, participant=match.participant)
-    AuditEvent.objects.create(
-        actor=actor, group=match.month.group,
-        action="personal_tbr.match_confirmed" if decision == PersonalTBRMatch.Status.CONFIRMED else "personal_tbr.match_rejected",
-        object_type="PersonalTBRMatch", object_id=str(match.pk),
-        summary=(f"{match.get_status_display()} Personal TBR candidate {match.tbr_title_snapshot} "
-                 f"for {match.participant.display_name}'s submission {match.submission_title_snapshot}."),
-    )
-    return match
+    from .matching_resolution import confirm_suggestion
+    return confirm_suggestion(match=match, actor=actor, decision=decision)

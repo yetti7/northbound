@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Manage Submission · {{ submission.title }} · Northbound{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a> · Submission #{{ submission.pk }}</p><h1>Manage Submission</h1><p class="lede">{{ submission.title }} · {{ submission.author }}</p><span class="pill">{{ submission.get_status_display }}</span><p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages</p></div></div>
+<div class="card-grid">
+{% if editable %}<a class="card interactive" href="{% url 'submission-fix-book' month.group.slug month.pk submission.pk %}"><h2>Fix Book Information</h2><p>Correct title or author, link a Hardcover edition, or explicitly update book information and applicable scoring.</p></a>
+<a class="card interactive" href="{% url 'submission-fix-pages' month.group.slug month.pk submission.pk %}"><h2>Fix Pages / Themes</h2><p>Correct pages or Theme selections while preserving book identity.</p></a>{% endif %}
+{% if administrative_credit %}<a class="card interactive" href="{% url 'submission-credit' month.group.slug month.pk submission.pk %}"><h2>Fix BOTM / TBR Credit</h2><p>Preview an exceptional credit assignment, reversal or restoration with a required explanation.</p></a>{% else %}<a class="card interactive" href="#tbr-credit"><h2>Fix TBR Credit</h2><p>Inspect existing matching decisions. Confirm supported suggestions during submission review.</p></a>{% endif %}
+{% if user.is_superuser %}<a class="card interactive" href="{% url 'submission-history' month.group.slug month.pk submission.pk %}"><h2>View Change History</h2><p>Submission-specific approval and correction evidence.</p></a>{% endif %}
+{% if editable %}<a class="card interactive" href="{% url 'submission-edit' month.group.slug month.pk submission.pk %}"><h2>Advanced Corrections</h2><p>Use the complete form for combined corrections, including completion-date changes.</p></a>{% endif %}
+</div>
+<section class="card" id="tbr-credit"><h2>Fix TBR Credit</h2><p>Existing TBR matching history is preserved. {% if administrative_credit %}Use Fix BOTM / TBR Credit above for exceptional corrections.{% else %}Use normal submission review to confirm supported suggestions.{% endif %}</p>
+{% for match in matches %}<article><h3>{{ match.personal_tbr_book.title_snapshot }}</h3><p>{{ match.get_status_display }} · {{ match.get_method_display }} · {% if match.is_qualifying %}Currently qualifying{% else %}Not currently qualifying{% endif %}</p>
+{% if can_adjudicate and match.status == 'pending_review' %}<div class="action-row"><form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'confirm' %}">{% csrf_token %}<button class="button primary">Confirm existing candidate</button></form><form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'reject' %}">{% csrf_token %}<button class="button danger-button">Reject existing candidate</button></form></div>{% endif %}</article>
+{% empty %}<p>No existing TBR match for this submission. A Host or Group Owner can arrange a reviewed missing-match investigation; changing the book identity is not a substitute for repairing credit.</p>{% endfor %}
+</section>
+{% endblock %}

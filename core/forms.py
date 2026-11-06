@@ -1829,6 +1829,10 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         return cleaned
 
     def correction_changes(self):
+        edition = self.cleaned_data.get('edition')
+        if self.cleaned_data.get('association_mode') == 'only' and (
+                edition is None or edition.pk == self.original_edition_id):
+            raise forms.ValidationError('Associate Only requires a new Hardcover edition. Search and select an edition before previewing.')
         values = {'completed_on': self.cleaned_data['completed_on']}
         for name in ('title', 'author'):
             if self.cleaned_data[name] != self.original_text[name]:
@@ -1854,6 +1858,63 @@ class SubmissionCorrectionForm(BookSubmissionForm):
 
     def save(self, *args, **kwargs):
         raise TypeError('Submission corrections must be saved through the correction service.')
+
+
+class FocusedSubmissionCorrectionForm(SubmissionCorrectionForm):
+    """Focused presentation and strict POST/payload scope over the existing form."""
+
+    def __init__(self, *args, workflow, **kwargs):
+        self.workflow = workflow
+        super().__init__(*args, **kwargs)
+        common = {'version', 'preview_token', 'confirm_approved'}
+        if workflow == 'book':
+            allowed = common | {'title', 'author', 'edition', 'association_mode', 'confirm_work'}
+            self.fields['association_mode'].choices = [
+                ('', 'Choose an operation'), ('only', 'Link Only'), ('update', 'Update Book Information')]
+            self.fields['association_mode'].initial = ''
+            self.fields['association_mode'].help_text = (
+                'Link Only preserves pages and awards. Update Book Information may replace identity, pages and credit.')
+        elif workflow == 'pages':
+            self.fields['themes'].widget.completed_on = self.original_completion.isoformat()
+            allowed = common | {'submitted_pages', 'manual_page_override', 'themes', 'confirm_theme_removal'}
+            allowed |= {name for name in self.fields if name.startswith('theme_response_')}
+        else:
+            raise ValueError('Unknown focused correction workflow.')
+        for name in list(self.fields):
+            if name not in allowed:
+                self.fields.pop(name)
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.is_bound and set(self.data) - set(self.fields) - {'csrfmiddlewaretoken'}:
+            raise forms.ValidationError('This workflow does not accept those fields. Use Advanced Corrections for combined changes.')
+        edition = cleaned.get('edition')
+        if (self.workflow == 'book' and edition and edition.pk != self.original_edition_id
+                and not cleaned.get('association_mode')):
+            self.add_error('association_mode', 'Choose Link Only or Update Book Information for the selected edition.')
+        if (self.workflow == 'book' and not cleaned.get('association_mode')
+                and any(cleaned.get(name, self.original_text[name]) != self.original_text[name]
+                        for name in ('title', 'author'))):
+            self.add_error('association_mode', 'Choose Update Book Information to apply title or author changes.')
+        return cleaned
+
+    def correction_changes(self):
+        claims = list(self.instance.theme_claims.select_related('theme'))
+        defaults = {
+            'title': self.original_text['title'], 'author': self.original_text['author'],
+            'completed_on': self.original_completion, 'submitted_pages': self.original_pages,
+            'manual_page_override': False, 'themes': [c.theme for c in claims if c.status != 'rejected'],
+        }
+        for name, value in defaults.items():
+            self.cleaned_data.setdefault(name, value)
+        for claim in claims:
+            self.cleaned_data.setdefault(f'theme_response_{claim.theme_id}', claim.response)
+        changes = super().correction_changes()
+        if self.workflow == 'book' and self.cleaned_data.get('association_mode') == 'update':
+            changes['association_mode'] = 'update'
+        allowed = ({'title', 'author', 'catalog_edition_id', 'association_mode'} if self.workflow == 'book'
+                   else {'page_count', 'theme_ids', 'theme_responses'})
+        return {key: value for key, value in changes.items() if key in allowed}
 
 
 class SubmissionReviewForm(forms.ModelForm):

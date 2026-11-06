@@ -1,0 +1,24 @@
+{% if challenge_book_groups %}
+<section class="challenge-book-picker" data-challenge-book-picker data-preview-url="{% url 'submission-catalog' month.group.slug month.pk %}" aria-labelledby="challenge-books-heading">
+  <h2 id="challenge-books-heading">Your Challenge Books</h2>
+  <p class="muted">Reading one of these? Select it, then find your edition on Hardcover or enter it manually.</p>
+  {% for group in challenge_book_groups %}
+  <div data-selection-group="{{ group.domain }}">
+    <div class="challenge-book-summary" data-selection-summary hidden aria-live="polite"></div>
+    <details data-selection-options>
+      <summary>{{ group.title }} <span class="muted">({{ group.books|length }})</span></summary>
+      <div class="challenge-book-options">
+        {% for book in group.books %}
+        <button type="button" class="challenge-book-option" data-challenge-book="{{ book.pk }}" data-domain="{{ group.domain }}" data-token="{{ book.selection_token }}" data-title="{{ book.title_snapshot }}" data-author="{{ book.author_snapshot }}" data-bonus-summary="{{ book.selection_summary }}" aria-pressed="false">
+          {% include "core/includes/book_cover.html" with image_url=book.effective_display_cover_url title=book.effective_display_title state=book.reader_state %}
+          <span class="challenge-book-label"><span class="pill">{% if group.domain == 'botm' %}BOTM{% else %}TBR{% endif %}</span><strong>{{ book.effective_display_title }}</strong><span>{{ book.effective_display_author }}</span><span class="muted">{% if book.reader_state == 'completed' %}Qualified{% elif book.reader_state == 'pending' %}Awaiting review{% else %}Not yet qualified{% endif %}</span></span>
+        </button>
+        {% endfor %}
+      </div>
+    </details>
+  </div>
+  {% endfor %}
+  <p class="muted" data-selection-feedback role="status" aria-live="polite"></p>
+  <noscript><p>Challenge book selection needs JavaScript. You can still submit using the book details below; normal matching remains available.</p></noscript>
+</section>
+{% endif %}

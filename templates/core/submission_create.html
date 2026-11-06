@@ -3,6 +3,7 @@
 {% block title %}Submit Book · {{ month.name }} · Northbound{% endblock %}
 {% block content %}
 <div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Submit a Completed Book</h1><p class="lede">Search Hardcover, paste a Hardcover link, or enter the book manually.</p></div></div>
+{% include "core/includes/challenge_book_picker.html" %}
 {% if hardcover_available %}
 <section class="form-card" data-catalog-tools data-catalog-url="{% url 'submission-catalog' month.group.slug month.pk %}">
   <h2>Find on Hardcover</h2>
@@ -15,7 +16,8 @@
   <div data-audio-scoring hidden></div>
 </section>
 {% else %}<section class="empty-state submission-hardcover-disconnected"><strong>Hardcover search is not connected.</strong><br>Manual entry remains available below.</section>{% endif %}
-<section class="form-card submission-book-details"><div class="section-heading"><div><h2>Book Details</h2><p class="muted">Hardcover page counts are locked and verified automatically. Manual entries are sent for review.</p></div><button class="button secondary" type="button" data-clear-book>Clear and Enter Manually</button></div><form method="post" class="stacked-form standard-form" data-submission-form>{% csrf_token %}{{ form.as_p }}<p class="muted" data-entry-mode>Manual Entry</p>{% if month.immersive_enabled %}<div data-immersive-preview data-percent="{{ month.immersive_bonus_percent }}" role="status" aria-live="polite"></div>{% endif %}<div class="form-actions"><button class="button primary">Submit Book</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+<section class="form-card submission-book-details"><div class="section-heading"><div><h2>Book Details</h2><p class="muted">Hardcover page counts are locked and verified automatically. Manual entries are sent for review.</p></div><button class="button secondary" type="button" data-clear-book>Clear and Enter Manually</button></div><form method="post" class="stacked-form standard-form" data-submission-form>{% csrf_token %}{{ intent_form.errors }}{{ intent_form.selected_botm.as_hidden }}{{ intent_form.selected_tbr.as_hidden }}{{ intent_form.botm_token.as_hidden }}{{ intent_form.tbr_token.as_hidden }}{{ form.as_p }}<p class="muted" data-entry-mode>Manual Entry</p>{% if month.immersive_enabled %}<div data-immersive-preview data-percent="{{ month.immersive_bonus_percent }}" role="status" aria-live="polite"></div>{% endif %}<div class="form-actions"><button class="button primary">Submit Book</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+<script src="{% static 'js/challenge_book_picker.js' %}" defer></script>
 <script src="{% static 'js/theme_eligibility.js' %}" defer></script>
 <script src="{% static 'js/submission_scoring_preview.js' %}" defer></script>
 {% endblock %}

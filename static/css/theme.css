@@ -303,3 +303,21 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 .challenge-submissions-table td:nth-child(6) .pill{white-space:nowrap}
 
 .development-banner{text-align:center;padding:.5rem 1rem;border-bottom:1px solid var(--border);font-weight:700}
+
+/* Compact Reader challenge-book picker; independent of competitive statistics. */
+.challenge-book-picker{margin:0 0 1.25rem;padding:1rem;border:1px solid var(--border);border-radius:12px;background:var(--panel)}
+.challenge-book-picker h2{font-size:1.15rem;margin:0}.challenge-book-picker>p{margin:.5rem 0}
+.challenge-book-picker details{border-top:1px solid var(--border);padding:.65rem 0}
+.challenge-book-picker summary{cursor:pointer;min-height:44px;align-content:center;font-weight:700}
+.challenge-book-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.65rem;max-height:21rem;overflow:auto;padding:.3rem}
+.challenge-book-option{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:.65rem;text-align:left;align-items:start;min-height:100px;padding:.65rem;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);font:inherit;cursor:pointer}
+.challenge-book-option[aria-pressed="true"]{border:2px solid var(--accent);background:var(--bg)}
+.challenge-book-option:focus-visible,.challenge-book-picker summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.challenge-book-label{display:flex;flex-direction:column;gap:.2rem;font-size:.86rem;overflow-wrap:anywhere}.challenge-book-label .pill{align-self:start}.challenge-book-label strong{font-size:.95rem}
+.challenge-book-summary{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.7rem 0}.challenge-book-summary[hidden]{display:none}.challenge-book-summary>div{flex:1 1 220px}.challenge-book-summary p{margin:.25rem 0;font-size:.9rem}.challenge-book-summary button{min-height:44px}
+@media(max-width:600px){.challenge-book-options{grid-template-columns:1fr;max-height:19rem}.challenge-book-picker{padding:.75rem}.challenge-book-option{min-height:90px}}
+
+.review-book-cover{width:5rem;margin:0 0 1rem}.review-matching{margin:1rem 0}.review-match{border:1px solid var(--border);border-radius:10px;padding:.85rem;margin:.65rem 0}.review-match h4{margin:.5rem 0 .2rem}.review-match p{margin:.5rem 0}.review-match-conflict{border-left:4px solid var(--danger)}.review-match input[type="checkbox"]{min-width:22px;min-height:22px}.review-match label{padding:.5rem 0}
+
+/* Scoped administrative credit previews. */
+.credit-management-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.credit-management-grid>.form-card{width:100%;max-width:none;margin:0}.credit-correction-preview{max-width:100%;min-width:0}.credit-correction-preview table{table-layout:fixed;min-width:0;width:100%}.credit-correction-preview th,.credit-correction-preview td{padding:.5rem;overflow-wrap:anywhere}.credit-correction-preview th:first-child{width:45%}.credit-confirm label{display:inline!important}.credit-confirm input{width:auto!important;vertical-align:middle}@media(max-width:800px){.credit-management-grid{grid-template-columns:1fr}}

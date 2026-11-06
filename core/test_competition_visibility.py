@@ -3,6 +3,7 @@ from datetime import date
 from importlib import import_module
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.operations.special import RunPython
@@ -105,6 +106,146 @@ class CompetitionVisibilityMatrixTests(TestCase):
         self.month.team_standings_visibility = level
         self.month.reader_scores_visibility = level
         self.month.save(update_fields=["team_standings_visibility", "reader_scores_visibility"])
+
+    def test_challenge_card_statistics_role_and_lifecycle_matrix(self):
+        url = reverse('month-list', kwargs={'group_slug': self.group.slug})
+        # Everybody competition visibility must not bypass the card policy.
+        self.set_levels(ChallengeMonth.CompetitionVisibility.EVERYBODY)
+        for status in ChallengeMonth.Status.values:
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+            for role in self.users:
+                with self.subTest(status=status, role=role):
+                    self.client.force_login(self.users[role])
+                    response = self.client.get(url, {'archive': '1'} if status == 'archived' else {})
+                    self.assertEqual(response.status_code, 200)
+                    cards = list(response.context['months'])
+                    discoverable = status != 'draft' or role in {'platform', 'owner', 'moderator', 'host'}
+                    self.assertEqual(bool(cards), discoverable)
+                    visible = discoverable and (role == 'platform' or status in {'completed', 'archived'})
+                    if visible:
+                        self.assertContains(response, '<strong>770</strong> verified pages · 3 books', html=False)
+                        self.assertEqual((cards[0].approved_pages, cards[0].approved_books), (770, 3))
+                    else:
+                        self.assertNotContains(response, 'verified pages ·')
+                        self.assertNotContains(response, '<strong>770</strong>')
+                        self.assertNotContains(response, '3 books')
+                        for card in cards:
+                            self.assertFalse(hasattr(card, 'approved_pages'))
+                            self.assertFalse(hasattr(card, 'approved_books'))
+                    if discoverable:
+                        self.assertContains(response, self.month.get_absolute_url())
+                    else:
+                        self.assertNotContains(response, self.month.name)
+
+    def test_challenge_card_statistics_do_not_require_enrollment(self):
+        member = self.members['member']
+        self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=member).exists())
+        url = reverse('month-list', kwargs={'group_slug': self.group.slug})
+        self.client.force_login(self.users['member'])
+        self.assertNotContains(self.client.get(url), 'verified pages ·')
+        MonthEnrollment.objects.create(month=self.month, participant=member)
+        self.assertNotContains(self.client.get(url), 'verified pages ·')
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status='completed')
+        self.assertContains(self.client.get(url), '<strong>770</strong> verified pages · 3 books')
+
+    def test_challenge_listing_still_rejects_nonmembers_and_preserves_archive_navigation(self):
+        outsider = get_user_model().objects.create_user('card-outsider')
+        url = reverse('month-list', kwargs={'group_slug': self.group.slug})
+        self.client.force_login(outsider)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status='archived')
+        self.client.force_login(self.users['member'])
+        response = self.client.get(url)
+        self.assertNotContains(response, self.month.name)
+        self.assertContains(response, '?archive=1')
+        self.assertContains(self.client.get(url, {'archive': '1'}), self.month.name)
+
+    def test_completed_results_visible_to_nonparticipant_in_score_surfaces(self):
+        self.assertFalse(MonthEnrollment.objects.filter(participant=self.members['member']).exists())
+        self.assertFalse(TeamAssignment.objects.filter(participant=self.members['member']).exists())
+        self.client.force_login(self.users['member'])
+        for status in (ChallengeMonth.Status.COMPLETED, ChallengeMonth.Status.ARCHIVED):
+            for level in ChallengeMonth.CompetitionVisibility.values:
+                with self.subTest(status=status, level=level):
+                    ChallengeMonth.objects.filter(pk=self.month.pk).update(
+                        status=status, team_standings_visibility=level, reader_scores_visibility=level)
+                    self.month.refresh_from_db()
+                    for helper in (can_view_team_standings, can_view_reader_scores):
+                        self.assertTrue(helper(self.users['member'], self.month, team=self.north))
+                    listing = self.client.get(reverse('team-list', args=[self.group.slug, self.month.pk]))
+                    self.assertContains(listing, '<strong>330</strong> verified pages')
+                    self.assertContains(listing, '<strong>440</strong> verified pages')
+                    detail = self.client.get(self.month.get_absolute_url())
+                    self.assertEqual(len(detail.context['comparison_teams']), 2)
+                    self.assertContains(detail, '<strong>330</strong>')
+                    team_url = reverse('team-detail', args=[self.group.slug, self.month.pk, self.north.pk])
+                    report = self.client.get(team_url, {'sort': 'total', 'direction': 'desc'})
+                    self.assertEqual(report.context['sort_key'], 'total')
+                    self.assertEqual(report.context['team_total'], 330)
+                    self.assertContains(report, '<td>200</td>')
+                    self.assertContains(report, '<td>20</td>')
+                    self.assertContains(report, '<strong>220</strong>')
+                    self.assertContains(report, '<dt>Base</dt><dd>200</dd>', html=True)
+                    filtered = self.client.get(team_url, {'from': '2026-09-11', 'to': '2026-09-30'})
+                    self.assertEqual(filtered.context['team_total'], 0)
+                    self.assertContains(filtered, '<strong>0</strong>')
+                    self.assertEqual((report.context['month'].team_standings_visibility,
+                                      report.context['month'].reader_scores_visibility), (level, level))
+
+    def test_completed_results_preserve_group_and_private_information_boundaries(self):
+        outsider = get_user_model().objects.create_user('completed-outsider')
+        inactive_user = get_user_model().objects.create_user('completed-inactive')
+        Membership.objects.create(group=self.group, user=inactive_user, display_name='Inactive', is_active=False)
+        team_url = reverse('team-detail', args=[self.group.slug, self.month.pk, self.north.pk])
+        for status in ('completed', 'archived'):
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+            self.month.refresh_from_db()
+            for user in (AnonymousUser(), outsider, inactive_user):
+                with self.subTest(status=status, user=str(user)):
+                    for helper in (can_view_team_standings, can_view_reader_scores):
+                        self.assertFalse(helper(user, self.month, team=self.north))
+                    self.client.logout()
+                    if user.is_authenticated:
+                        self.client.force_login(user)
+                    for url in (team_url, self.month.get_absolute_url(),
+                                reverse('team-list', args=[self.group.slug, self.month.pk])):
+                        response = self.client.get(url)
+                        self.assertEqual(response.status_code, 403 if user.is_authenticated else 302)
+                        self.assertNotContains(response, '<strong>330</strong>', status_code=response.status_code)
+            self.assertTrue(can_view_reader_scores(self.users['platform'], self.month, team=self.north))
+            self.client.force_login(self.users['member'])
+            report = self.client.get(team_url, {'show_average': '1', 'show_discord': '1', 'show_last': '1'})
+            for flag in ('can_view_planning_data', 'can_filter_progress', 'can_filter_discord', 'can_remove_roster'):
+                self.assertFalse(report.context[flag])
+            self.assertNotContains(report, 'Average Pages')
+            self.assertNotContains(report, 'Discord Username')
+            submission = self.month.submissions.first()
+            urls = [
+                reverse('submission-review', args=[self.group.slug, self.month.pk, submission.pk]),
+                reverse('challenge-participant-detail', args=[self.group.slug, self.month.pk, self.members['same'].pk]),
+                reverse('challenge-visibility-settings', args=[self.group.slug, self.month.pk]),
+                reverse('config-user-list'),
+            ]
+            for url in urls:
+                self.assertEqual(self.client.get(url).status_code, 403)
+
+    def test_precompletion_audiences_and_team_leader_scope_remain_enforced(self):
+        for status in ('draft', 'upcoming', 'active', 'finalizing'):
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+            self.month.refresh_from_db()
+            self.set_levels(ChallengeMonth.CompetitionVisibility.HOSTS)
+            for helper in (can_view_team_standings, can_view_reader_scores):
+                self.assertFalse(helper(self.users['member'], self.month, team=self.north))
+            self.set_levels(ChallengeMonth.CompetitionVisibility.HOSTS_TEAM_LEADERS)
+            for helper in (can_view_team_standings, can_view_reader_scores):
+                self.assertTrue(helper(self.users['leader'], self.month, team=self.north))
+                self.assertFalse(helper(self.users['leader'], self.month, team=self.south))
+            if status in ('active', 'finalizing'):
+                self.client.force_login(self.users['leader'])
+                response = self.client.get(reverse('team-detail', args=[self.group.slug, self.month.pk, self.south.pk]))
+                self.assertIsNone(response.context['team_total'])
+                self.assertNotContains(response, '<strong>440</strong>')
+                self.assertNotContains(response, '<td>400</td>')
 
     def test_every_level_uses_role_aware_team_scope_for_both_domains(self):
         level = ChallengeMonth.CompetitionVisibility

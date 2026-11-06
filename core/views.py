@@ -1,7 +1,6 @@
 from django.contrib import messages
 from django.conf import settings
 from django.core import signing
-from django.core.serializers.json import DjangoJSONEncoder
 from django.core.paginator import Paginator
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.auth import get_user_model, login
@@ -38,6 +37,7 @@ from .forms import AccountProfileForm, BookSubmissionForm, BotmBookForm, BotmRea
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
 from .models import AuditEvent, BookSubmission, BotmBook, BotmCompletionAward, BotmMatch, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverConnection, HardcoverOAuthApplication, Membership, ModifierProvenance, MonthEnrollment, MonthTheme, PersonalTBR, PersonalTBRBook, PersonalTBRCompletionAward, PersonalTBRMatch, PlatformBackupSettings, PlatformOwnerInvitation, ProgressCheckpoint, ProgressCheckpointResult, ReaderHardcoverConnection, ReaderHardcoverSyncPreference, ReadingGroup, RecoveryOperation, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
+from .permissions import can_view_challenge_card_statistics
 from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_void_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 from .platform_config import get_platform_settings, get_platform_timezone
@@ -3462,13 +3462,16 @@ def month_list(request, group_slug):
     else:
         months = group.challenge_months.exclude(status=ChallengeMonth.Status.ARCHIVED)
     months = visible_challenges_for(request.user, months)
-    months = list(months.annotate(
-        approved_books=Count("submissions", filter=Q(submissions__status=BookSubmission.Status.APPROVED, submissions__is_removed=False), distinct=True),
-    ))
+    months = list(months)
     for month in months:
-        month.approved_pages = sum(
-            score["total_pages"] for score in challenge_score_totals(month=month).values()
-        )
+        month.can_view_card_statistics = can_view_challenge_card_statistics(request.user, month)
+        if month.can_view_card_statistics:
+            month.approved_books = month.submissions.filter(
+                status=BookSubmission.Status.APPROVED, is_removed=False,
+            ).aggregate(total=Count("id", distinct=True))["total"]
+            month.approved_pages = sum(
+                score["total_pages"] for score in challenge_score_totals(month=month).values()
+            )
     return render(request, "core/month_list.html", {"group": group, "months": months, "can_manage": can_manage_months(request.user, group), "viewing_archive": viewing_archive, "archived_count": group.challenge_months.filter(status=ChallengeMonth.Status.ARCHIVED).count()})
 
 
@@ -5502,8 +5505,15 @@ def submission_create(request, group_slug, month_pk):
         messages.error(request, "You are not enrolled in this Challenge. Ask a Host to add you to the Challenge or one of its teams.")
         return redirect(month)
     from .forms import ImmersiveSubmissionForm
-    form = ImmersiveSubmissionForm(request.POST or None, month=month)
-    if request.method == "POST" and form.is_valid():
+    from .matching_intent import ReaderIntentForm
+    from .reader_book_selection import picker_groups
+    instance = BookSubmission(month=month, participant=participant)
+    form = ImmersiveSubmissionForm(request.POST or None, month=month, instance=instance)
+    intent_form = ReaderIntentForm(request.POST or None, submission=instance, actor=request.user)
+    if request.method == "POST":
+        book_valid = form.is_valid()
+        intent_valid = intent_form.is_valid()
+    if request.method == "POST" and book_valid and intent_valid:
         with transaction.atomic():
             submission = form.save(commit=False)
             submission.month = month
@@ -5543,7 +5553,10 @@ def submission_create(request, group_slug, month_pk):
                 messages.success(request, "Book submitted for moderator review.")
             return redirect(month)
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).exists()
-    return render(request, "core/submission_create.html", {"form": form, "month": month, "hardcover_available": connection})
+    return render(request, "core/submission_create.html", {
+        "form": form, "month": month, "hardcover_available": connection, "intent_form": intent_form,
+        "challenge_book_groups": picker_groups(month=month, participant=participant, actor=request.user),
+    })
 
 
 @login_required
@@ -5556,6 +5569,13 @@ def submission_catalog(request, group_slug, month_pk):
         return JsonResponse({"ok": False, "message": "You are not enrolled in this challenge month."}, status=403)
     if request.method != "POST":
         return JsonResponse({"ok": False, "message": "A POST request is required."}, status=405)
+    if request.POST.get("action") == "intent-preview":
+        from .reader_book_selection import preview_selection
+        try:
+            feedback = preview_selection(data=request.POST, month=month, participant=participant, actor=request.user)
+        except ValidationError as exc:
+            return JsonResponse({"ok": False, "message": " ".join(exc.messages)}, status=400)
+        return JsonResponse({"ok": True, "feedback": feedback})
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).first()
     if not connection:
         return JsonResponse({"ok": False, "message": "Hardcover catalog search is not connected for this group. Use manual entry."}, status=503)
@@ -6262,6 +6282,9 @@ def review_queue(request, group_slug, month_pk):
     if month.status not in REVIEWABLE_MONTH_STATUSES:
         submissions = submissions.none()
     _annotate_submission_edit(request.user, submissions)
+    from .submission_review_matching import matching_cards
+    for submission in submissions:
+        submission.review_matching = matching_cards(submission)
     scope_name, team_ids = review_scope or ('challenge', frozenset())
     scope_label = "Entire Challenge" if scope_name == "challenge" else ", ".join(month.teams.filter(pk__in=team_ids).values_list("name", flat=True))
     from .immersive import review_queue_requests
@@ -6275,6 +6298,8 @@ def _annotate_submission_edit(user, submissions):
     from .immersive_ui import _readable
     for submission in submissions:
         submission.can_edit = can_edit_submission(user, submission)
+        from .administrative_matching import can_manage_credit
+        submission.can_manage_submission = submission.can_edit or can_manage_credit(user, submission)
         submission.can_void = month_is_configurable(submission.month) and can_void_submission(user, submission)
         submission.can_purge = bool(user.is_authenticated and user.is_active and user.is_superuser)
         submission.can_view_immersive = _readable(user, submission)
@@ -6326,8 +6351,9 @@ def submission_edit_catalog(request, group_slug, month_pk, pk):
 
 @login_required
 @sensitive_variables('token')
-def submission_edit(request, group_slug, month_pk, pk):
-    from .forms import SubmissionCorrectionForm
+def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
+    from .forms import SubmissionCorrectionForm, FocusedSubmissionCorrectionForm
+    from .submission_management import operation_label, preview_effects, preview_editions
     from .permissions import can_edit_submission
     from .submission_corrections import correction_version, correct_submission, preview_correction, apply_previewed_correction
     submission = get_object_or_404(BookSubmission.objects.select_related(
@@ -6341,28 +6367,32 @@ def submission_edit(request, group_slug, month_pk, pk):
     initial = {'version': correction_version(submission, request.user)} if request.method == 'GET' else None
     # Retain a separate display object: ModelForm validation mutates its instance.
     from copy import copy
-    form = SubmissionCorrectionForm(request.POST if request.method == 'POST' else None,
-        instance=copy(submission), month=submission.month, initial=initial)
+    form_class = SubmissionCorrectionForm if workflow == 'advanced' else FocusedSubmissionCorrectionForm
+    form = form_class(request.POST if request.method == 'POST' else None,
+        instance=copy(submission), month=submission.month, initial=initial,
+        **({'workflow': workflow} if workflow != 'advanced' else {}))
     reload_required = False
     preview = None
+    operation = {'book': 'Fix Book Information', 'pages': 'Fix Pages / Themes'}.get(workflow, 'Advanced Corrections')
     if request.method == 'POST' and form.is_valid():
         try:
             changes = form.correction_changes()
+            operation = operation_label(changes, workflow)
             token = None
             if 'catalog_edition_id' in changes:
                 token = _staff_tbr_search_token(request.user, submission.month.group)
-            needs_preview = ('catalog_edition_id' in changes
+            needs_preview = (workflow != 'advanced' or 'catalog_edition_id' in changes
                              or (submission.status == 'approved' and 'page_count' in changes))
-            if needs_preview and not form.cleaned_data.get('preview_token'):
+            if form.cleaned_data.get('preview_token'):
+                corrected = apply_previewed_correction(submission=submission, actor=request.user, changes=changes,
+                    version=form.cleaned_data['version'], preview_token=form.cleaned_data['preview_token'],
+                    confirm_approved=form.cleaned_data['confirm_approved'], confirm_work=form.cleaned_data.get('confirm_work', False),
+                    hardcover_token=token)
+            elif needs_preview:
                 preview = preview_correction(submission=submission, actor=request.user, changes=changes,
                     version=form.cleaned_data['version'], hardcover_token=token)
                 form.data = form.data.copy()
                 form.data['preview_token'] = preview['token']
-            elif needs_preview:
-                corrected = apply_previewed_correction(submission=submission, actor=request.user, changes=changes,
-                    version=form.cleaned_data['version'], preview_token=form.cleaned_data['preview_token'],
-                    confirm_approved=form.cleaned_data['confirm_approved'], confirm_work=form.cleaned_data['confirm_work'],
-                    hardcover_token=token)
             else:
                 corrected = correct_submission(submission=submission, actor=request.user, changes=changes,
                     version=form.cleaned_data['version'], hardcover_token=token)
@@ -6372,7 +6402,7 @@ def submission_edit(request, group_slug, month_pk, pk):
             form.add_error(None, 'Another update prevented saving. Nothing was saved. Reload the submission and try again.')
             reload_required = True
         except (HardcoverConnectionError, ReaderHardcoverUnavailable, TokenDecryptionError):
-            form.add_error('edition', 'Hardcover could not verify that edition. Check the connection and select the edition again, or keep the current edition.')
+            form.add_error('edition' if 'edition' in form.fields else None, 'Hardcover could not verify that edition. Check the connection and select the edition again, or keep the current edition.')
         except ValidationError as exc:
             text = '; '.join(exc.messages)
             if any(word in text.lower() for word in ('provenance', 'modifier source', 'frozen', 'durable', 'concurrent personal tbr match', 'concurrent botm match')):
@@ -6385,13 +6415,15 @@ def submission_edit(request, group_slug, month_pk, pk):
                     target = 'submitted_pages' if field == 'approved_pages' else field
                     form.add_error(target if target in form.fields else None, errors)
             elif 'page count' in text.lower() or 'page override' in text.lower():
-                form.add_error('submitted_pages', text)
+                form.add_error('submitted_pages' if 'submitted_pages' in form.fields else None, text)
+            elif 'no changes to save' in text.lower():
+                form.add_error(None, text)
             elif 'confirm' in text.lower() or 'preview' in text.lower() or 'associate only' in text.lower():
                 form.add_error(None, text)
             elif 'edition' in text.lower():
-                form.add_error('edition', text)
+                form.add_error('edition' if 'edition' in form.fields else None, text)
             elif 'theme' in text.lower():
-                form.add_error('themes', text)
+                form.add_error('themes' if 'themes' in form.fields else None, text)
             else:
                 form.add_error(None, 'Corrections could not be saved. No changes were made. Review the fields or ask a Host for help.')
         else:
@@ -6405,10 +6437,52 @@ def submission_edit(request, group_slug, month_pk, pk):
         reload_required = True
     return render(request, 'core/submission_edit.html', {
         'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
-        'preview_details': json.dumps({'before': preview['before'], 'after': preview['after']}, cls=DjangoJSONEncoder, indent=2) if preview else '',
+        'operation': operation, 'workflow': workflow, 'show_association': workflow != 'pages',
+        'preview_effects': preview_effects(preview) if preview else [],
+        'preview_editions': preview_editions(preview) if preview else [],
         'cancel_url': destination, 'reload_required': reload_required,
-        'edit_url': reverse('submission-edit', args=[group_slug, month_pk, pk]),
+        'edit_url': request.path,
         'cover_url': submission.catalog_book.cover_url if submission.catalog_book_id else '',
+    })
+
+
+@login_required
+def submission_manage(request, group_slug, month_pk, pk):
+    from .permissions import can_edit_submission
+    submission = get_object_or_404(BookSubmission.objects.select_related('month__group', 'participant'),
+        pk=pk, month_id=month_pk, month__group__slug=group_slug)
+    editable = can_edit_submission(request.user, submission)
+    from .administrative_matching import can_manage_credit
+    administrative_credit = can_manage_credit(request.user, submission)
+    if not editable and not administrative_credit and not (request.user.is_active and request.user.is_superuser):
+        return HttpResponseForbidden('Submission correction permission is required.')
+    if request.method != 'GET':
+        return HttpResponse('Use GET.', status=405)
+    return render(request, 'core/submission_manage.html', {
+        'submission': submission, 'month': submission.month, 'editable': editable, 'administrative_credit': administrative_credit,
+        'can_adjudicate': editable and can_review_submission(request.user, submission),
+        'matches': submission.personal_tbr_matches.select_related('personal_tbr_book'),
+    })
+
+
+@login_required
+def submission_history(request, group_slug, month_pk, pk):
+    from .submission_management import history_entry
+    if not (request.user.is_active and request.user.is_superuser):
+        return HttpResponseForbidden('Platform Administrator access is required for detailed history.')
+    submission = get_object_or_404(BookSubmission.objects.select_related('month__group'),
+        pk=pk, month_id=month_pk, month__group__slug=group_slug)
+    if request.method != 'GET':
+        return HttpResponse('Use GET.', status=405)
+    events = AuditEvent.objects.filter(group=submission.month.group,
+        object_type='BookSubmission', object_id=str(submission.pk)).select_related('actor').order_by('-created_at', '-pk')
+    page = Paginator(events, 25).get_page(request.GET.get('page'))
+    return render(request, 'core/submission_history.html', {
+        'submission': submission, 'month': submission.month,
+        'pagination': {'number': page.number, 'total': page.paginator.num_pages,
+            'previous': page.previous_page_number() if page.has_previous() else None,
+            'next': page.next_page_number() if page.has_next() else None},
+        'entries': [history_entry(event) for event in page],
     })
 
 
@@ -6422,20 +6496,40 @@ def submission_review(request, group_slug, month_pk, pk):
     if submission.month.status not in REVIEWABLE_MONTH_STATUSES:
         messages.error(request, f"{submission.month.get_status_display()} Challenges cannot be reviewed.")
         return redirect(submission.month)
-    form = SubmissionReviewForm(request.POST or None, instance=submission)
+    from .submission_review_matching import matching_cards, MatchingReviewForm, apply_unified_review
+    cards = matching_cards(submission)
+    matching_form = MatchingReviewForm(request.POST or None, submission=submission, actor=request.user, cards=cards)
+    form = SubmissionReviewForm(request.POST or None, instance=submission, initial={
+        'status': BookSubmission.Status.APPROVED if submission.status == BookSubmission.Status.PENDING else submission.status,
+        'approved_pages': submission.approved_pages or submission.submitted_pages,
+    })
     ClaimFormSet = inlineformset_factory(BookSubmission, ThemeClaim, form=ThemeClaimReviewForm, extra=0, can_delete=False)
     claim_formset = ClaimFormSet(request.POST or None, instance=submission, prefix="claims")
     claims_are_valid = claim_formset.is_valid() if submission.theme_claims.exists() else True
-    if request.method == "POST" and form.is_valid() and claims_are_valid:
-        with transaction.atomic():
-            reviewed = form.save(commit=False)
-            claims = claim_formset.save(commit=False)
-            reviewed = apply_submission_review(reviewed, claims, request.user, timezone.now())
-            AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
-        messages.success(request, "Review saved.")
-        return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
+    if request.method == "POST":
+        form_valid = form.is_valid()
+        matching_valid = matching_form.is_valid()
+        forbidden = [domain for domain in ('botm','tbr') if request.POST.get('confirm_'+domain)
+                     and 'confirm_'+domain not in matching_form.fields]
+        if forbidden:
+            matching_form.add_error(None, 'This relationship cannot be confirmed here. Nothing was saved. You can approve the book without this credit.')
+            matching_valid = False
+        if form_valid and matching_valid and claims_are_valid:
+            try:
+                with transaction.atomic():
+                    reviewed = form.save(commit=False)
+                    claims = claim_formset.save(commit=False)
+                    reviewed = apply_unified_review(reviewed, claims, request.user, timezone.now(),
+                        version=matching_form.cleaned_data['matching_version'],
+                        confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)])
+                    AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
+            except (ValidationError, PermissionDenied, DatabaseError):
+                form.add_error(None, 'This review could not be saved because the submission, matching or eligibility changed. Nothing was saved. Reload to check the current details, or approve without confirming uncertain credit.')
+            else:
+                messages.success(request, "Review saved.")
+                return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
-    return render(request, "core/submission_review.html", {"form": form, "claim_formset": claim_formset, "submission": submission})
+    return render(request, "core/submission_review.html", {"form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards})
 
 
 @login_required
@@ -6574,3 +6668,49 @@ def staff_challenge_tbr(request, group_slug, month_pk, pk):
         "error": error,
         "tbr_catalog_url": reverse("staff-challenge-tbr-catalog", args=[group_slug, month_pk, pk]),
     })
+
+
+@login_required
+def submission_credit(request, group_slug, month_pk, pk):
+    from .administrative_matching import can_manage_credit, CreditForm, preview_credit, apply_credit
+    submission = get_object_or_404(BookSubmission.objects.select_related('month__group','participant__user'),
+        pk=pk,month_id=month_pk,month__group__slug=group_slug)
+    if not can_manage_credit(request.user,submission):
+        return HttpResponseForbidden('Administrative matching authority is required.')
+    domain=request.POST.get('domain') if request.method=='POST' else None
+    if domain is not None and domain not in {'botm','tbr'}:
+        return HttpResponse('Choose BOTM or Personal TBR.',status=400)
+    sections=[]
+    for kind,label in [('botm','Book of the Month'),('tbr','Personal TBR')]:
+        form=CreditForm(request.POST if domain==kind else None,submission=submission,domain=kind,prefix=kind)
+        impact=None
+        if request.method=='POST' and domain==kind and form.is_valid():
+            try:
+                operation=form.operation_data(kind)
+                if request.POST.get('action')=='apply':
+                    if not form.cleaned_data['confirm']:
+                        raise ValidationError('Confirm the preview before applying this correction.')
+                    apply_credit(submission=submission,actor=request.user,token=form.cleaned_data['preview_token'],**operation)
+                    messages.success(request,'Challenge credit corrected. Book identity and approved pages were preserved.')
+                    return redirect('submission-credit',group_slug=group_slug,month_pk=month_pk,pk=pk)
+                if request.POST.get('action')!='preview':
+                    raise ValidationError('Preview this correction before applying it.')
+                impact,token=preview_credit(submission=submission,actor=request.user,**operation)
+                data=form.data.copy();data[kind+'-preview_token']=token;data.pop(kind+'-confirm',None)
+                form=CreditForm(data,submission=submission,domain=kind,prefix=kind)
+            except ValidationError as exc:
+                form.add_error(None,' '.join(exc.messages))
+            except PermissionDenied:
+                return HttpResponseForbidden('Administrative matching authority is required.')
+            except DatabaseError:
+                form.add_error(None,'Another update prevented saving. Nothing was saved. Generate a fresh preview.')
+        matches=(submission.botm_matches.select_related('botm_book') if kind=='botm' else
+                 submission.personal_tbr_matches.select_related('personal_tbr_book'))
+        rows=[{'title':(m.botm_book if kind=='botm' else m.personal_tbr_book).title_snapshot,
+               'status':m.get_status_display(),'qualifying':m.is_qualifying,
+               'reason':m.decision_evidence.get('reason',''),
+               'bonus':sum(ModifierProvenance.objects.filter(source_type='botm_book' if kind=='botm' else 'tbr_book',
+                   source_reference=('botm_match:' if kind=='botm' else 'personal_tbr_match:')+str(m.pk),is_active=True).values_list('amount',flat=True))} for m in matches]
+        from .administrative_matching import _summary
+        sections.append({'domain':kind,'title':label,'form':form,'impact':impact,'matches':rows,'totals':_summary(submission)})
+    return render(request,'core/submission_credit.html',{'submission':submission,'month':submission.month,'sections':sections})

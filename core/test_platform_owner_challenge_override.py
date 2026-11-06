@@ -232,6 +232,7 @@ class PlatformOwnerChallengeOverrideTests(TestCase):
         self.assertContains(queue, self.review_submission.title)
         review_url = reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.open_month.pk, "pk": self.review_submission.pk})
         response = self.client.post(review_url, {
+            "matching_version": self.client.get(review_url).context["matching_form"]["matching_version"].value(),
             "approved_pages": 230,
             "status": BookSubmission.Status.APPROVED,
             "verification_url": "",

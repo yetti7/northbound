@@ -125,8 +125,8 @@ def delete_unused_botm_book(*, month, book, actor):
     month = _locked_month(month, actor)
     book = _owned_book(book, month)
     title, position, object_id = book.title_snapshot, book.position, book.pk
-    if book.matches.exists():
-        raise ValidationError("BOTM books with match history must be retired rather than deleted.")
+    if book.matches.exists() or book.reader_selected_submissions.exists():
+        raise ValidationError("BOTM books with match or Reader selection history must be retired rather than deleted.")
     book.delete()
     AuditEvent.objects.create(
         actor=actor,
