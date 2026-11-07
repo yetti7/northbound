@@ -104,7 +104,10 @@ class PersonalTbrMatchingFoundationTests(TestCase):
         second, second_edition = self.catalog("second")
         self.locked_tbr([{"catalog_book": first, "catalog_edition": first_edition, "title_snapshot": "Shared Work", "author_snapshot": "A. Writer"}])
         synchronize_submission(self.submission(catalog_book=second, catalog_edition=second_edition))
-        self.assertFalse(PersonalTBRMatch.objects.exists())
+        match = PersonalTBRMatch.objects.get()
+        self.assertEqual(match.status, 'pending_review')
+        self.assertFalse(match.is_qualifying)
+        self.assertTrue(match.conflict_reason)
 
     def test_strict_normalized_fallback_matches_manual_but_never_title_author_or_fuzzy_alone(self):
         self.locked_tbr([{"title_snapshot": "The Shared—Work!", "author_snapshot": "A.  WRITER"}])

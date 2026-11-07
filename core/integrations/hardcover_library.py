@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from django.conf import settings
+
 from .hardcover import HardcoverConnectionError, execute_graphql
 
 LIBRARY_STATE_QUERY = '''
@@ -93,7 +95,14 @@ def _mutation_result(data, field):
     return _identifier(identifier)
 
 
+def _require_writeback_enabled():
+    if not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        raise HardcoverConnectionError("Hardcover write-back is disabled for this environment.",
+                                      classification="writeback_disabled", retryable=False)
+
+
 def create_read_user_book(token, *, book_id, read_status_id, edition_id=None):
+    _require_writeback_enabled()
     obj = {"book_id": int(book_id), "status_id": int(read_status_id)}
     if edition_id is not None:
         obj["edition_id"] = int(edition_id)
@@ -101,6 +110,7 @@ def create_read_user_book(token, *, book_id, read_status_id, edition_id=None):
 
 
 def update_user_book_to_read(token, *, user_book_id, read_status_id):
+    _require_writeback_enabled()
     variables = {"id": int(user_book_id), "object": {"status_id": int(read_status_id)}}
     return _mutation_result(execute_graphql(token, UPDATE_USER_BOOK_MUTATION, variables), "update_user_book")
 
@@ -110,6 +120,7 @@ def read_occurrence(token, read_id):
 
 
 def create_read_occurrence(token, *, user_book_id, finished_at, edition_id=None):
+    _require_writeback_enabled()
     read = {"finished_at": finished_at.isoformat()}
     if edition_id is not None:
         read["edition_id"] = int(edition_id)
@@ -118,5 +129,6 @@ def create_read_occurrence(token, *, user_book_id, finished_at, edition_id=None)
 
 
 def update_read_occurrence(token, *, read_id, finished_at):
+    _require_writeback_enabled()
     variables = {"id": int(read_id), "read": {"finished_at": finished_at.isoformat()}}
     return _mutation_result(execute_graphql(token, UPDATE_READ_OCCURRENCE_MUTATION, variables), "update_user_book_read")

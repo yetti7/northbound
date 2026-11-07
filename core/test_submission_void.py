@@ -180,9 +180,9 @@ class SubmissionVoidTests(TestCase):
                 self.assertNotContains(response, 'Approved / Base Pages')
                 self.assertNotContains(response, 'Score context')
                 if role == 'moderator':
-                    self.assertNotContains(response, '>Edit Submission</a>')
+                    self.assertNotContains(response, '>Manage Submission</a>')
                 else:
-                    self.assertContains(response, '>Edit Submission</a>')
+                    self.assertContains(response, '>Manage Submission</a>')
                 purge_url = reverse('recovery-submission-purge', args=[item.pk])
                 if role == 'platform':
                     self.assertContains(response, purge_url)
@@ -194,7 +194,7 @@ class SubmissionVoidTests(TestCase):
         self.client.force_login(self.reader.user)
         response = self.client.get(self.detail_url())
         self.assertNotContains(response, 'Void Submission')
-        self.assertNotContains(response, '>Edit Submission</a>')
+        self.assertNotContains(response, '>Manage Submission</a>')
         self.assertNotContains(response, 'Permanently Delete')
 
     def test_actions_hidden_when_out_of_scope_or_lifecycle_locked(self):

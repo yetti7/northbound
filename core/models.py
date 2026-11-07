@@ -1603,6 +1603,7 @@ class PersonalTBRMatch(models.Model):
         CATALOG_WORK = "catalog_work", "Catalog work"
         NORMALIZED_TITLE_AUTHOR = "normalized_title_author", "Normalized title and author"
         MANUAL_REVIEW = "manual_review", "Manual review"
+        SUGGESTED = "suggested", "Suggested identity (review required)"
 
     class Status(models.TextChoices):
         CONFIRMED = "confirmed", "Confirmed"
@@ -1625,6 +1626,9 @@ class PersonalTBRMatch(models.Model):
     normalized_title_evidence = models.CharField(max_length=300, blank=True)
     normalized_author_evidence = models.CharField(max_length=300, blank=True)
     evidence_summary = models.TextField(blank=True)
+    suggestion_fingerprint = models.CharField(max_length=64, blank=True, default='', editable=False)
+    decision_evidence = models.JSONField(default=dict, blank=True, editable=False)
+    conflict_reason = models.CharField(max_length=240, blank=True, default='')
     reviewer = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="reviewed_personal_tbr_matches",
@@ -1786,6 +1790,9 @@ class BookSubmission(models.Model):
 
     month = models.ForeignKey(ChallengeMonth, on_delete=models.PROTECT, related_name="submissions")
     participant = models.ForeignKey(Membership, on_delete=models.PROTECT, related_name="submissions")
+    selected_botm_book = models.ForeignKey('BotmBook', null=True, blank=True, on_delete=models.PROTECT, related_name='reader_selected_submissions')
+    selected_tbr_book = models.ForeignKey('PersonalTBRBook', null=True, blank=True, on_delete=models.PROTECT, related_name='reader_selected_submissions')
+    reader_intent = models.JSONField(default=dict, blank=True, editable=False)
     catalog_book = models.ForeignKey(CatalogBook, null=True, blank=True, on_delete=models.PROTECT, related_name="submissions")
     catalog_edition = models.ForeignKey(CatalogEdition, null=True, blank=True, on_delete=models.PROTECT, related_name="submissions")
     scoring_catalog_edition = models.ForeignKey(CatalogEdition, null=True, blank=True, on_delete=models.PROTECT, related_name="scored_submissions")
@@ -1830,6 +1837,9 @@ class BookSubmission(models.Model):
     def clean(self):
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the selected reading group.")
+        if self.selected_botm_book_id or self.selected_tbr_book_id or self.reader_intent:
+            from .matching_intent import validate_intent
+            validate_intent(self, initial=self._state.adding)
         if self.month_id:
             if not self.month.starts_on or not self.month.ends_on:
                 raise ValidationError("The Challenge schedule must be configured before accepting submissions.")
@@ -1852,7 +1862,16 @@ class BookSubmission(models.Model):
     def __str__(self):
         return f"{self.participant.display_name}: {self.title}"
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values(
+                'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent').first()
+            if previous and any(previous[key] != getattr(self, key) for key in previous):
+                raise ValidationError('Reader selection intent cannot be changed after submission.')
+        elif self.selected_botm_book_id or self.selected_tbr_book_id or self.reader_intent:
+            from .matching_intent import validate_intent
+            validate_intent(self, initial=True)
         if self.status == self.Status.APPROVED and self.approved_pages and self.final_scored_pages is None:
             self.final_scored_pages = self.approved_pages + self.bonus_pages
         elif self.status != self.Status.APPROVED:
@@ -1874,6 +1893,7 @@ class BotmMatch(models.Model):
         CATALOG_WORK = "catalog_work", "Catalog work"
         NORMALIZED_TITLE_AUTHOR = "normalized_title_author", "Normalized title and author"
         MANUAL_REVIEW = "manual_review", "Manual review"
+        SUGGESTED = "suggested", "Suggested identity (review required)"
 
     class Status(models.TextChoices):
         CONFIRMED = "confirmed", "Confirmed"
@@ -1894,6 +1914,9 @@ class BotmMatch(models.Model):
     submission_author_snapshot = models.CharField(max_length=200)
     submission_catalog_identity = models.CharField(max_length=160, blank=True)
     evidence_summary = models.TextField(blank=True)
+    suggestion_fingerprint = models.CharField(max_length=64, blank=True, default='', editable=False)
+    decision_evidence = models.JSONField(default=dict, blank=True, editable=False)
+    conflict_reason = models.CharField(max_length=240, blank=True, default='')
     reviewer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

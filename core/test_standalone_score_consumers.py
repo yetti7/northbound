@@ -93,7 +93,16 @@ class StandaloneScoreConsumerTests(TestCase):
         self.assertEqual(stats.context["groups"][0].reader_pages, 150)
 
         month_list = self.client.get(reverse("month-list", kwargs={"group_slug": self.group.slug}))
+        card = month_list.context["months"][0]
+        self.assertFalse(card.can_view_card_statistics)
+        self.assertFalse(hasattr(card, "approved_pages"))
+        self.assertFalse(hasattr(card, "approved_books"))
+
+        administrator = get_user_model().objects.create_superuser("aggregate-administrator")
+        self.client.force_login(administrator)
+        month_list = self.client.get(reverse("month-list", kwargs={"group_slug": self.group.slug}))
         self.assertEqual(month_list.context["months"][0].approved_pages, 150)
+        self.client.force_login(self.reader_user)
 
         participant_list = self.client.get(reverse("participant-list", kwargs={"group_slug": self.group.slug}))
         listed_reader = next(

@@ -276,7 +276,10 @@ class PercentageThemeTests(TestCase):
         self.client.force_login(self.user)
         url = reverse('submission-review', kwargs={'group_slug': self.group.slug,
             'month_pk': self.month.pk, 'pk': self.submission.pk})
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
         response = self.client.post(url, {'approved_pages': 500, 'status': 'approved',
+            'matching_version': page.context['matching_form']['matching_version'].value(),
             'verification_url': '', 'review_notes': 'Correct edition page count',
             'claims-TOTAL_FORMS': 1, 'claims-INITIAL_FORMS': 1,
             'claims-MIN_NUM_FORMS': 0, 'claims-MAX_NUM_FORMS': 1000,

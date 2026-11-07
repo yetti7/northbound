@@ -88,7 +88,10 @@ class BotmMatchingFoundationTests(TestCase):
         submission_catalog, submission_edition = self.catalog("submission")
         self.botm(catalog_book=botm_catalog, catalog_edition=edition)
         synchronize_submission(self.submission(catalog_book=submission_catalog, catalog_edition=submission_edition))
-        self.assertFalse(BotmMatch.objects.exists())
+        match = BotmMatch.objects.get()
+        self.assertEqual(match.status, 'pending_review')
+        self.assertFalse(match.is_qualifying)
+        self.assertTrue(match.conflict_reason)
 
     def test_unique_normalized_title_author_variants_confirm(self):
         self.botm(title="The Shared—Work!", author="A.  WRITER")
@@ -122,7 +125,7 @@ class BotmMatchingFoundationTests(TestCase):
         ineligible = self.submission(participant=inactive)
         for submission in (pending, rejected, removed, ineligible):
             synchronize_submission(submission)
-        self.assertFalse(BotmMatch.objects.exists())
+        self.assertEqual(list(BotmMatch.objects.values_list('submission_id','status','is_qualifying')), [(pending.pk,'pending_review',False)])
 
     def test_cross_challenge_and_reader_relationship_cannot_be_fabricated(self):
         other = ChallengeMonth.objects.create(group=self.group, name="Other", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31), status=ChallengeMonth.Status.ACTIVE, botm_enabled=True)
@@ -191,7 +194,7 @@ class BotmMatchingFoundationTests(TestCase):
 
     def test_unauthorized_roles_and_ended_host_cannot_adjudicate(self):
         match, _ = self.pending()
-        for user in (self.owner_user, self.moderator_user, self.floater_user, self.leader_user, self.reader_user, self.ended_user):
+        for user in (self.owner_user, self.moderator_user, self.leader_user, self.reader_user, self.ended_user):
             with self.assertRaises(ValidationError):
                 adjudicate_match(match=match, actor=user, decision=BotmMatch.Status.CONFIRMED)
 
@@ -229,7 +232,7 @@ class BotmMatchingFoundationTests(TestCase):
     def test_operator_ui_is_private_and_contains_no_reader_hidden_evidence(self):
         self.botm(); synchronize_submission(self.submission())
         url = reverse("botm-match-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})
-        for user in (self.owner_user, self.moderator_user, self.floater_user, self.leader_user, self.reader_user, self.ended_user):
+        for user in (self.owner_user, self.moderator_user, self.leader_user, self.reader_user, self.ended_user):
             self.client.force_login(user); self.assertEqual(self.client.get(url).status_code, 403)
         self.client.force_login(self.host_user); self.assertContains(self.client.get(url), "Match History")
         self.client.force_login(self.root); self.assertContains(self.client.get(url), "Shared Work")

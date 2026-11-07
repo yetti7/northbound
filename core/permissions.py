@@ -103,6 +103,13 @@ def can_view_challenge(user, month):
     return membership_has_capability(membership, "manage_months") or is_challenge_host(user, month)
 
 
+def can_view_challenge_card_statistics(user, month):
+    """Statistics on already-discoverable Challenge cards only."""
+    return user.is_authenticated and (user.is_superuser or month.status in {
+        month.Status.COMPLETED, month.Status.ARCHIVED,
+    })
+
+
 def can_transition_challenge(user, month):
     """Lifecycle authority without conflating Group authority with Host operations."""
     return can_manage_months(user, month.group) or can_operate_challenge(user, month)
@@ -229,6 +236,8 @@ def _can_view_competition_domain(user, month, visibility, *, team=None):
         return True
     if not membership:
         return False
+    if month.status in {month.Status.COMPLETED, month.Status.ARCHIVED}:
+        return True
     level = month.CompetitionVisibility
     if visibility == level.EVERYBODY:
         return True

@@ -148,9 +148,9 @@ def save_staff_challenge_tbr(*, enrollment, actor, books, complete=False, versio
     unchanged = {signature(book): book for book in old}
     proposed = {signature(book) for book in candidates}
     for book in old:
-        if signature(book) not in proposed and (book.matches.exists() or book.completion_award_snapshots.exists()):
+        if signature(book) not in proposed and (book.matches.exists() or book.completion_award_snapshots.exists() or book.reader_selected_submissions.exists()):
             raise ValidationError(
-                f'“{book.title_snapshot}” has match or award history. Keep its selection and position unchanged; '
+                f'“{book.title_snapshot}” has match, award or Reader selection history. Keep its selection and position unchanged; '
                 "this correction would alter preserved scoring history."
             )
     retained_ids = [book.pk for key, book in unchanged.items() if key in proposed]

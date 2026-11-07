@@ -117,69 +117,8 @@ def _pending_candidate(book, submission, evidence_summary):
 
 @transaction.atomic
 def synchronize_submission(submission):
-    """Synchronize one submission into durable BOTM decisions without changing score."""
-    submission = BookSubmission.objects.select_for_update().select_related(
-        "month", "participant", "catalog_book"
-    ).get(pk=submission.pk)
-    existing_matches = BotmMatch.objects.select_for_update().filter(submission=submission)
-    existing_matches.filter(is_qualifying=True).update(is_qualifying=False, updated_at=timezone.now())
-    if not _submission_is_eligible(submission) or not submission.month.botm_enabled:
-        return _finalize_submission_matches(submission, list(existing_matches))
-
-    books = list(
-        BotmBook.objects.select_for_update().select_related("catalog_book").filter(
-            month=submission.month,
-            is_retired=False,
-        )
-    )
-    if submission.catalog_book_id:
-        canonical = [book for book in books if book.catalog_book_id == submission.catalog_book_id]
-        if canonical:
-            match = _confirm_candidate(
-                canonical[0],
-                submission,
-                method=BotmMatch.Method.CATALOG_WORK,
-                evidence_summary="The configured BOTM and submission share the same canonical catalog work.",
-            )
-            return _finalize_submission_matches(submission, [match] if match else [])
-        fallback_pool = [book for book in books if book.catalog_book_id is None]
-    else:
-        fallback_pool = books
-
-    normalized_title = normalize_book_identity(submission.title)
-    normalized_author = normalize_book_identity(submission.author)
-    candidates = [
-        book for book in fallback_pool
-        if book.normalized_title == normalized_title and book.normalized_author == normalized_author
-    ]
-    if len(candidates) == 1:
-        match = _confirm_candidate(
-            candidates[0],
-            submission,
-            method=BotmMatch.Method.NORMALIZED_TITLE_AUTHOR,
-            evidence_summary="Unique deterministic normalized title and author match.",
-        )
-        return _finalize_submission_matches(submission, [match] if match else [])
-    if len(candidates) > 1:
-        reviewed_confirmation = existing_matches.filter(
-            botm_book__in=candidates,
-            status=BotmMatch.Status.CONFIRMED,
-            method=BotmMatch.Method.MANUAL_REVIEW,
-        ).first()
-        if reviewed_confirmation is not None:
-            reviewed_confirmation.is_qualifying = True
-            reviewed_confirmation.save(update_fields=["is_qualifying", "updated_at"])
-            return _finalize_submission_matches(submission, [reviewed_confirmation])
-        matches = [
-            _pending_candidate(
-                book,
-                submission,
-                "Multiple active BOTM books share the submission's normalized title and author.",
-            )
-            for book in candidates
-        ]
-        return _finalize_submission_matches(submission, matches)
-    return _finalize_submission_matches(submission, list(existing_matches))
+    from .matching_resolution import synchronize_domain
+    return synchronize_domain(submission, 'botm')
 
 
 @transaction.atomic
@@ -202,44 +141,5 @@ def synchronize_challenge(month):
 
 @transaction.atomic
 def adjudicate_match(*, match, actor, decision):
-    match = BotmMatch.objects.select_for_update().select_related(
-        "month__group", "botm_book", "submission", "participant"
-    ).get(pk=match.pk)
-    if not can_operate_challenge(actor, match.month):
-        raise ValidationError("Only a current Host or Platform Owner may adjudicate BOTM matches.")
-    if match.status != BotmMatch.Status.PENDING_REVIEW:
-        raise ValidationError("Only pending BOTM matches can be adjudicated.")
-    if decision not in {BotmMatch.Status.CONFIRMED, BotmMatch.Status.REJECTED}:
-        raise ValidationError("Choose Confirmed or Rejected.")
-    if decision == BotmMatch.Status.CONFIRMED:
-        if not _submission_is_eligible(match.submission) or match.botm_book.is_retired:
-            raise ValidationError("This candidate is no longer eligible for confirmation.")
-        competing = BotmMatch.objects.select_for_update().filter(
-            status=BotmMatch.Status.CONFIRMED,
-            is_qualifying=True,
-        ).filter(
-            models.Q(submission=match.submission)
-            | models.Q(botm_book=match.botm_book, participant=match.participant)
-        ).exclude(pk=match.pk)
-        if competing.exists():
-            raise ValidationError("This submission or Reader/book already has an active confirmed BOTM match.")
-    match.method = BotmMatch.Method.MANUAL_REVIEW
-    match.status = decision
-    match.is_qualifying = decision == BotmMatch.Status.CONFIRMED
-    match.reviewer = actor
-    match.decided_at = timezone.now()
-    match.save(update_fields=["method", "status", "is_qualifying", "reviewer", "decided_at", "updated_at"])
-    from .botm_rewards import synchronize_botm_book_reward
-    synchronize_botm_book_reward(match)
-    from .botm_completion import synchronize_botm_completion_for_reader
-    synchronize_botm_completion_for_reader(month=match.month, participant=match.participant)
-    action = "botm.match_confirmed" if decision == BotmMatch.Status.CONFIRMED else "botm.match_rejected"
-    AuditEvent.objects.create(
-        actor=actor,
-        group=match.month.group,
-        action=action,
-        object_type="BotmMatch",
-        object_id=str(match.pk),
-        summary=f"{match.get_status_display()} BOTM candidate {match.botm_book.title_snapshot} for {match.participant.display_name}'s submission {match.submission.title}.",
-    )
-    return match
+    from .matching_resolution import confirm_suggestion
+    return confirm_suggestion(match=match, actor=actor, decision=decision)

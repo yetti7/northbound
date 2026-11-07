@@ -160,6 +160,33 @@ class SubmissionCorrectionTests(TransactionTestCase):
         self.correct(item,{'title':self.book.title})
         oldmatch.refresh_from_db();self.assertEqual(oldmatch.status,'rejected')
 
+    def test_reconciliation_promotes_released_credit_without_matching_unrelated_books(self):
+        self.month.botm_enabled=True;self.month.save()
+        item=self.submission();alternative=self.submission()
+        BotmBook.objects.create(month=self.month,position=1,title_snapshot=item.title,
+            author_snapshot=item.author,page_count_snapshot=350,bonus_pages=30)
+        BotmBook.objects.create(month=self.month,position=2,title_snapshot='Other 2',
+            author_snapshot=item.author,page_count_snapshot=350,bonus_pages=30)
+        sync_botm(item);sync_botm(alternative)
+        unrelated=BookSubmission.objects.create(month=self.month,participant=self.reader,
+            title='Other 2',author=item.author,book_format='ebook',completed_on=item.completed_on,
+            submitted_pages=350,approved_pages=350,status='approved')
+        unrelated_before=BookSubmission.objects.filter(pk=unrelated.pk).values().get()
+        # Page changes do not release matching credit or reconcile unrelated history.
+        with patch('core.submission_corrections.synchronize_tbr') as tbr,patch(
+                'core.submission_corrections.synchronize_botm') as botm:
+            item=self.correct(item,{'page_count':400})
+            tbr.assert_not_called();botm.assert_not_called()
+        self.correct(item,{'title':'No longer a configured book'})
+        self.assertTrue(PersonalTBRMatch.objects.get(submission=alternative).is_qualifying)
+        self.assertTrue(BotmMatch.objects.get(submission=alternative).is_qualifying)
+        self.assertFalse(PersonalTBRMatch.objects.filter(submission=item,is_qualifying=True).exists())
+        self.assertFalse(BotmMatch.objects.filter(submission=item,is_qualifying=True).exists())
+        self.assertFalse(PersonalTBRMatch.objects.filter(submission=unrelated).exists())
+        self.assertFalse(BotmMatch.objects.filter(submission=unrelated).exists())
+        self.assertFalse(ModifierProvenance.objects.filter(submission=unrelated).exists())
+        self.assertEqual(BookSubmission.objects.filter(pk=unrelated.pk).values().get(),unrelated_before)
+
     def test_completion_date_updates_per_book_dates_and_theme_eligibility(self):
         item=self.submission()
         theme=MonthTheme.objects.create(month=self.month,name='Early',starts_on=date(2026,11,1),
@@ -304,7 +331,7 @@ class SubmissionCorrectionTests(TransactionTestCase):
         item=self.submission(catalog=True)
         work=CatalogBook.objects.create(provider='hardcover',provider_book_id='101',title='Audio',author='Writer')
         edition=CatalogEdition.objects.create(provider='hardcover',provider_edition_id='202',book=work,format_name='Audiobook')
-        with patch('core.submission_corrections.fetch_edition_metadata',return_value={'title':'Audio','author':'Writer','page_count':None}):
+        with patch('core.submission_corrections.resolve_scoring_edition',return_value=(None,None)), patch('core.submission_corrections.fetch_edition_metadata',return_value={'title':'Audio','author':'Writer','page_count':None}):
             with self.assertRaises(ValidationError):
                 self.correct(item,{'catalog_edition_id':edition.pk},hardcover_token='credential')
             corrected=self.correct(item,{'catalog_edition_id':edition.pk,'page_count':400},hardcover_token='credential')

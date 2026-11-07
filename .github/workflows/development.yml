@@ -1,0 +1,150 @@
+name: Publish Development Image
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: northbound-dev-image
+  cancel-in-progress: true
+
+jobs:
+  development:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    env:
+      NORTHBOUND_SQLITE_PATH: /tmp/northbound-dev-ci.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - name: Validate development runtime and pending submission improvements
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py test core.test_development_runtime core.test_submission_association core.test_submission_corrections core.test_submission_editing core.test_immersive.ImmersiveTests core.test_immersive.ImmersiveCorrectionTests core.test_submission_hotfix.SubmissionHotfixTests --noinput --verbosity 1
+          node static/js/submission_scoring_preview.test.js
+          sh -n deploy/start.sh
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build development smoke-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: northbound:dev-smoke
+          build-args: NORTHBOUND_VERSION=dev-sha-${{ github.sha }}
+          cache-from: type=gha,scope=northbound-dev
+          cache-to: type=gha,mode=max,scope=northbound-dev
+      - name: Verify SQLite, persistent data, startup and development settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/northbound-dev-data"
+          sudo chown 10001:10001 "$RUNNER_TEMP/northbound-dev-data"
+          local_secret=$(openssl rand -hex 32)
+          echo "::add-mask::$local_secret"
+          trap 'docker rm -f northbound-dev-smoke >/dev/null 2>&1 || true' EXIT
+          docker run -d --name northbound-dev-smoke \
+            -p 127.0.0.1:18061:8000 \
+            -v "$RUNNER_TEMP/northbound-dev-data:/data" \
+            -e NORTHBOUND_SQLITE_PATH=/data/northbound.sqlite3 \
+            -e NORTHBOUND_MEDIA_ROOT=/data/media -e NORTHBOUND_SERVE_MEDIA=1 \
+            -e DJANGO_SECRET_KEY="$local_secret" -e DJANGO_DEBUG=0 \
+            -e NORTHBOUND_BACKUP_SCHEDULER_ENABLED=0 \
+            -e NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED=0 \
+            -e NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED=0 \
+            -e NORTHBOUND_DEVELOPMENT_BANNER=1 \
+            -e DJANGO_SESSION_COOKIE_NAME=northbound_dev_sessionid \
+            -e DJANGO_CSRF_COOKIE_NAME=northbound_dev_csrftoken \
+            northbound:dev-smoke
+          ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18061/health/ >/dev/null; then ready=true; break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then docker logs northbound-dev-smoke; exit 1; fi
+          docker exec northbound-dev-smoke python manage.py shell -c "from pathlib import Path; from django.conf import settings; from django.db import connection; assert Path(connection.settings_dict['NAME']) == Path('/data/northbound.sqlite3'); assert connection.cursor().execute('PRAGMA integrity_check').fetchone() == ('ok',); assert settings.SESSION_COOKIE_NAME == 'northbound_dev_sessionid'; assert settings.CSRF_COOKIE_NAME == 'northbound_dev_csrftoken'; assert not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED; assert settings.NORTHBOUND_DEVELOPMENT_BANNER; p=Path('/data/media/dev-persistence-check.txt'); p.parent.mkdir(exist_ok=True); p.write_text('development smoke test')"
+          docker top northbound-dev-smoke -eo pid,args > "$RUNNER_TEMP/northbound-dev-processes.txt"
+          if grep -E 'manage.py run_(backup_scheduler|challenge_scheduler|hardcover_sync_worker)' "$RUNNER_TEMP/northbound-dev-processes.txt"; then exit 1; fi
+          curl --fail --silent http://127.0.0.1:18061/setup/ > "$RUNNER_TEMP/northbound-dev-setup.html"
+          grep -q DEVELOPMENT "$RUNNER_TEMP/northbound-dev-setup.html"
+          curl --fail --silent http://127.0.0.1:18061/static/css/theme.css >/dev/null
+          docker restart northbound-dev-smoke >/dev/null
+          docker exec northbound-dev-smoke python -c "from pathlib import Path; assert Path('/data/media/dev-persistence-check.txt').read_text() == 'development smoke test'"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish only development tags
+        id: publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: NORTHBOUND_VERSION=dev-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=dev-sha-${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ghcr.io/${{ github.repository }}:dev
+            ghcr.io/${{ github.repository }}:dev-sha-${{ github.sha }}
+          cache-from: type=gha,scope=northbound-dev
+          cache-to: type=gha,mode=max,scope=northbound-dev
+      - name: Verify published development manifests and metadata
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          python - <<'PYVERIFY'
+          import hashlib, json, os, urllib.request
+          repo = os.environ['GITHUB_REPOSITORY']
+          sha = os.environ['EXPECTED_SHA']
+          token = json.load(urllib.request.urlopen('https://ghcr.io/token?scope=repository:' + repo + ':pull&service=ghcr.io'))['token']
+          def fetch(path):
+              headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'}
+              with urllib.request.urlopen(urllib.request.Request('https://ghcr.io/v2/' + repo + '/' + path, headers=headers)) as response:
+                  raw = response.read()
+                  digest = response.headers.get('Docker-Content-Digest')
+                  if digest:
+                      assert digest == 'sha256:' + hashlib.sha256(raw).hexdigest()
+                  return json.loads(raw), digest
+          for tag in ('dev', 'dev-sha-' + sha):
+              index, digest = fetch('manifests/' + tag)
+              assert digest == os.environ['EXPECTED_DIGEST'], (tag, digest)
+              architectures = set()
+              for descriptor in index['manifests']:
+                  platform = descriptor.get('platform', {})
+                  if platform.get('os') != 'linux':
+                      continue
+                  architectures.add(platform['architecture'])
+                  manifest, _ = fetch('manifests/' + descriptor['digest'])
+                  config, _ = fetch('blobs/' + manifest['config']['digest'])
+                  runtime = config['config']
+                  assert runtime['Labels']['org.opencontainers.image.revision'] == sha
+                  assert runtime['Labels']['org.opencontainers.image.version'] == 'dev-sha-' + sha
+                  assert 'NORTHBOUND_VERSION=dev-sha-' + sha in runtime['Env']
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                      summary.write(tag + ' linux/' + platform['architecture'] + ': ' + descriptor['digest'] + '\n')
+              assert architectures == {'amd64', 'arm64'}, architectures
+          print('Verified both development tags, both architectures, revision and version metadata.')
+          PYVERIFY
+      - name: Record published digest
+        run: |
+          echo 'Development image digest: ${{ steps.publish.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Tags: dev, dev-sha-${{ github.sha }}' >> "$GITHUB_STEP_SUMMARY"

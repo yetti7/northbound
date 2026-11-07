@@ -109,6 +109,7 @@ class NeedsAttentionTests(TestCase):
         self.assertContains(response, '<span class="needs-attention-count">2</span>', html=True)
         review_url = reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.north_submission.pk})
         result = self.client.post(review_url, {
+            "matching_version": self.client.get(review_url).context["matching_form"]["matching_version"].value(),
             "approved_pages": 190, "status": BookSubmission.Status.APPROVED, "verification_url": "", "review_notes": "Done",
             "claims-TOTAL_FORMS": "1", "claims-INITIAL_FORMS": "1", "claims-MIN_NUM_FORMS": "0", "claims-MAX_NUM_FORMS": "1000",
             "claims-0-id": str(self.north_claim.pk), "claims-0-submission": str(self.north_submission.pk), "claims-0-status": ThemeClaim.Status.APPROVED,

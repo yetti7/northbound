@@ -894,6 +894,7 @@ class SubmissionWorkflowTests(TestCase):
 
         self.client.force_login(self.mod)
         response = self.client.post(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}), {
+            "matching_version": self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk})).context["matching_form"]["matching_version"].value(),
             "approved_pages": 416,
             "status": BookSubmission.Status.APPROVED,
             "verification_url": "https://publisher.example/books/a-test-book",
@@ -976,7 +977,7 @@ class SubmissionWorkflowTests(TestCase):
         self.client.force_login(self.mod)
         review_response = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}))
         self.assertContains(review_response, "Submitted Book")
-        self.assertContains(review_response, "Save Review")
+        self.assertContains(review_response, "Approve Book")
         self.assertContains(review_response, "modifier =")
 
     def test_cached_catalog_edition_is_snapshotted_onto_submission(self):
@@ -1102,6 +1103,7 @@ class ThemeScoringTests(TestCase):
         claim = ThemeClaim.objects.create(submission=submission, theme=self.prompted, response="Carl")
         self.client.force_login(self.moderator)
         response = self.client.post(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}), {
+            "matching_version": self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk})).context["matching_form"]["matching_version"].value(),
             "approved_pages": 300,
             "status": BookSubmission.Status.APPROVED,
             "verification_url": "",

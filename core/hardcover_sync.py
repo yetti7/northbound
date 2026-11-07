@@ -6,6 +6,7 @@ import tempfile
 from functools import wraps
 from pathlib import Path
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -53,6 +54,8 @@ def _verify_write_consent(outbox, *, dates=False):
 
 
 def reader_sync_capability(connection):
+    if not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        return False, "Hardcover write-back is disabled for this environment."
     if connection is None:
         return False, "Connect your personal Hardcover account before enabling synchronization."
     if not connection.is_valid or connection.reconnect_required:
@@ -67,6 +70,8 @@ def submission_event_key(submission, action):
 
 
 def enqueue_submission_sync(submission, action):
+    if not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        return None
     if not submission.pk:
         raise ValueError("The originating submission must be saved before it can be queued.")
     if action not in HardcoverSyncOutbox.Action.values:
@@ -349,6 +354,8 @@ def _process_one(outbox_id):
 
 @single_sync_worker
 def process_hardcover_sync_batch(*, batch_size=20, now=None):
+    if not settings.NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        return []
     now = now or timezone.now()
     processed = []
     for _ in range(max(1, min(int(batch_size), 100))):

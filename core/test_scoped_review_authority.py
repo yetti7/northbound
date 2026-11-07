@@ -78,6 +78,9 @@ class ScopedReviewAuthorityTests(TestCase):
 
     def review_payload(self, submission, status=BookSubmission.Status.APPROVED, approved_pages=275, claim=None, claim_status=ThemeClaim.Status.APPROVED):
         data = {"approved_pages": approved_pages, "status": status, "verification_url": "", "review_notes": "Scoped review"}
+        page = self.client.get(self.review_url(submission))
+        if page.status_code == 200:
+            data['matching_version'] = page.context['matching_form']['matching_version'].value()
         if claim:
             data.update({
                 "claims-TOTAL_FORMS": "1", "claims-INITIAL_FORMS": "1", "claims-MIN_NUM_FORMS": "0", "claims-MAX_NUM_FORMS": "1000",

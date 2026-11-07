@@ -1,0 +1,8 @@
+{% if matching_cards %}<section class="review-matching" aria-labelledby="review-matching-heading"><h3 id="review-matching-heading">Challenge Matching</h3>
+{% for match in matching_cards %}<div class="review-match review-match-{{ match.state }}">
+<span class="pill">{{ match.label }} · {% if match.state == 'automatic' %}Verified match{% elif match.state == 'suggested' %}Suggested match{% else %}Conflict{% endif %}</span>
+<h4>{{ match.entry.title_snapshot }}</h4><p class="muted">{{ match.entry.author_snapshot }}</p>
+{% if match.state == 'suggested' %}<p>Submitted: <strong>{{ submission.title }}</strong> by {{ submission.author }}<br>Challenge selection: <strong>{{ match.entry.title_snapshot }}</strong> by {{ match.entry.author_snapshot }}</p><p>{{ match.reason }}</p>{% endif %}
+{% if match.state == 'conflict' %}<p>{{ match.reason }}</p>{% endif %}<p>{{ match.message }}</p>
+{% if match.state == 'suggested' %}{% if match.domain == 'botm' %}<p>{{ matching_form.confirm_botm }} {{ matching_form.confirm_botm.label_tag }}{{ matching_form.confirm_botm.errors }}</p>{% else %}<p>{{ matching_form.confirm_tbr }} {{ matching_form.confirm_tbr.label_tag }}{{ matching_form.confirm_tbr.errors }}</p>{% endif %}{% endif %}
+</div>{% endfor %}<p class="muted">Leave suggestions unchecked to approve only the book. Matching confirmation does not change its identity or approved pages.</p></section>{% endif %}

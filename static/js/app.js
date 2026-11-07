@@ -371,6 +371,17 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     const scoring = edition.scoring_format && edition.format?.toLowerCase().includes("audio") ? ` Scored using the ${edition.scoring_format} page count.` : "";
     status.textContent = `Edition selected.${scoring}`;
     entryMode.textContent = `${edition.verification_label}: page count locked and automatically verified.`;
+    const audio = tools.querySelector('[data-audio-scoring]');
+    if (audio) {
+      const isAudio = edition.audio_seconds || (edition.format || '').toLowerCase().includes('audio');
+      audio.hidden = !isAudio;
+      const equivalent = edition.scoring_edition || {};
+      audio.textContent = isAudio ? `Audiobook format: ${edition.format}. Selected Hardcover audiobook edition #${edition.edition_id}. ` +
+        (edition.audio_seconds ? `Listening duration: ${(edition.audio_seconds / 3600).toFixed(1)} hours. ` : 'Listening duration unavailable. ') +
+        `Scoring edition: ${equivalent.format || edition.scoring_format}, Hardcover #${equivalent.edition_id || ''}. Print-equivalent pages: ${edition.pages}. Expected base pages credited: ${edition.pages}. ` +
+        "Audiobooks are credited using an available ebook or print edition's page count. Listening duration is shown for reference and is not directly converted into pages." : '';
+    }
+    document.dispatchEvent(new Event('northbound-pages-selected'));
     clearResults();
     title.focus();
   };
@@ -481,6 +492,9 @@ document.querySelectorAll("[data-catalog-tools]").forEach((tools) => {
     if (linkInput) linkInput.value = "";
     clearResults();
     entryMode.textContent = "Manual Entry";
+    const audio = tools.querySelector('[data-audio-scoring]');
+    if (audio) {audio.hidden = true; audio.textContent = '';}
+    document.dispatchEvent(new Event('northbound-pages-selected'));
     document.getElementById(isBotm ? "id_title_snapshot" : "id_title").focus();
   };
 

@@ -1758,12 +1758,17 @@ class CorrectionEditionChoiceField(forms.ModelChoiceField):
 
 
 class SubmissionCorrectionForm(BookSubmissionForm):
+    association_mode = forms.ChoiceField(choices=[('update', 'Associate and Update'), ('only', 'Associate Only')],
+        required=False, initial='update', help_text='Associate Only preserves existing titles, pages, matching awards and scoring. It cannot be combined with other corrections.')
+    preview_token = forms.CharField(required=False, widget=forms.HiddenInput())
+    confirm_approved = forms.BooleanField(required=False, label='Confirm changes to this approved submission and its displayed scoring impact')
+    confirm_work = forms.BooleanField(required=False, label='Confirm association with a different Hardcover work')
     confirm_theme_removal = forms.BooleanField(required=False,
         label='Confirm removal of existing Theme claims',
         help_text='Required only when removing an existing selection, including one cleared by a date change. Claim history is retained; applicable scores may change.')
     version = forms.CharField(widget=forms.HiddenInput())
     edition = CorrectionEditionChoiceField(queryset=CatalogEdition.objects.none(), required=False,
-        empty_label="Keep current edition", label="Hardcover Edition",
+        empty_label="Keep current edition", label="Hardcover Edition", widget=forms.HiddenInput(),
         help_text="Choose a different saved edition to change the association. Leaving this blank keeps the current edition. A different edition supplies its current title, author and pages unless you enter corrections.")
     manual_page_override = forms.BooleanField(required=False, label="Use a manual page count (not Hardcover-verified)",
         help_text="Changing the page count is a manual override. Select this to use the entered count for a different edition, even when the number is unchanged.")
@@ -1774,17 +1779,21 @@ class SubmissionCorrectionForm(BookSubmissionForm):
 
     def __init__(self, *args, **kwargs):
         submission = kwargs['instance']
+        self.original_completion = submission.completed_on
         self.original_status = submission.status
         self.original_pages = submission.approved_pages if submission.approved_pages is not None else submission.submitted_pages
         self.original_edition_id = submission.catalog_edition_id
         self.original_text = {name: getattr(submission, name) for name in ("title", "author")}
         super().__init__(*args, **kwargs)
         self.fields.pop('catalog_selection')
+        chosen = self.data.get('edition', '') if self.is_bound else self.original_edition_id
+        ids = [self.original_edition_id] if self.original_edition_id else []
+        if str(chosen).isdecimal(): ids.append(int(chosen))
         self.fields['edition'].queryset = CatalogEdition.objects.filter(
-            provider='hardcover', book__provider='hardcover').select_related('book').order_by('book__title', 'provider_edition_id')
+            pk__in=ids, provider='hardcover', book__provider='hardcover').select_related('book')
         self.initial['edition'] = self.original_edition_id
         self.initial['submitted_pages'] = self.original_pages
-        self.initial['manual_page_override'] = bool(submission.catalog_edition_id and submission.verification_method == 'manual')
+        self.initial['manual_page_override'] = False
         claims = {claim.theme_id: claim for claim in submission.theme_claims.select_related('theme')}
         from django.db.models import Q
         themes = self.month.themes.filter(Q(is_active=True, is_visible=True) | Q(pk__in=claims)).distinct()
@@ -1820,6 +1829,10 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         return cleaned
 
     def correction_changes(self):
+        edition = self.cleaned_data.get('edition')
+        if self.cleaned_data.get('association_mode') == 'only' and (
+                edition is None or edition.pk == self.original_edition_id):
+            raise forms.ValidationError('Associate Only requires a new Hardcover edition. Search and select an edition before previewing.')
         values = {'completed_on': self.cleaned_data['completed_on']}
         for name in ('title', 'author'):
             if self.cleaned_data[name] != self.original_text[name]:
@@ -1830,12 +1843,78 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         edition = self.cleaned_data.get('edition')
         if edition is not None and edition.pk != self.original_edition_id:
             values['catalog_edition_id'] = edition.pk
+            values['association_mode'] = self.cleaned_data.get('association_mode') or 'update'
         if self.cleaned_data['manual_page_override'] or self.cleaned_data['submitted_pages'] != self.original_pages:
             values['page_count'] = self.cleaned_data['submitted_pages']
+        if values.get('association_mode') == 'only':
+            if self.cleaned_data['submitted_pages'] == self.original_pages:
+                values.pop('page_count', None)
+            if (any(name in values for name in ('title', 'author', 'page_count'))
+                    or values['completed_on'] != self.original_completion
+                    or set(values['theme_ids']) != self.original_theme_ids):
+                raise forms.ValidationError('Associate Only cannot be combined with other corrections.')
+            values = {key: values[key] for key in ('catalog_edition_id', 'association_mode')}
         return values
 
     def save(self, *args, **kwargs):
         raise TypeError('Submission corrections must be saved through the correction service.')
+
+
+class FocusedSubmissionCorrectionForm(SubmissionCorrectionForm):
+    """Focused presentation and strict POST/payload scope over the existing form."""
+
+    def __init__(self, *args, workflow, **kwargs):
+        self.workflow = workflow
+        super().__init__(*args, **kwargs)
+        common = {'version', 'preview_token', 'confirm_approved'}
+        if workflow == 'book':
+            allowed = common | {'title', 'author', 'edition', 'association_mode', 'confirm_work'}
+            self.fields['association_mode'].choices = [
+                ('', 'Choose an operation'), ('only', 'Link Only'), ('update', 'Update Book Information')]
+            self.fields['association_mode'].initial = ''
+            self.fields['association_mode'].help_text = (
+                'Link Only preserves pages and awards. Update Book Information may replace identity, pages and credit.')
+        elif workflow == 'pages':
+            self.fields['themes'].widget.completed_on = self.original_completion.isoformat()
+            allowed = common | {'submitted_pages', 'manual_page_override', 'themes', 'confirm_theme_removal'}
+            allowed |= {name for name in self.fields if name.startswith('theme_response_')}
+        else:
+            raise ValueError('Unknown focused correction workflow.')
+        for name in list(self.fields):
+            if name not in allowed:
+                self.fields.pop(name)
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.is_bound and set(self.data) - set(self.fields) - {'csrfmiddlewaretoken'}:
+            raise forms.ValidationError('This workflow does not accept those fields. Use Advanced Corrections for combined changes.')
+        edition = cleaned.get('edition')
+        if (self.workflow == 'book' and edition and edition.pk != self.original_edition_id
+                and not cleaned.get('association_mode')):
+            self.add_error('association_mode', 'Choose Link Only or Update Book Information for the selected edition.')
+        if (self.workflow == 'book' and not cleaned.get('association_mode')
+                and any(cleaned.get(name, self.original_text[name]) != self.original_text[name]
+                        for name in ('title', 'author'))):
+            self.add_error('association_mode', 'Choose Update Book Information to apply title or author changes.')
+        return cleaned
+
+    def correction_changes(self):
+        claims = list(self.instance.theme_claims.select_related('theme'))
+        defaults = {
+            'title': self.original_text['title'], 'author': self.original_text['author'],
+            'completed_on': self.original_completion, 'submitted_pages': self.original_pages,
+            'manual_page_override': False, 'themes': [c.theme for c in claims if c.status != 'rejected'],
+        }
+        for name, value in defaults.items():
+            self.cleaned_data.setdefault(name, value)
+        for claim in claims:
+            self.cleaned_data.setdefault(f'theme_response_{claim.theme_id}', claim.response)
+        changes = super().correction_changes()
+        if self.workflow == 'book' and self.cleaned_data.get('association_mode') == 'update':
+            changes['association_mode'] = 'update'
+        allowed = ({'title', 'author', 'catalog_edition_id', 'association_mode'} if self.workflow == 'book'
+                   else {'page_count', 'theme_ids', 'theme_responses'})
+        return {key: value for key, value in changes.items() if key in allowed}
 
 
 class SubmissionReviewForm(forms.ModelForm):
