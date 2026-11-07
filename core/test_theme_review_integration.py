@@ -65,8 +65,16 @@ class ThemeReviewIntegrationTests(TestCase):
         )
 
     def review(self, submission_status, claim_statuses, *, approved_pages=200):
+        url = reverse("submission-review", kwargs={
+            "group_slug": self.group.slug,
+            "month_pk": self.month.pk,
+            "pk": self.submission.pk,
+        })
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
         claims = list(self.submission.theme_claims.order_by("pk"))
         data = {
+            "matching_version": page.context["matching_form"]["matching_version"].value(),
             "approved_pages": approved_pages,
             "status": submission_status,
             "verification_url": "",
@@ -83,11 +91,7 @@ class ThemeReviewIntegrationTests(TestCase):
                 f"claims-{index}-status": claim_statuses[claim.pk],
             })
         response = self.client.post(
-            reverse("submission-review", kwargs={
-                "group_slug": self.group.slug,
-                "month_pk": self.month.pk,
-                "pk": self.submission.pk,
-            }),
+            url,
             data,
         )
         self.assertRedirects(
@@ -110,7 +114,7 @@ class ThemeReviewIntegrationTests(TestCase):
         }))
         self.assertContains(response, "Theme Claims")
         self.assertContains(response, self.theme.name)
-        self.assertContains(response, "Save Review")
+        self.assertContains(response, "Approve Book")
 
     def test_first_approval_and_repeat_use_one_current_snapshot(self):
         statuses = {self.claim.pk: ThemeClaim.Status.APPROVED}
@@ -215,9 +219,55 @@ class ThemeReviewIntegrationTests(TestCase):
         )
         self.submission.is_removed = True
         self.submission.save(update_fields=["is_removed"])
-        self.review(BookSubmission.Status.APPROVED, {self.claim.pk: ThemeClaim.Status.REJECTED})
+        from django.apps import apps
 
+        # Include all award tables, not just the existing Theme provenance, so
+        # the rejected request cannot silently create another scoring award.
+        protected_models = [
+            BookSubmission, ThemeClaim, ModifierProvenance,
+            ProgressCheckpoint, ProgressCheckpointResult,
+        ] + [
+            model for model in apps.get_app_config("core").get_models()
+            if "Award" in model.__name__ or model.__name__ == "AuditEvent"
+        ]
+
+        def history_snapshot():
+            return {
+                model._meta.label: list(model.objects.order_by("pk").values())
+                for model in protected_models
+            }
+
+        before = history_snapshot()
+        url = reverse("submission-review", kwargs={
+            "group_slug": self.group.slug,
+            "month_pk": self.month.pk,
+            "pk": self.submission.pk,
+        })
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        response = self.client.post(url, {
+            "matching_version": page.context["matching_form"]["matching_version"].value(),
+            "approved_pages": 200,
+            "status": BookSubmission.Status.APPROVED,
+            "verification_url": "",
+            "review_notes": "Attempt to review removed submission",
+            "claims-TOTAL_FORMS": "1",
+            "claims-INITIAL_FORMS": "1",
+            "claims-MIN_NUM_FORMS": "0",
+            "claims-MAX_NUM_FORMS": "1000",
+            "claims-0-id": str(self.claim.pk),
+            "claims-0-submission": str(self.submission.pk),
+            "claims-0-status": ThemeClaim.Status.REJECTED,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nothing was saved.")
+        self.assertFalse(response.context["matching_form"].errors)
+        self.assertTrue(response.context["form"].non_field_errors())
+        self.assertEqual(history_snapshot(), before)
+
+        self.submission.refresh_from_db()
+        self.claim.refresh_from_db()
         result.refresh_from_db()
         self.assertTrue(self.submission.is_removed)
-        self.assertTrue(ModifierProvenance.objects.filter(pk=self.source().pk).exists())
+        self.assertEqual(self.claim.status, ThemeClaim.Status.APPROVED)
         self.assertEqual((result.progress_pages, result.outcome), (225, ProgressCheckpointResult.Outcome.BELOW))

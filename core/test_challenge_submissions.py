@@ -52,7 +52,9 @@ class ChallengeSubmissionTableTests(TestCase):
             if status=='voided':
                 self.assertContains(response,'Voided')
                 self.assertNotContains(response,'Void Submission')
-                self.assertNotContains(response,'Edit Submission')
+                self.assertContains(response,'Manage Submission')
+                self.assertContains(response, reverse('submission-manage', args=[self.month.group.slug, self.month.pk, item.pk]))
+                self.assertNotContains(response, reverse('submission-edit', args=[self.month.group.slug, self.month.pk, item.pk]))
                 self.assertContains(response,'Permanently Delete')
 
     def test_sizes_boundaries_and_stable_ordering(self):
@@ -112,7 +114,7 @@ class ChallengeSubmissionTableTests(TestCase):
         self.assertEqual(self.get().status_code,302)
         self.client.force_login(self.owner)
         response = self.get()
-        for action in ('Edit Submission','Void Submission','Permanently Delete'):
+        for action in ('Manage Submission','Void Submission','Permanently Delete'):
             self.assertContains(response, action)
         self.assertContains(response,reverse('recovery-submission-purge',args=[item.pk]))
         self.assertFalse(BookSubmission.objects.get(pk=item.pk).is_removed)
