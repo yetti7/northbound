@@ -18,7 +18,7 @@ from .models import (
     PersonalTBRMatch, BotmMatch, ModifierProvenance, PersonalTBRCompletionAward,
     BotmCompletionAward, PersonalTBRBook, BotmBook, ImmersiveRequest,
 )
-from .permissions import can_edit_submission
+from .permissions import can_edit_submission, is_active_floater
 from .scoring import establish_theme_award, refresh_submission_score
 from .personal_tbr_matching import synchronize_submission as synchronize_tbr
 from .botm_matching import synchronize_submission as synchronize_botm
@@ -328,6 +328,8 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
     with transaction.atomic():
         try: actor = get_user_model().objects.get(pk=actor.pk)
         except get_user_model().DoesNotExist: raise PermissionDenied('Correction authority is unavailable.') from None
+        from .models import ChallengeMonth
+        ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
         try:
             BookSubmission.objects.select_for_update().get(pk=submission.pk)
         except BookSubmission.DoesNotExist:
@@ -335,6 +337,8 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
         current = _load(submission.pk)
         _authorize(actor, current)
         _check_version(current, actor, version)
+        if changes.get("association_mode") != "only" and is_active_floater(current.month, current.participant_id):
+            raise ValidationError("Active Floater scores cannot be changed through ordinary corrections.")
         before = _reader_state(current)
         _apply_fields(current, changes, edition_data)
         if changes.get('association_mode') == 'only':

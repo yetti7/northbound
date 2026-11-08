@@ -20,7 +20,7 @@ from .models import (
 from .participation import activate_participation, deactivate_participation, end_team_assignment
 from .recovery import (
     RecoveryImpactItem, RecoveryImpactPreview, RecoveryMutationResult,
-    RecoveryRequest, execute_recovery_operation,
+    RecoveryRequest, execute_recovery_operation, validate_reason, validate_typed_confirmation,
 )
 
 
@@ -301,6 +301,35 @@ def set_enrollment_active(*, enrollment, active, recovery_request):
             )
         locked.refresh_from_db()
         return {"is_active": locked.is_active, "previous_is_active": before, "origin": locked.origin}
+    return execute_recovery_operation(recovery_request, mutation)
+
+
+def restore_inactive_host_scope(*, enrollment, recovery_request):
+    """Record an explicit decision separately from Recovery enrollment removal."""
+    from .permissions import is_challenge_host
+
+    def mutation():
+        month = ChallengeMonth.objects.select_for_update().get(pk=enrollment.month_id)
+        current = MonthEnrollment.objects.select_for_update().select_related("participant__user").get(
+            pk=enrollment.pk, month=month,
+        )
+        if (current.is_active or current.host_scope_restored
+                or current.participant.user_id == recovery_request.actor.pk
+                or not is_challenge_host(current.participant.user, month)):
+            raise ValidationError("Choose an inactive enrollment belonging to a current restricted Host.")
+        label = f"{current.participant.display_name} — {month.name}"
+        validate_reason(recovery_request.reason, required=True)
+        validate_typed_confirmation(required=label, supplied=recovery_request.supplied_confirmation)
+        current.host_scope_restored = True
+        current.save(update_fields=["host_scope_restored"])
+        AuditEvent.objects.create(
+            actor=recovery_request.actor, group=month.group,
+            action="enrollment.host_scope_restored",
+            object_type="MonthEnrollment", object_id=str(current.pk),
+            summary=f"Restored challenge-wide Host authority for {label}.",
+        )
+        return {"host_scope_restored": True, "is_active": False}
+
     return execute_recovery_operation(recovery_request, mutation)
 
 

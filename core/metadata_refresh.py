@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
 from .integrations.hardcover import fetch_edition_metadata
-from .models import AuditEvent, BookSubmission, BotmBook, BotmMatch, PersonalTBRBook, PersonalTBRMatch, normalize_book_identity
+from .models import AuditEvent, BookSubmission, BotmBook, BotmMatch, ChallengeMonth, PersonalTBRBook, PersonalTBRMatch, normalize_book_identity
 from .permissions import can_refresh_botm_metadata, can_refresh_tbr_metadata
 
 SALT = 'northbound.individual-metadata-refresh'
@@ -134,10 +134,13 @@ def refresh_selection(*, selection, actor, token, version):
             actor = get_user_model().objects.get(pk=actor.pk)
         except get_user_model().DoesNotExist:
             raise PermissionDenied('Refresh authority is no longer available.') from None
+        # Share the Challenge lock with team reassignment before rechecking scope.
+        try:
+            ChallengeMonth.objects.select_for_update().get(pk=selection_month(before).pk)
+            model.objects.select_for_update().get(pk=before.pk)
+        except (ChallengeMonth.DoesNotExist, model.DoesNotExist):
+            raise ValidationError("This selection changed or was removed. Reload before refreshing.") from None
         current = load_selection(model, before.pk)
-        # SQLite uses IMMEDIATE transactions; row locks also protect other backends.
-        model.objects.select_for_update().get(pk=current.pk)
-        current = load_selection(model, current.pk)
         if not can_refresh(actor, current):
             raise PermissionDenied('Refresh authority changed. The selection was preserved.')
         if _identity(current) != identity or _fingerprint(current) != state['fingerprint']:

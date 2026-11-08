@@ -1238,7 +1238,7 @@ class GameRewardApplyForm(forms.Form):
     reason = forms.CharField(label="Reason / Note", widget=forms.Textarea(attrs={"rows": 3}))
     idempotency_key = forms.UUIDField(widget=forms.HiddenInput())
 
-    def __init__(self, *args, game, final_apply=False, **kwargs):
+    def __init__(self, *args, game, final_apply=False, host_teams=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.game = game
         self.fields["amount"].initial = game.advertised_bonus_pages
@@ -1252,6 +1252,15 @@ class GameRewardApplyForm(forms.Form):
                 challenge_staff_assignments__ended_at__isnull=True,
             )
             teams = teams.filter(is_archived=False)
+        if host_teams is not None:
+            self.fields["target_type"].choices = [
+                choice for choice in self.fields["target_type"].choices
+                if choice[0] != GameRewardApplication.TargetType.CHALLENGE
+            ]
+            participants = participants.filter(pk__in=game.month.team_assignments.filter(
+                team_id__in=host_teams, ended_at__isnull=True,
+            ).values("participant_id"))
+            teams = teams.filter(pk__in=host_teams)
         self.fields["target_participant"].queryset = participants.order_by("display_name", "pk")
         self.fields["target_team"].queryset = teams.order_by("name", "pk")
 
@@ -1619,6 +1628,7 @@ class MonthParticipantEditForm(forms.Form):
                 assignment=assignment,
                 actor=actor,
                 reason="staff left the Reader unassigned",
+                ordinary_staff_change=True,
             )
         return previous_team, team
 

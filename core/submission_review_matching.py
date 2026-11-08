@@ -5,7 +5,7 @@ from django import forms
 from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from .models import BookSubmission, BotmBook, PersonalTBRBook, BotmMatch, PersonalTBRMatch, MonthEnrollment, normalize_book_identity
+from .models import ChallengeMonth, BookSubmission, BotmBook, PersonalTBRBook, BotmMatch, PersonalTBRMatch, MonthEnrollment, normalize_book_identity
 from .matching_resolution import identity_evidence, identity_stamp, competing, review_submission_with_matches, _legacy_stamp_matches, assess_entries
 
 SALT = 'northbound.unified-review.v1'
@@ -98,6 +98,7 @@ class MatchingReviewForm(forms.Form):
 @transaction.atomic
 def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations):
     from .permissions import can_review_submission
+    ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     current=BookSubmission.objects.select_for_update().select_related('month','participant__user','catalog_book','catalog_edition').get(pk=submission.pk)
     if not can_review_submission(actor,current) or current.is_removed or current.month.status not in {'active','finalizing'}:
         raise PermissionDenied('This submission can no longer be reviewed.')

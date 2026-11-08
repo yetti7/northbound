@@ -15,7 +15,7 @@ from django.utils import timezone
 from .models import (AuditEvent, BookSubmission, ChallengeMonth, ImmersiveRequest,
                      Membership, ModifierProvenance, MonthEnrollment)
 from .permissions import (can_manage_months, can_operate_challenge, can_review_submission,
-                          membership_for, scope_reviewable_submissions)
+                          membership_for, scope_reviewable_submissions, host_scope_allows_reader, restricted_host_team_ids, is_active_floater)
 
 
 def bonus_pages(base_pages, percent):
@@ -54,7 +54,8 @@ def _staff(actor, submission):
         raise PermissionDenied('Existing requests may be reviewed only in Active, Finalizing or Completed Challenges.')
     member = membership_for(actor, submission.month.group)
     oversight = bool(member and member.role == Membership.Role.OWNER)
-    if not (oversight or can_review_submission(actor, submission)):
+    if not (host_scope_allows_reader(actor, submission.month, submission.participant_id)
+            and (oversight or can_review_submission(actor, submission))):
         raise PermissionDenied('Submission review authority is required.')
     if actor.pk == submission.participant.user_id:
         raise PermissionDenied('An independent reviewer is required.')
@@ -101,6 +102,8 @@ def review_immersive(*, request, actor, decision, reason=''):
     request = ImmersiveRequest.objects.select_for_update().get(pk=request.pk, submission=submission)
     request.submission = submission
     _staff(actor, submission)
+    if decision == "approved" and is_active_floater(submission.month, submission.participant_id):
+        raise ValidationError("Active Floaters cannot receive new Immersive credit.")
     if request.status == decision:
         return request
     if decision == 'revoked':
@@ -207,7 +210,7 @@ def review_queue_requests(*, actor, month):
         return query.none()
     member = membership_for(actor, month.group)
     oversight = bool(member and member.role == Membership.Role.OWNER)
-    if not oversight:
+    if not oversight or restricted_host_team_ids(actor, month) is not None:
         submissions = scope_reviewable_submissions(actor, month, month.submissions.all())
         query = query.filter(submission__in=submissions)
     return query.select_related('submission__participant__user', 'submission__month__group').distinct()

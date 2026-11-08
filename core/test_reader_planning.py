@@ -259,14 +259,29 @@ class ChallengeParticipantsPlanningViewTests(TestCase):
         self.assertNotContains(response, "Edit Team")
         self.assertNotContains(response, ">Remove<")
 
-    def test_ordinary_reader_and_floater_cannot_see_private_planning_data(self):
-        for user in (self.ordinary_user, self.floater_user, self.leader_user):
+    def test_planning_and_discord_are_scoped_separately_from_registration(self):
+        profile = UserProfile.objects.get(user=self.new_user)
+        profile.discord_username = "unassigned-private-discord"
+        profile.save(update_fields=["discord_username"])
+        for user, staff_access, challenge_wide in (
+            (self.ordinary_user, False, False),
+            (self.floater_user, True, True),
+            (self.leader_user, True, False),
+        ):
             with self.subTest(user=user.username):
                 self.client.force_login(user)
                 response = self.client.get(self.url)
                 self.assertEqual(response.status_code, 200)
-                self.assertNotContains(response, "Avg Pages")
-                self.assertNotContains(response, "history-reader")
+                if staff_access:
+                    self.assertContains(response, "Avg Pages")
+                    self.assertContains(response, "history-reader")
+                else:
+                    self.assertNotContains(response, "Avg Pages")
+                    self.assertNotContains(response, "history-reader")
+                if challenge_wide:
+                    self.assertContains(response, "unassigned-private-discord")
+                else:
+                    self.assertNotContains(response, "unassigned-private-discord")
                 self.assertNotContains(response, "Favorite snack?")
                 self.assertNotContains(response, "View Registration")
                 self.assertNotContains(response, "Edit Team")

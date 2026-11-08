@@ -11,7 +11,7 @@ from .forms import ImmersiveSettingsForm
 from .immersive import (can_request_immersive, can_review_immersive, configure_immersive,
     request_immersive, review_immersive, review_queue_requests, withdraw_immersive)
 from .models import BookSubmission, ChallengeMonth, ImmersiveRequest, Membership
-from .permissions import can_manage_months, can_operate_challenge, can_review_submission, can_view_challenge, membership_for
+from .permissions import can_manage_months, can_operate_challenge, can_review_submission, can_view_challenge, membership_for, host_scope_allows_reader
 
 
 class ActionForm(forms.Form):
@@ -21,7 +21,9 @@ class ActionForm(forms.Form):
 
 def _readable(user, submission):
     member = membership_for(user, submission.month.group)
-    return user.is_active and can_view_challenge(user, submission.month) and (submission.participant.user_id == user.pk or
+    return user.is_active and can_view_challenge(user, submission.month) and host_scope_allows_reader(
+        user, submission.month, submission.participant_id
+    ) and (submission.participant.user_id == user.pk or
         can_review_submission(user, submission) or bool(member and member.role == Membership.Role.OWNER))
 
 

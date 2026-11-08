@@ -114,7 +114,7 @@ class ChallengeParticipantDetailTests(TestCase):
         floater = self.get_as("floater")
         self.assertNotContains(floater, "secret response")
         self.assertNotContains(floater, "Private registration answer")
-        self.assertNotContains(floater, "private.reader")
+        self.assertContains(floater, "private.reader")
         self.assertNotContains(floater, "<dt>Base</dt>", html=True)
         self.assertNotContains(floater, ">100<")
         self.assertNotContains(floater, ">25<")

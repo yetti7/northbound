@@ -6,7 +6,7 @@
 <section class="form-card">
   <h2>Personal TBR</h2>
   <p>Configure the optional Personal TBR collected during registration. The full-completion bonus applies only to Readers who register exactly 9 books and complete all 9.</p>
-  {% if lifecycle_locked %}
+  {% if lifecycle_locked or not can_save_tbr_settings %}
     <dl class="details"><dt>Enabled</dt><dd>{% if month.tbr_enabled %}Yes{% else %}No{% endif %}</dd><dt>Per-book Bonus</dt><dd>{{ month.tbr_book_bonus_pages }} pages</dd><dt>Full 9-Book Bonus</dt><dd>{{ month.tbr_completion_bonus_pages }} pages</dd></dl>
   {% else %}
     <form method="post" class="stacked-form">{% csrf_token %}<input type="hidden" name="action" value="save_tbr_settings">{{ tbr_settings_form.as_p }}<button class="button primary">Save Personal TBR Settings</button></form>

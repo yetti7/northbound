@@ -239,6 +239,9 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
     if not match.suggestion_fingerprint and not _legacy_stamp_matches(match, s):
         raise ValidationError('Historical candidate evidence changed. Reload and investigate.')
     if decision == 'confirmed':
+        from .permissions import is_active_floater
+        if is_active_floater(s.month, s.participant_id):
+            raise ValidationError('Active Floaters cannot receive new challenge credit.')
         module = import_module('.botm_matching' if model is BotmMatch else '.personal_tbr_matching', __package__)
         evidence, reason = identity_evidence(s, book)
         selected = s.selected_botm_book_id if model is BotmMatch else s.selected_tbr_book_id
@@ -273,13 +276,15 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
 @transaction.atomic
 def review_submission_with_matches(submission, reviewed_claims, reviewer, reviewed_at, *, suggestions=None):
     """Normal approval plus explicit suggested IDs; no arbitrary target selection."""
-    from .permissions import can_review_submission
+    from .permissions import can_review_submission, is_active_floater
     from .scoring import apply_submission_review
     from django.contrib.auth import get_user_model
     reviewer = get_user_model().objects.get(pk=reviewer.pk)
     current = BookSubmission.objects.select_for_update().select_related('month').get(pk=submission.pk)
     if not reviewer.is_active or not can_review_submission(reviewer,current) or current.month.status not in {'active','finalizing'}:
         raise PermissionDenied('Current submission review scope and lifecycle are required.')
+    if submission.status == BookSubmission.Status.APPROVED and is_active_floater(current.month, current.participant_id):
+        raise ValidationError('Active Floaters cannot receive new submission credit.')
     if suggestions is not None and not isinstance(suggestions, dict):
         raise ValidationError('Suggested decisions must be keyed by matching domain.')
     prepared=[]

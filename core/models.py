@@ -939,6 +939,7 @@ class MonthEnrollment(models.Model):
     enrolled_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_month_enrollments")
     is_active = models.BooleanField(default=True)
     origin = models.CharField(max_length=10, choices=Origin.choices, default=Origin.LEGACY)
+    host_scope_restored = models.BooleanField(default=False, editable=False)
     inactive_reason = models.CharField(max_length=12, choices=InactiveReason.choices, blank=True)
     inactivated_at = models.DateTimeField(null=True, blank=True)
     inactivated_by = models.ForeignKey(

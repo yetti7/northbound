@@ -41,6 +41,7 @@ from .models import AuditEvent, BookSubmission, BotmBook, BotmCompletionAward, B
 from .permissions import (
     can_view_challenge_card_statistics, challenge_history_locked,
     challenge_roster_read_scope, roster_read_scope_includes,
+    restricted_host_team_ids, host_scope_allows_reader, can_run_challenge_wide_operations, is_active_floater, group_directory_visible_member_ids,
 )
 from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_void_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
@@ -77,7 +78,7 @@ from .recovery import RecoveryRequest
 from .recovery_domain import (
     challenge_purge_impact, correct_enrollment_origin, correct_membership_role, correct_staffing_role,
     delete_unused_team, purge_challenge, reassign_team_assignment,
-    set_enrollment_active, set_group_active, set_membership_active,
+    set_enrollment_active, restore_inactive_host_scope, set_group_active, set_membership_active,
     set_staffing_active, set_team_archived, set_team_assignment_active,
     set_user_active, transfer_group_ownership,
 )
@@ -707,11 +708,20 @@ def recovery_challenge_detail(request, pk):
     if denied:
         return denied
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=pk)
+    enrollments = list(month.enrollments.select_related("participant__user").order_by("participant__display_name"))
+    host_ids = set(month.staff_assignments.filter(
+        role=ChallengeStaffAssignment.Role.HOST, ended_at__isnull=True,
+    ).values_list("membership_id", flat=True))
+    for enrollment in enrollments:
+        enrollment.can_restore_host_scope = (
+            enrollment.participant_id in host_ids and not enrollment.is_active
+            and not enrollment.host_scope_restored
+        )
     return render(request, "core/recovery_challenge_detail.html", {
         "month": month,
         "impact": challenge_purge_impact(month),
         "staffing": month.staff_assignments.select_related("membership", "team").order_by("ended_at", "membership__display_name"),
-        "enrollments": month.enrollments.select_related("participant__user").order_by("participant__display_name"),
+        "enrollments": enrollments,
         "teams": month.teams.order_by("name"),
         "assignments": month.team_assignments.select_related("participant", "team").order_by("ended_at", "participant__display_name"),
     })
@@ -954,6 +964,41 @@ def recovery_enrollment_status(request, pk):
             messages.success(request, f"Enrollment was {'reactivated' if active else 'withdrawn'} through recovery.")
             return redirect("recovery-challenge-detail", pk=enrollment.month_id)
     return _recovery_confirmation_page(request, form=form, tier=2, title=f"{verb} {label}?", description="Signup answers, Personal TBR state, submissions, and Team history remain stored. Reactivation refuses to fabricate missing required registration answers.", cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": enrollment.month_id}), action_label=verb)
+
+
+@login_required(login_url="config-login")
+def recovery_host_scope_restore(request, pk):
+    denied = _recovery_owner_denied(request)
+    if denied:
+        return denied
+    enrollment = get_object_or_404(
+        MonthEnrollment.objects.select_related("month__group", "participant__user"),
+        pk=pk, is_active=False, host_scope_restored=False,
+    )
+    if restricted_host_team_ids(enrollment.participant.user, enrollment.month) is None:
+        raise Http404("This enrollment does not belong to a restricted Host.")
+    label = f"{enrollment.participant.display_name} — {enrollment.month.name}"
+    form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=label)
+    if request.method == "POST" and form.is_valid():
+        operation = _recovery_request_from_form(
+            request, form, tier=2, action="enrollment.host_scope_restored",
+            target_type="MonthEnrollment", target_id=enrollment.pk, target_label=label,
+            group=enrollment.month.group, challenge=enrollment.month,
+            before_state={"host_scope_restored": False, "is_active": False},
+        )
+        try:
+            restore_inactive_host_scope(enrollment=enrollment, recovery_request=operation)
+        except ValidationError as exc:
+            _add_recovery_error(form, exc)
+        else:
+            messages.success(request, "Challenge-wide Host authority restored.")
+            return redirect("recovery-challenge-detail", pk=enrollment.month_id)
+    return _recovery_confirmation_page(
+        request, form=form, tier=2, title=f"Restore Host scope for {label}?",
+        description="Restore challenge-wide Host authority while keeping Reader enrollment inactive.",
+        cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": enrollment.month_id}),
+        action_label="Restore Challenge-wide Host Scope",
+    )
 
 
 @login_required(login_url="config-login")
@@ -3251,13 +3296,13 @@ def participant_list(request, group_slug):
     if not request.user.is_superuser and not membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
     participants = list(group.memberships.filter(user__is_superuser=False).select_related("user"))
-    participant_ids = [participant.pk for participant in participants]
+    participant_ids = group_directory_visible_member_ids(request.user, group, participants)
     planning_by_participant = historical_reader_planning_data(
         group=group,
         participant_ids=participant_ids,
     )
     for participant in participants:
-        participant.planning = planning_by_participant[participant.pk]
+        participant.planning = planning_by_participant.get(participant.pk)
     return render(request, "core/participant_list.html", {"group": group, "participants": participants, "can_manage": can_manage_participants(request.user, group), "can_manage_permissions": can_manage_permissions(request.user, group), "can_remove": can_manage_participants(request.user, group)})
 
 
@@ -3268,6 +3313,14 @@ def participant_detail(request, group_slug, pk):
     if not request.user.is_superuser and not viewer_membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
     participant = get_object_or_404(Membership.objects.select_related("user"), pk=pk, group=group, user__is_superuser=False)
+    if participant.pk not in group_directory_visible_member_ids(request.user, group, [participant]):
+        profile = getattr(participant.user, "northbound_profile", None)
+        return render(request, "core/participant_detail.html", {
+            "group": group,
+            "participant": participant,
+            "can_view_discord_username": bool(profile and profile.discord_username_is_public),
+            "show_reading_totals": False,
+        })
     approved_submissions = participant.submissions.filter(status=BookSubmission.Status.APPROVED, is_removed=False)
     totals = approved_submissions.aggregate(approved_books=Count("id"))
     participated_month_ids = set(participant.month_enrollments.filter(month__group=group).values_list("month_id", flat=True))
@@ -3299,6 +3352,7 @@ def participant_detail(request, group_slug, pk):
     return render(request, "core/participant_detail.html", {
         "group": group,
         "participant": participant,
+        "show_reading_totals": True,
         "approved_books": totals["approved_books"] or 0,
         "approved_pages": sum(month.participant_pages for month in months),
         "months_participated": len(months),
@@ -3333,7 +3387,10 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
         return HttpResponseForbidden("You may view only Readers in your Challenge review scope.")
 
     score_access = can_view_reader_scores(request.user, month, team=team, reader=participant)
-    registration_access = can_view_challenge_registration_answers(request.user, month)
+    registration_access = (
+        can_view_challenge_registration_answers(request.user, month)
+        and host_scope_allows_reader(request.user, month, participant.pk)
+    )
     roster_access = roster_read_scope_includes(
         challenge_roster_read_scope(request.user, month),
         team.pk if team and enrollment.is_active else None,
@@ -3349,6 +3406,8 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
         or bool(viewer_membership and viewer_membership.role in {Membership.Role.OWNER, Membership.Role.MODERATOR})
         or bool(profile and profile.discord_username_is_public)
     )
+    if not host_scope_allows_reader(request.user, month, participant.pk):
+        discord_access = is_self or bool(profile and profile.discord_username_is_public)
     staff_roles = list(ChallengeStaffAssignment.objects.filter(
         month=month, membership=participant, ended_at__isnull=True
     ).values_list("role", flat=True))
@@ -3525,7 +3584,7 @@ def team_list(request, group_slug, month_pk):
             for assignment in team.assignments.all()
         )
     mutable = month_is_configurable(month)
-    host_access = can_operate_challenge(request.user, month)
+    host_access = can_run_challenge_wide_operations(request.user, month)
     return render(request, "core/team_list.html", {"group": group, "month": month, "teams": teams, "can_manage": mutable and host_access, "can_remove": mutable and host_access, "can_manage_leaders": not viewing_archive and host_access, "viewing_archive": viewing_archive, "archived_count": month.teams.filter(is_archived=True).count()})
 
 
@@ -3555,7 +3614,11 @@ def team_detail(request, group_slug, month_pk, pk):
     ).select_related("participant", "participant__user", "participant__user__northbound_profile").distinct())
     participant_ids = [assignment.participant_id for assignment in full_roster]
     roster_access = roster_read_scope_includes(challenge_roster_read_scope(request.user, month), team.pk)
-    planning_access = can_view_challenge_registration_answers(request.user, month) or roster_access
+    host_teams = restricted_host_team_ids(request.user, month)
+    private_roster_access = host_teams is None or team.pk in host_teams
+    planning_access = private_roster_access and (
+        can_view_challenge_registration_answers(request.user, month) or roster_access
+    )
     standings_access = can_view_team_standings(request.user, month, team=team)
     score_access = can_view_reader_scores(request.user, month, team=team)
     review_scope = challenge_review_scope(request.user, month)
@@ -3597,6 +3660,7 @@ def team_detail(request, group_slug, month_pk, pk):
     if botm_filter not in allowed_progress: botm_filter = "any"
     if tbr_filter not in allowed_progress | {"none"}: tbr_filter = "any"
 
+    discord_access = discord_access and private_roster_access
     show_discord = discord_access and request.GET.get("show_discord") == "1"
     show_average = planning_access and request.GET.get("show_average") == "1"
     show_last = planning_access and request.GET.get("show_last") == "1"
@@ -3729,9 +3793,9 @@ def team_detail(request, group_slug, month_pk, pk):
         "sort_key": sort_key,
         "sort_direction": direction,
         "sort_options": sort_options,
-        "can_edit_team": mutable and host_access,
-        "can_manage_leaders": not team.is_archived and host_access,
-        "can_remove_roster": mutable and host_access,
+        "can_edit_team": mutable and host_access and host_teams is None,
+        "can_manage_leaders": not team.is_archived and host_access and host_teams is None,
+        "can_remove_roster": mutable and host_access and private_roster_access,
     })
 
 
@@ -3803,7 +3867,8 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
         month__group__slug=group_slug,
         ended_at__isnull=True,
     )
-    if not can_operate_challenge(request.user, assignment.month):
+    if not (can_operate_challenge(request.user, assignment.month)
+            and host_scope_allows_reader(request.user, assignment.month, assignment.participant_id)):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, assignment.month, "change its team roster"):
         return redirect(assignment.month)
@@ -3815,6 +3880,7 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
             assignment=assignment,
             actor=request.user,
             reason=reason or "staff removed the current team assignment",
+            ordinary_staff_change=True,
         )
         messages.success(request, "Participant removed from the team. Their reading history was not deleted.")
         return redirect("team-list", group_slug=group.slug, month_pk=month.pk)
@@ -3825,6 +3891,8 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
 @transaction.atomic
 def submission_remove(request, group_slug, month_pk, pk):
     submission = get_object_or_404(BookSubmission.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_removed=False)
+    if request.method == "POST":
+        submission.month = _lock_challenge_for_edit(submission.month)
     if not can_void_submission(request.user, submission):
         return HttpResponseForbidden("Submission void permission is required.")
     if reject_locked_month(request, submission.month, "void a submission"):
@@ -3980,7 +4048,7 @@ def challenge_settings(request, group_slug, month_pk):
     can_configure_announcement = month_is_configurable(month) and can_manage_challenge_announcements(request.user, month)
     can_transition_lifecycle = can_transition_challenge(request.user, month)
     can_configure_games = month_is_configurable(month) and can_operate_challenge(request.user, month)
-    can_configure_botm = month_is_configurable(month) and can_operate_challenge(request.user, month)
+    can_configure_botm = month_is_configurable(month) and can_run_challenge_wide_operations(request.user, month)
     can_manage_hosts = can_manage_challenge_hosts(request.user, month.group)
     can_manage_operations = month_is_configurable(month) and can_operate_challenge(request.user, month)
     if not (can_edit_general or can_configure_registration or can_configure_visibility or can_configure_announcement or can_transition_lifecycle):
@@ -4029,9 +4097,12 @@ def challenge_games_settings(request, group_slug, month_pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def challenge_botm_settings(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if request.method == "POST":
+        month = _lock_challenge_for_edit(month)
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may configure Book of the Month.")
     if reject_locked_month(request, month, "change Book of the Month settings"):
         return redirect("challenge-settings", group_slug=group_slug, month_pk=month.pk)
@@ -4052,11 +4123,18 @@ def challenge_botm_settings(request, group_slug, month_pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def challenge_signup_settings(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
+    is_tbr_write = request.method == "POST" and request.POST.get("action") == "save_tbr_settings"
+    if is_tbr_write:
+        month = _lock_challenge_for_edit(month)
     if not can_configure_challenge_registration(request.user, month):
         return HttpResponseForbidden("Challenge registration configuration authority is required.")
     from .registration_agreements import AgreementSettingsForm, configure_agreement
+    can_save_tbr_settings = restricted_host_team_ids(request.user, month) is None
+    if is_tbr_write and not can_save_tbr_settings:
+        return HttpResponseForbidden("Changing TBR rewards requires challenge-wide operational authority.")
     agreement_settings_form = AgreementSettingsForm(
         request.POST if request.method == 'POST' and request.POST.get('action') == 'save_agreement_settings' else None,
         instance=month, prefix='agreement')
@@ -4113,6 +4191,7 @@ def challenge_signup_settings(request, group_slug, month_pk):
             "lifecycle_locked": lifecycle_locked,
             "configuration_read_only": True,
             "tbr_settings_form": tbr_settings_form,
+            "can_save_tbr_settings": can_save_tbr_settings,
             "agreement_settings_form": agreement_settings_form,
         })
     initial = [
@@ -4175,6 +4254,7 @@ def challenge_signup_settings(request, group_slug, month_pk):
         "lifecycle_locked": False,
         "configuration_read_only": False,
         "tbr_settings_form": tbr_settings_form,
+        "can_save_tbr_settings": can_save_tbr_settings,
         "agreement_settings_form": agreement_settings_form,
     })
 
@@ -4569,7 +4649,8 @@ def challenge_host_list(request, group_slug, month_pk):
         month = _lock_challenge_for_edit(month)
         if challenge_history_locked(month):
             return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
-    can_manage = can_manage_challenge_hosts(request.user, month.group)
+    can_manage = (can_manage_challenge_hosts(request.user, month.group)
+                  and restricted_host_team_ids(request.user, month) is None)
     if request.method == "POST" and not can_manage:
         return HttpResponseForbidden("Month management permission is required.")
     can_manage = can_manage and not challenge_history_locked(month)
@@ -4617,6 +4698,8 @@ def challenge_host_end(request, group_slug, month_pk, pk):
         return HttpResponseForbidden("Month management permission is required.")
     if request.method == "POST":
         assignment.month = _lock_challenge_for_edit(assignment.month)
+    if restricted_host_team_ids(request.user, assignment.month) is not None:
+        return HttpResponseForbidden("Team-scoped Hosts cannot change Host staffing.")
     if challenge_history_locked(assignment.month):
         return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
     if request.method == "POST":
@@ -4678,7 +4761,7 @@ def challenge_floater_list(request, group_slug, month_pk):
         month = _lock_challenge_for_edit(month)
         if challenge_history_locked(month):
             return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
-    can_manage = can_operate_challenge(request.user, month)
+    can_manage = can_run_challenge_wide_operations(request.user, month)
     if request.method == "POST" and not can_manage:
         return HttpResponseForbidden("A current Host assignment is required.")
     can_manage = can_manage and not challenge_history_locked(month)
@@ -4722,7 +4805,7 @@ def challenge_floater_end(request, group_slug, month_pk, pk):
         role=ChallengeStaffAssignment.Role.FLOATER,
         ended_at__isnull=True,
     )
-    if not can_operate_challenge(request.user, assignment.month):
+    if not can_run_challenge_wide_operations(request.user, assignment.month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if request.method == "POST":
         assignment.month = _lock_challenge_for_edit(assignment.month)
@@ -4772,7 +4855,7 @@ def team_leader_list(request, group_slug, month_pk, team_pk):
         team.month = _lock_challenge_for_edit(team.month)
         if challenge_history_locked(team.month):
             return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
-    can_manage = can_operate_challenge(request.user, team.month)
+    can_manage = can_run_challenge_wide_operations(request.user, team.month)
     if request.method == "POST" and not can_manage:
         return HttpResponseForbidden("A current Host assignment is required.")
     can_manage = can_manage and not challenge_history_locked(team.month)
@@ -4821,7 +4904,7 @@ def team_leader_end(request, group_slug, month_pk, team_pk, pk):
         role=ChallengeStaffAssignment.Role.TEAM_LEADER,
         ended_at__isnull=True,
     )
-    if not can_operate_challenge(request.user, assignment.month):
+    if not can_run_challenge_wide_operations(request.user, assignment.month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if request.method == "POST":
         assignment.month = _lock_challenge_for_edit(assignment.month)
@@ -4878,9 +4961,12 @@ def month_announcement_update(request, group_slug, month_pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def team_create(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if request.method == "POST":
+        month = _lock_challenge_for_edit(month)
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, month, "add a team"):
         return redirect(month)
@@ -4894,9 +4980,12 @@ def team_create(request, group_slug, month_pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def team_edit(request, group_slug, month_pk, pk):
     team = get_object_or_404(Team.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, team.month):
+    if request.method == "POST":
+        team.month = _lock_challenge_for_edit(team.month)
+    if not can_run_challenge_wide_operations(request.user, team.month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, team.month, "edit a team"):
         return redirect(team.month)
@@ -4912,9 +5001,12 @@ def team_edit(request, group_slug, month_pk, pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def team_archive_toggle(request, group_slug, month_pk, pk):
     team = get_object_or_404(Team.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, team.month):
+    if request.method == "POST":
+        team.month = _lock_challenge_for_edit(team.month)
+    if not can_run_challenge_wide_operations(request.user, team.month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, team.month, "archive or restore a team"):
         return redirect(team.month)
@@ -4940,9 +5032,12 @@ def team_archive_toggle(request, group_slug, month_pk, pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def team_delete(request, group_slug, month_pk, pk):
     team = get_object_or_404(Team.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, team.month):
+    if request.method == "POST":
+        team.month = _lock_challenge_for_edit(team.month)
+    if not can_run_challenge_wide_operations(request.user, team.month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if team.month.status != ChallengeMonth.Status.DRAFT or team.assignments.exists():
         messages.error(request, "Only unused teams in a Draft month can be deleted. Archive this team instead.")
@@ -4961,7 +5056,7 @@ def team_delete(request, group_slug, month_pk, pk):
 @login_required
 def team_assignment_create(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, month, "change its team roster"):
         return redirect(month)
@@ -4999,12 +5094,19 @@ def month_participant_list(request, group_slug, month_pk):
     mutable = month_is_configurable(month)
     host_access = can_operate_challenge(request.user, month)
     registration_access = can_view_challenge_registration_answers(request.user, month)
+    host_teams = restricted_host_team_ids(request.user, month)
     roster_scope = challenge_roster_read_scope(request.user, month)
     planning_ids = set()
     for enrollment in enrollments:
         assignments = enrollment.participant.current_month_team_assignments
         team_id = assignments[0].team_id if assignments and enrollment.is_active else None
-        enrollment.can_view_roster_details = registration_access or roster_read_scope_includes(roster_scope, team_id)
+        enrollment.can_view_registration = registration_access and (host_teams is None or team_id in host_teams)
+        enrollment.can_manage_roster = (
+            mutable and host_access and (host_teams is None or (
+                team_id in host_teams and enrollment.participant.user_id != request.user.pk
+            ))
+        )
+        enrollment.can_view_roster_details = enrollment.can_view_registration or roster_read_scope_includes(roster_scope, team_id)
         if enrollment.can_view_roster_details:
             planning_ids.add(enrollment.participant_id)
     planning_access = registration_access or bool(planning_ids)
@@ -5028,8 +5130,10 @@ def month_participant_list(request, group_slug, month_pk):
             if enrollment.participant.current_month_team_assignments
             else ""
         )
-        enrollment.checkpoint_warnings = checkpoint_warnings.get(enrollment.participant_id, [])
-        if registration_access:
+        enrollment.checkpoint_warnings = (
+            checkpoint_warnings.get(enrollment.participant_id, []) if enrollment.can_view_registration else []
+        )
+        if enrollment.can_view_registration:
             answer_map = {answer.question_id: answer.value for answer in enrollment.signup_answers.all()}
             enrollment.registration_rows = []
             for question in questions:
@@ -5080,7 +5184,7 @@ def month_participant_list(request, group_slug, month_pk):
         "can_view_planning_data": planning_access,
         "can_view_registration_answers": registration_access,
         "can_view_discord_usernames": planning_access,
-        "can_manage_participants": mutable and host_access,
+        "can_manage_participants": mutable and host_access and host_teams is None,
         "can_manage_teams": mutable and host_access,
         "can_remove": mutable and host_access,
         "sort_headers": sort_headers,
@@ -5090,7 +5194,7 @@ def month_participant_list(request, group_slug, month_pk):
 @login_required
 def month_participant_add(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, month, "add a participant"):
         return redirect(month)
@@ -5111,7 +5215,8 @@ def month_participant_add(request, group_slug, month_pk):
 @login_required
 def month_participant_edit(request, group_slug, month_pk, pk):
     enrollment = get_object_or_404(MonthEnrollment.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_active=True)
-    if not can_operate_challenge(request.user, enrollment.month):
+    if not (can_operate_challenge(request.user, enrollment.month)
+            and host_scope_allows_reader(request.user, enrollment.month, enrollment.participant_id)):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, enrollment.month, "change its team roster"):
         return redirect(enrollment.month)
@@ -5126,7 +5231,8 @@ def month_participant_edit(request, group_slug, month_pk, pk):
 @login_required
 def month_participant_remove(request, group_slug, month_pk, pk):
     enrollment = get_object_or_404(MonthEnrollment.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_active=True)
-    if not can_operate_challenge(request.user, enrollment.month):
+    if not (can_operate_challenge(request.user, enrollment.month)
+            and host_scope_allows_reader(request.user, enrollment.month, enrollment.participant_id)):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, enrollment.month, "remove a participant"):
         return redirect(enrollment.month)
@@ -5137,10 +5243,20 @@ def month_participant_remove(request, group_slug, month_pk, pk):
             actor=request.user,
             reason=MonthEnrollment.InactiveReason.REMOVED,
             note=request.POST.get("reason", "").strip(),
+            ordinary_staff_removal=True,
         )
         messages.success(request, f"{participant.display_name} was removed from active participation in {enrollment.month.name}.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {enrollment.participant.display_name} from {enrollment.month.name}?", "description": "They will leave the current roster and can no longer submit. Existing submissions, approved pages, and team history will be preserved.", "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
+    description = "They will leave the current roster and can no longer submit. Existing submissions, approved pages, and team history will be preserved."
+    if enrollment.month.staff_assignments.filter(
+        membership=enrollment.participant, role=ChallengeStaffAssignment.Role.HOST, ended_at__isnull=True,
+    ).exists():
+        description += " Removing this Host from Reader participation restores their challenge-wide Host authority."
+    return render(request, "core/confirm_remove.html", {
+        "title": f"Remove {enrollment.participant.display_name} from {enrollment.month.name}?",
+        "description": description,
+        "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
+    })
 
 
 @login_required
@@ -5152,7 +5268,8 @@ def month_participant_reactivate(request, group_slug, month_pk, pk):
         month__group__slug=group_slug,
         is_active=False,
     )
-    if not can_operate_challenge(request.user, enrollment.month):
+    if not (can_operate_challenge(request.user, enrollment.month)
+            and host_scope_allows_reader(request.user, enrollment.month, enrollment.participant_id)):
         return HttpResponseForbidden("A current Host assignment is required.")
     if reject_locked_month(request, enrollment.month, "reactivate a participant"):
         return redirect(enrollment.month)
@@ -5508,7 +5625,8 @@ def challenge_registration_detail(request, group_slug, month_pk, enrollment_pk):
         month__group__slug=group_slug,
     )
     month = enrollment.month
-    if not can_view_challenge_registration_answers(request.user, month):
+    if not (can_view_challenge_registration_answers(request.user, month)
+            and host_scope_allows_reader(request.user, month, enrollment.participant_id)):
         return HttpResponseForbidden("Challenge registration-planning visibility is required.")
     questions = list(month.signup_questions.all())
     answer_map = {answer.question_id: answer.value for answer in enrollment.signup_answers.all()}
@@ -5587,6 +5705,8 @@ def submission_create(request, group_slug, month_pk):
         return redirect(month)
     if request.user.is_superuser and not participant:
         raise Http404("A Platform Owner must also have a group membership to submit books.")
+    if is_active_floater(month, participant.pk):
+        return HttpResponseForbidden("Active Floaters cannot submit books.")
     if not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists():
         messages.error(request, "You are not enrolled in this Challenge. Ask a Host to add you to the Challenge or one of its teams.")
         return redirect(month)
@@ -5601,6 +5721,11 @@ def submission_create(request, group_slug, month_pk):
         intent_valid = intent_form.is_valid()
     if request.method == "POST" and book_valid and intent_valid:
         with transaction.atomic():
+            month = _lock_challenge_for_edit(month)
+            if (month.status != ChallengeMonth.Status.ACTIVE
+                    or not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists()
+                    or is_active_floater(month, participant.pk)):
+                return HttpResponseForbidden("Current Reader eligibility is required to submit.")
             submission = form.save(commit=False)
             submission.month = month
             submission.participant = participant
@@ -5794,7 +5919,7 @@ def botm_list(request, group_slug, month_pk):
         "active_books": active_books,
         "retired_books": [book for book in books if book.is_retired] if access["can_manage"] else [],
         "botm_reader": botm_reader,
-        "can_change": access["can_manage"] and month_is_configurable(month),
+        "can_change": can_run_challenge_wide_operations(request.user, month) and month_is_configurable(month),
         **access,
     })
 
@@ -5824,7 +5949,7 @@ def personal_tbr_detail(request, group_slug, month_pk):
 @login_required
 def botm_book_create(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may add Book of the Month titles.")
     if reject_locked_month(request, month, "add a Book of the Month title"):
         return redirect("botm-list", group_slug=group_slug, month_pk=month.pk)
@@ -5846,7 +5971,7 @@ def botm_book_create(request, group_slug, month_pk):
 @login_required
 def botm_catalog(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if not can_run_challenge_wide_operations(request.user, month):
         return JsonResponse({"ok": False, "message": "BOTM configuration authority is required."}, status=403)
     if not month_is_configurable(month):
         return JsonResponse({"ok": False, "message": "This Challenge is read-only."}, status=409)
@@ -5891,7 +6016,7 @@ def botm_catalog(request, group_slug, month_pk):
 @login_required
 def botm_book_edit(request, group_slug, month_pk, pk):
     book = get_object_or_404(BotmBook.objects.select_related("month__group", "catalog_book"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, book.month):
+    if not can_run_challenge_wide_operations(request.user, book.month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may edit Book of the Month titles.")
     if reject_locked_month(request, book.month, "edit a Book of the Month title"):
         return redirect("botm-list", group_slug=group_slug, month_pk=month_pk)
@@ -5910,7 +6035,7 @@ def botm_book_edit(request, group_slug, month_pk, pk):
 @login_required
 def botm_book_retire(request, group_slug, month_pk, pk):
     book = get_object_or_404(BotmBook.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, book.month):
+    if not can_run_challenge_wide_operations(request.user, book.month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may retire Book of the Month titles.")
     if reject_locked_month(request, book.month, "retire a Book of the Month title"):
         return redirect("botm-list", group_slug=group_slug, month_pk=month_pk)
@@ -5928,7 +6053,7 @@ def botm_book_retire(request, group_slug, month_pk, pk):
 @login_required
 def botm_book_reactivate(request, group_slug, month_pk, pk):
     book = get_object_or_404(BotmBook.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, book.month):
+    if not can_run_challenge_wide_operations(request.user, book.month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may reactivate Book of the Month titles.")
     if reject_locked_month(request, book.month, "reactivate a Book of the Month title"):
         return redirect("botm-list", group_slug=group_slug, month_pk=month_pk)
@@ -5947,7 +6072,7 @@ def botm_book_reactivate(request, group_slug, month_pk, pk):
 @login_required
 def botm_book_delete(request, group_slug, month_pk, pk):
     book = get_object_or_404(BotmBook.objects.select_related("month__group"), pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if not can_operate_challenge(request.user, book.month):
+    if not can_run_challenge_wide_operations(request.user, book.month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may delete unused Book of the Month titles.")
     if reject_locked_month(request, book.month, "delete a Book of the Month title"):
         return redirect("botm-list", group_slug=group_slug, month_pk=month_pk)
@@ -5970,8 +6095,13 @@ def botm_match_list(request, group_slug, month_pk):
     matches = month.botm_matches.select_related(
         "botm_book", "participant", "submission", "reviewer"
     ).order_by("status", "botm_book__position", "participant__display_name", "pk")
+    submissions = scope_reviewable_submissions(request.user, month, month.submissions.all())
+    matches = matches.filter(submission__in=submissions)
+    host_teams = restricted_host_team_ids(request.user, month)
     completion_awards = list(BotmCompletionAward.objects.filter(month=month).select_related(
         "participant"
+    ).filter(
+        **({"participant_id__in": submissions.values("participant_id")} if host_teams is not None else {})
     ).prefetch_related("configured_books").order_by("participant__display_name", "-qualified_at", "pk"))
     for award in completion_awards:
         frozen_book_ids = [snapshot.botm_book_id for snapshot in award.configured_books.all()]
@@ -5984,14 +6114,17 @@ def botm_match_list(request, group_slug, month_pk):
         ).count()
     return render(request, "core/botm_match_list.html", {
         "month": month, "matches": matches, "completion_awards": completion_awards,
-        "can_synchronize": not challenge_history_locked(month),
+        "can_synchronize": host_teams is None and not challenge_history_locked(month),
     })
 
 
 @login_required
+@_atomic_challenge_edit
 def botm_match_synchronize(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=month_pk, group__slug=group_slug)
-    if not can_operate_challenge(request.user, month):
+    if request.method == "POST":
+        month = _lock_challenge_for_edit(month)
+    if not can_run_challenge_wide_operations(request.user, month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may synchronize BOTM matches.")
     if request.method != "POST":
         return HttpResponseForbidden("A POST request is required.")
@@ -6015,6 +6148,8 @@ def botm_match_review(request, group_slug, month_pk, pk, decision):
     )
     if not can_operate_challenge(request.user, match.month):
         return HttpResponseForbidden("Only a current Host or Platform Owner may adjudicate BOTM matches.")
+    if not host_scope_allows_reader(request.user, match.month, match.participant_id):
+        return HttpResponseForbidden("This BOTM match is outside your Host team authority.")
     if request.method != "POST":
         return HttpResponseForbidden("A POST request is required.")
     status = {
@@ -6142,13 +6277,15 @@ def game_detail(request, group_slug, month_pk, pk):
         return HttpResponseForbidden("Games are not available for this Challenge.")
     applications = []
     if access["can_manage"]:
-        applications = game.reward_applications.select_related("applied_by", "voided_by").prefetch_related(
+        from .game_rewards import visible_game_reward_applications
+        applications = visible_game_reward_applications(request.user, game).select_related("applied_by", "voided_by").prefetch_related(
             "recipients__participant"
         ).order_by("-applied_at", "-pk")
     return render(request, "core/game_detail.html", {
         "month": game.month,
         "game": game,
         "applications": applications,
+        "visible_application_count": len(applications),
         "can_void_rewards": access["can_manage"] and not challenge_history_locked(game.month),
         "can_change": access["can_manage"] and month_is_configurable(game.month),
         "apply_unavailable_reason": (
@@ -6178,6 +6315,7 @@ def game_reward_apply(request, group_slug, month_pk, pk):
     form = GameRewardApplyForm(
         request.POST or None,
         game=game,
+        host_teams=restricted_host_team_ids(request.user, game.month),
         final_apply=request.method == "POST" and request.POST.get("step") == "apply",
         initial=initial,
     )
@@ -6240,7 +6378,9 @@ def game_reward_void(request, group_slug, month_pk, pk, application_pk):
         game__month_id=month_pk,
         game__month__group__slug=group_slug,
     )
-    if not can_operate_challenge(request.user, application.game.month):
+    from .game_rewards import visible_game_reward_applications
+    if not (can_operate_challenge(request.user, application.game.month)
+            and visible_game_reward_applications(request.user, application.game).filter(pk=application.pk).exists()):
         return HttpResponseForbidden("Only a current Host or Platform Owner may void Game rewards.")
     if challenge_history_locked(application.game.month):
         return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
