@@ -12,7 +12,7 @@ from django.utils import timezone
 from .models import (BookSubmission, BotmBook, PersonalTBRBook, BotmMatch, PersonalTBRMatch,
     BotmCompletionAward, PersonalTBRCompletionAward, ModifierProvenance, AuditEvent,
     MonthEnrollment, Membership, HardcoverSyncOutbox, ProgressCheckpointResult)
-from .permissions import membership_for, can_operate_challenge
+from .permissions import membership_for, can_operate_challenge, host_scope_allows_reader, is_active_floater
 from .matching_intent import eligible_entry, entry_evidence
 from .matching_resolution import identity_evidence, identity_stamp, competing
 from .submission_corrections import _reader_state, _fingerprint
@@ -21,6 +21,8 @@ SALT = 'northbound.administrative-credit-preview.v1'
 
 
 def can_manage_credit(actor, submission):
+    if not host_scope_allows_reader(actor, submission.month, submission.participant_id):
+        return False
     member = membership_for(actor, submission.month.group)
     return bool(actor.is_authenticated and actor.is_active and (actor.is_superuser or
         (member and member.role == Membership.Role.OWNER) or can_operate_challenge(actor, submission.month)))
@@ -86,6 +88,8 @@ def _operate(s, actor, *, domain, entry_id, operation, reason, acknowledge=False
     if not can_manage_credit(actor,s):raise PermissionDenied('Administrative matching authority is required.')
     if s.month.status not in {'active','finalizing'}:
         raise ValidationError('Credit corrections require an Active or Finalizing Challenge.')
+    if operation != 'reverse' and is_active_floater(s.month, s.participant_id):
+        raise ValidationError('Active Floaters cannot receive new challenge credit.')
     if not reason or not reason.strip():raise ValidationError('Explain why this credit needs correction.')
     if operation not in {'assign','reverse','restore'} or domain not in {'botm','tbr'}:
         raise ValidationError('Choose a supported credit operation.')

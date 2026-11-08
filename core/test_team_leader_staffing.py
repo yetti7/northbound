@@ -23,7 +23,7 @@ class TeamLeaderStaffingTests(TestCase):
             group=self.group, user=self.owner, role=Membership.Role.OWNER, display_name="Owner"
         )
         self.host_membership = Membership.objects.create(
-            group=self.group, user=self.host_user, role=Membership.Role.MEMBER, display_name="Host Reader"
+            group=self.group, user=self.host_user, role=Membership.Role.MEMBER, display_name="Host"
         )
         self.reader_one = Membership.objects.create(
             group=self.group, user=self.reader_one_user, role=Membership.Role.MEMBER, display_name="Reader One"
@@ -53,16 +53,13 @@ class TeamLeaderStaffingTests(TestCase):
         )
         self.team_one = Team.objects.create(month=self.month, name="Team One")
         self.team_two = Team.objects.create(month=self.month, name="Team Two")
-        for participant in (self.reader_one, self.reader_two, self.host_membership):
+        for participant in (self.reader_one, self.reader_two):
             MonthEnrollment.objects.create(month=self.month, participant=participant, enrolled_by=self.owner)
         self.reader_one_assignment = TeamAssignment.objects.create(
             month=self.month, team=self.team_one, participant=self.reader_one
         )
         self.reader_two_assignment = TeamAssignment.objects.create(
             month=self.month, team=self.team_one, participant=self.reader_two
-        )
-        self.host_team_assignment = TeamAssignment.objects.create(
-            month=self.month, team=self.team_two, participant=self.host_membership
         )
         MonthEnrollment.objects.create(month=self.month, participant=self.unassigned, enrolled_by=self.owner)
         self.host_assignment = ChallengeStaffAssignment.objects.create(
@@ -109,6 +106,8 @@ class TeamLeaderStaffingTests(TestCase):
     def test_multiple_leaders_different_teams_and_host_plus_team_leader_are_supported(self):
         first = self.create_leader(self.reader_one)
         second = self.create_leader(self.reader_two)
+        MonthEnrollment.objects.create(month=self.month, participant=self.host_membership, enrolled_by=self.owner)
+        TeamAssignment.objects.create(month=self.month, team=self.team_two, participant=self.host_membership)
         host_leader = self.create_leader(self.host_membership, team=self.team_two)
 
         self.assertEqual(self.team_one.staff_assignments.filter(ended_at__isnull=True).count(), 2)

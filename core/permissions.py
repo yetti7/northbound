@@ -147,6 +147,63 @@ def can_manage_permissions(user, group):
     return has_capability(user, group, "manage_permissions")
 
 
+def is_active_floater(month, participant_id):
+    return month.staff_assignments.filter(
+        membership_id=participant_id, role=ChallengeStaffAssignment.Role.FLOATER,
+        ended_at__isnull=True,
+    ).exists()
+
+
+def restricted_host_team_ids(user, month):
+    """None means no Host restriction. An empty set grants no team access."""
+    if not getattr(user, "is_authenticated", False) or not is_challenge_host(user, month):
+        return None
+    enrollment = MonthEnrollment.objects.filter(month=month, participant__user=user).first()
+    if enrollment is None or (not enrollment.is_active and enrollment.host_scope_restored):
+        return None
+    if not enrollment.is_active:
+        return frozenset()
+    return frozenset(TeamAssignment.objects.filter(
+        month=month, participant_id=enrollment.participant_id, ended_at__isnull=True,
+    ).values_list("team_id", flat=True))
+
+
+def group_directory_visible_member_ids(user, group, participants):
+    """Group aggregates cannot be split safely by a viewer's Challenge team scope."""
+    visible_ids = {participant.pk for participant in participants}
+    membership = membership_for(user, group)
+    if user.is_superuser or not membership:
+        return visible_ids
+    hosted = group.challenge_months.filter(
+        staff_assignments__membership=membership,
+        staff_assignments__role=ChallengeStaffAssignment.Role.HOST,
+        staff_assignments__ended_at__isnull=True,
+    )
+    for month in hosted:
+        teams = restricted_host_team_ids(user, month)
+        if teams is not None:
+            in_scope = TeamAssignment.objects.filter(
+                month=month, team_id__in=teams, ended_at__isnull=True,
+                participant__month_enrollments__month=month,
+                participant__month_enrollments__is_active=True,
+            ).values_list("participant_id", flat=True)
+            visible_ids.intersection_update(in_scope)
+    visible_ids.update(participant.pk for participant in participants if participant.user_id == user.pk)
+    return visible_ids
+
+
+def host_scope_allows_reader(user, month, participant_id):
+    teams = restricted_host_team_ids(user, month)
+    return teams is None or TeamAssignment.objects.filter(
+        month=month, participant_id=participant_id, team_id__in=teams, ended_at__isnull=True,
+        participant__month_enrollments__month=month, participant__month_enrollments__is_active=True,
+    ).exists()
+
+
+def can_run_challenge_wide_operations(user, month):
+    return can_operate_challenge(user, month) and restricted_host_team_ids(user, month) is None
+
+
 def challenge_review_scope(user, month):
     """Return challenge-wide or team-scoped review authority from active staffing."""
     if user.is_authenticated and user.is_superuser:
@@ -165,6 +222,10 @@ def challenge_review_scope(user, month):
         ),
     )
     roles = set(assignments.values_list("role", flat=True))
+    if ChallengeStaffAssignment.Role.HOST in roles:
+        teams = restricted_host_team_ids(user, month)
+        if teams is not None:
+            return "team", teams
     if roles.intersection({ChallengeStaffAssignment.Role.HOST, ChallengeStaffAssignment.Role.FLOATER}):
         return "challenge", frozenset()
     team_ids = frozenset(assignments.filter(
@@ -174,6 +235,21 @@ def challenge_review_scope(user, month):
     if team_ids:
         return "team", team_ids
     return None
+
+
+def challenge_roster_read_scope(user, month):
+    """Scope staff access to historical planning and Discord on Challenge rosters."""
+    if not user.is_active or not can_view_challenge(user, month):
+        return None
+    return challenge_review_scope(user, month)
+
+
+def roster_read_scope_includes(scope, team_id):
+    return bool(scope and (scope[0] == "challenge" or team_id in scope[1]))
+
+
+def challenge_history_locked(month):
+    return month.status in {month.Status.COMPLETED, month.Status.ARCHIVED}
 
 
 def can_review_challenge(user, month):
@@ -211,7 +287,8 @@ def can_void_submission(user, submission):
     if user.is_superuser:
         return True
     member = membership_for(user, submission.month.group)
-    if member and member.role in {Membership.Role.OWNER, Membership.Role.MODERATOR}:
+    if (member and member.role in {Membership.Role.OWNER, Membership.Role.MODERATOR}
+            and restricted_host_team_ids(user, submission.month) is None):
         return True
     return can_review_submission(user, submission)
 
@@ -232,6 +309,13 @@ def _can_view_competition_domain(user, month, visibility, *, team=None):
     if not user.is_authenticated:
         return False
     membership = membership_for(user, month.group)
+    host_teams = restricted_host_team_ids(user, month)
+    if host_teams is not None:
+        if month.status in {month.Status.COMPLETED, month.Status.ARCHIVED}:
+            return True
+        if visibility == month.CompetitionVisibility.EVERYBODY:
+            return True
+        return bool(team and team.month_id == month.pk and team.pk in host_teams)
     if _has_competition_staff_access(user, month, membership):
         return True
     if not membership:
@@ -322,7 +406,7 @@ def can_manage_challenge_tbr(user, enrollment):
     member = membership_for(user, month.group)
     if not member:
         return False
-    if member.role in STAFF_ROLES:
+    if member.role in STAFF_ROLES and restricted_host_team_ids(user, month) is None:
         return True
     scope = challenge_review_scope(user, month)
     if not scope:
@@ -340,7 +424,8 @@ def can_reconcile_personal_tbr(user, month):
     if user.is_superuser:
         return True
     member = membership_for(user, month.group)
-    return bool(member and (member.role == Membership.Role.OWNER or is_challenge_host(user, month)))
+    return bool(member and restricted_host_team_ids(user, month) is None
+                and (member.role == Membership.Role.OWNER or is_challenge_host(user, month)))
 
 
 def can_refresh_challenge_metadata(user, month):
@@ -354,7 +439,7 @@ def can_refresh_challenge_metadata(user, month):
 
 def can_refresh_tbr_metadata(user, book):
     enrollment = book.personal_tbr.enrollment
-    if can_refresh_challenge_metadata(user, enrollment.month):
+    if can_refresh_challenge_metadata(user, enrollment.month) and host_scope_allows_reader(user, enrollment.month, enrollment.participant_id):
         return True
     return bool(user.is_authenticated and user.is_active
         and enrollment.month.status in {'draft', 'upcoming', 'active'}
@@ -363,7 +448,8 @@ def can_refresh_tbr_metadata(user, book):
 
 
 def can_refresh_botm_metadata(user, book):
-    return not book.is_retired and can_refresh_challenge_metadata(user, book.month)
+    return (not book.is_retired and restricted_host_team_ids(user, book.month) is None
+            and can_refresh_challenge_metadata(user, book.month))
 
 
 def can_edit_submission(user, submission):
@@ -374,6 +460,6 @@ def can_edit_submission(user, submission):
     if user.is_superuser:
         return True
     member = membership_for(user, submission.month.group)
-    if member and member.role == Membership.Role.OWNER:
+    if member and member.role == Membership.Role.OWNER and restricted_host_team_ids(user, submission.month) is None:
         return True
     return can_review_submission(user, submission)

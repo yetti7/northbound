@@ -137,12 +137,12 @@ class ScopedReviewAuthorityTests(TestCase):
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.floater).exists())
         self.assertFalse(can_view_team_standings(self.floater_user, self.month))
         self.assertEqual(self.client.post(reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"membership": self.owner.pk}).status_code, 403)
-        self.assertEqual(self.client.get(reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 302)
+        self.assertEqual(self.client.get(reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 403)
 
-    def test_host_plus_team_leader_receives_host_wide_scope(self):
+    def test_participating_host_plus_team_leader_remains_team_scoped(self):
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader_one, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user)
-        self.assert_queue_scope(self.leader_one_user, ("North Pending", "South Pending"))
-        self.assertEqual(self.client.get(self.review_url(self.submission_two)).status_code, 200)
+        self.assert_queue_scope(self.leader_one_user, ("North Pending",), hidden=("South Pending",))
+        self.assertEqual(self.client.get(self.review_url(self.submission_two)).status_code, 403)
 
     def test_group_authority_without_staffing_cannot_review(self):
         for user in (self.reader_one_user, self.owner_user, self.moderator_user, self.other_host_user, self.ended_user):

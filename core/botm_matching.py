@@ -3,7 +3,7 @@ from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 from .models import AuditEvent, BookSubmission, BotmBook, BotmMatch, ChallengeMonth, MonthEnrollment, normalize_book_identity
-from .permissions import can_operate_challenge
+from .permissions import can_operate_challenge, challenge_history_locked
 
 
 def _finalize_submission_matches(submission, matches):
@@ -133,6 +133,13 @@ def synchronize_reader(*, month, participant):
 @transaction.atomic
 def synchronize_challenge(month):
     month = ChallengeMonth.objects.select_for_update().get(pk=month.pk)
+    if challenge_history_locked(month):
+        raise ValidationError("Completed and Archived Challenges are read-only.")
+    return _synchronize_challenge_matches(month)
+
+
+def _synchronize_challenge_matches(month):
+    """Rebuild matches inside the caller's ordinary or audited recovery transaction."""
     results = []
     for submission in BookSubmission.objects.filter(month=month).order_by("pk"):
         results.extend(synchronize_submission(submission))

@@ -40,6 +40,7 @@ urlpatterns = [
     path("config/recovery/memberships/<int:pk>/role/", views.recovery_membership_role, name="recovery-membership-role"),
     path("config/recovery/staffing/<int:pk>/status/", views.recovery_staffing_status, name="recovery-staffing-status"),
     path("config/recovery/staffing/<int:pk>/role/", views.recovery_staffing_role, name="recovery-staffing-role"),
+    path("config/recovery/enrollments/<int:pk>/restore-host-scope/", views.recovery_host_scope_restore, name="recovery-host-scope-restore"),
     path("config/recovery/enrollments/<int:pk>/status/", views.recovery_enrollment_status, name="recovery-enrollment-status"),
     path("config/recovery/enrollments/<int:pk>/origin/", views.recovery_enrollment_origin, name="recovery-enrollment-origin"),
     path("config/recovery/teams/<int:pk>/status/", views.recovery_team_status, name="recovery-team-status"),

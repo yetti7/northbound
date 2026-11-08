@@ -1,8 +1,23 @@
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AuditEvent, ChallengeStaffAssignment, MonthEnrollment, TeamAssignment
+from .models import AuditEvent, ChallengeMonth, ChallengeStaffAssignment, MonthEnrollment, TeamAssignment
+from .permissions import can_operate_challenge, host_scope_allows_reader, is_challenge_host, restricted_host_team_ids
+
+
+def _lock_month(month_id):
+    return ChallengeMonth.objects.select_for_update().get(pk=month_id)
+
+
+def _check_host_roster_change(actor, month, participant, *, destination=None):
+    teams = restricted_host_team_ids(actor, month)
+    if teams is None:
+        return
+    if (participant.user_id == actor.pk
+            or not host_scope_allows_reader(actor, month, participant.pk)
+            or (destination is not None and destination not in teams)):
+        raise PermissionDenied("This roster change is outside your Host team authority.")
 
 
 def _validate_participant(month, participant):
@@ -20,9 +35,14 @@ def _validate_participant(month, participant):
 
 @transaction.atomic
 def activate_participation(*, month, participant, actor, origin, agreement_accepted=False, agreement_version=''):
-    from .models import ChallengeMonth
-    month = ChallengeMonth.objects.select_for_update().get(pk=month.pk)
+    month = _lock_month(month.pk)
     _validate_participant(month, participant)
+    if origin == MonthEnrollment.Origin.STAFF and not can_operate_challenge(actor, month):
+        raise PermissionDenied("Current Challenge roster authority is required.")
+    if origin == MonthEnrollment.Origin.STAFF and restricted_host_team_ids(actor, month) is not None:
+        if not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists():
+            raise PermissionDenied("A team-scoped Host cannot add unassigned Readers.")
+        _check_host_roster_change(actor, month, participant)
     new_agreement = month.registration_agreement_enabled and not MonthEnrollment.objects.filter(month=month, participant=participant).exists()
     if new_agreement:
         if (getattr(actor, 'pk', None) != participant.user_id or origin != MonthEnrollment.Origin.SELF
@@ -46,8 +66,9 @@ def activate_participation(*, month, participant, actor, origin, agreement_accep
         enrollment.inactive_reason = ""
         enrollment.inactivated_at = None
         enrollment.inactivated_by = None
+        enrollment.host_scope_restored = False
         enrollment.save(
-            update_fields=["is_active", "inactive_reason", "inactivated_at", "inactivated_by"]
+            update_fields=["is_active", "inactive_reason", "inactivated_at", "inactivated_by", "host_scope_restored"]
         )
 
     if created or reactivated:
@@ -76,10 +97,14 @@ def activate_participation(*, month, participant, actor, origin, agreement_accep
 
 
 @transaction.atomic
-def end_team_assignment(*, assignment, actor, reason, audit=True):
+def end_team_assignment(*, assignment, actor, reason, audit=True, ordinary_staff_change=False):
+    month = _lock_month(assignment.month_id)
     assignment = TeamAssignment.objects.select_for_update().select_related(
         "month__group", "participant", "team"
     ).get(pk=assignment.pk)
+    if ordinary_staff_change and not can_operate_challenge(actor, month):
+        raise PermissionDenied("Current Challenge roster authority is required.")
+    _check_host_roster_change(actor, month, assignment.participant)
     if assignment.ended_at is not None:
         return assignment, False
     from .models import end_active_team_leader_assignments
@@ -110,10 +135,25 @@ def end_team_assignment(*, assignment, actor, reason, audit=True):
 
 
 @transaction.atomic
-def deactivate_participation(*, enrollment, actor, reason, note=""):
+def deactivate_participation(*, enrollment, actor, reason, note="", ordinary_staff_removal=False):
+    month = _lock_month(enrollment.month_id)
     enrollment = MonthEnrollment.objects.select_for_update().select_related(
         "month__group", "participant"
     ).get(pk=enrollment.pk)
+    target_is_host = is_challenge_host(enrollment.participant.user, month)
+    if target_is_host and actor.pk == enrollment.participant.user_id:
+        raise PermissionDenied("Hosts cannot remove their own Reader enrollment.")
+    _check_host_roster_change(actor, month, enrollment.participant)
+    if reason == MonthEnrollment.InactiveReason.REMOVED and (
+        not getattr(actor, "is_active", False) or not can_operate_challenge(actor, month)
+    ):
+        raise PermissionDenied("Current Challenge roster authority is required.")
+    if ordinary_staff_removal and (
+        reason != MonthEnrollment.InactiveReason.REMOVED
+        or not actor.is_active or not can_operate_challenge(actor, month)
+        or month.status not in {month.Status.DRAFT, month.Status.UPCOMING, month.Status.ACTIVE}
+    ):
+        raise PermissionDenied("Current Challenge roster authority is required.")
     if not enrollment.is_active:
         return enrollment, False
     current_assignments = list(
@@ -133,13 +173,16 @@ def deactivate_participation(*, enrollment, actor, reason, note=""):
     enrollment.inactive_reason = reason
     enrollment.inactivated_at = timezone.now()
     enrollment.inactivated_by = actor
-    enrollment.save(update_fields=["is_active", "inactive_reason", "inactivated_at", "inactivated_by"])
+    enrollment.host_scope_restored = ordinary_staff_removal and target_is_host
+    enrollment.save(update_fields=["is_active", "inactive_reason", "inactivated_at", "inactivated_by", "host_scope_restored"])
     self_withdrawal = reason == MonthEnrollment.InactiveReason.WITHDRAWN
     summary = (
         f"{enrollment.participant.display_name} withdrew from {enrollment.month.name}."
         if self_withdrawal
         else f"Removed {enrollment.participant.display_name} from active participation in {enrollment.month.name}."
     )
+    if enrollment.host_scope_restored:
+        summary += " Challenge-wide Host authority was restored."
     if note:
         summary += f" Reason: {note}"
     AuditEvent.objects.create(
@@ -161,6 +204,10 @@ def deactivate_participation(*, enrollment, actor, reason, note=""):
 
 @transaction.atomic
 def assign_participant_to_team(*, month, participant, team, actor):
+    month = _lock_month(month.pk)
+    if not can_operate_challenge(actor, month):
+        raise PermissionDenied("Current Challenge roster authority is required.")
+    _check_host_roster_change(actor, month, participant, destination=team.pk)
     if team.month_id != month.pk:
         raise ValidationError("The team must belong to the selected challenge month.")
     enrollment, created, reactivated = activate_participation(

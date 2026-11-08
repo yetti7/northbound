@@ -233,7 +233,9 @@ class GameRewardServiceTests(TestCase):
             )
         ])
 
+        administrator = get_user_model().objects.create_superuser("wide-game-operator")
         application, _ = self.apply(
+            actor=administrator,
             target_type=GameRewardApplication.TargetType.CHALLENGE,
             target_participant=None,
         )

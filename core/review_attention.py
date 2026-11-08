@@ -1,6 +1,6 @@
 from .immersive import review_queue_requests
 from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, ProgressCheckpointResult, ThemeClaim
-from .permissions import challenge_review_scope, is_challenge_host, scope_reviewable_submissions
+from .permissions import challenge_review_scope, is_challenge_host, scope_reviewable_submissions, restricted_host_team_ids
 
 
 ACTIONABLE_MONTH_STATUSES = (ChallengeMonth.Status.ACTIVE, ChallengeMonth.Status.FINALIZING)
@@ -70,10 +70,22 @@ def needs_attention_summary(user):
         month_host_notices = [assignment for assignment in host_notices if assignment.month_id == month.pk]
         checkpoint_results = []
         if month.pk in legacy_month_ids and (user.is_superuser or is_challenge_host(user, month)):
-            checkpoint_results = list(ProgressCheckpointResult.objects.filter(
+            checkpoints = ProgressCheckpointResult.objects.filter(
                 checkpoint__month=month,
                 outcome=ProgressCheckpointResult.Outcome.BELOW,
-            ).select_related("checkpoint", "participant").order_by("checkpoint__scheduled_at", "participant__display_name"))
+            )
+            teams = restricted_host_team_ids(user, month)
+            if teams is not None:
+                checkpoints = checkpoints.filter(
+                    participant__team_assignments__month=month,
+                    participant__team_assignments__ended_at__isnull=True,
+                    participant__team_assignments__team_id__in=teams,
+                    participant__month_enrollments__month=month,
+                    participant__month_enrollments__is_active=True,
+                )
+            checkpoint_results = list(checkpoints.select_related("checkpoint", "participant").order_by(
+                "checkpoint__scheduled_at", "participant__display_name"
+            ))
         if not review_count and not checkpoint_results and not month_host_notices:
             continue
         scope_label = "Entire Challenge"

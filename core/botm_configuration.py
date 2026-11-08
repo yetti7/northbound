@@ -2,7 +2,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from .models import AuditEvent, BotmBook, ChallengeMonth
-from .permissions import can_operate_challenge
+from .permissions import can_run_challenge_wide_operations
 
 
 CONFIGURABLE_STATUSES = {
@@ -14,7 +14,7 @@ CONFIGURABLE_STATUSES = {
 
 def _locked_month(month, actor):
     locked = ChallengeMonth.objects.select_for_update().select_related("group").get(pk=month.pk)
-    if not can_operate_challenge(actor, locked):
+    if not can_run_challenge_wide_operations(actor, locked):
         raise ValidationError("Only a current Host or Platform Owner may configure Book of the Month.")
     if locked.status not in CONFIGURABLE_STATUSES:
         raise ValidationError(f"{locked.get_status_display()} Challenges are read-only.")

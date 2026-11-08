@@ -217,8 +217,8 @@ def set_botm_book_retired(*, book, retired, recovery_request):
         before = locked.is_retired
         locked.is_retired = retired
         locked.save(update_fields=["is_retired"])
-        from .botm_matching import synchronize_challenge
-        synchronize_challenge(locked.month)
+        from .botm_matching import _synchronize_challenge_matches
+        _synchronize_challenge_matches(locked.month)
         return {"is_retired": retired, "previous_is_retired": before, "match_count": locked.matches.count()}
     return execute_recovery_operation(recovery_request, mutation)
 
@@ -261,8 +261,8 @@ def correct_botm_book(*, book, values, recovery_request, allow_used=False):
             is_qualifying=False,
             updated_at=timezone.now(),
         )
-        from .botm_matching import synchronize_challenge
-        synchronize_challenge(locked.month)
+        from .botm_matching import _synchronize_challenge_matches
+        _synchronize_challenge_matches(locked.month)
         return {"before": before, "used": used, "match_count": locked.matches.count()}
     return execute_recovery_operation(recovery_request, mutation)
 

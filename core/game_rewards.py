@@ -1,7 +1,7 @@
 from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 from .models import (
@@ -16,7 +16,7 @@ from .models import (
     MonthEnrollment,
     TeamAssignment,
 )
-from .permissions import can_operate_challenge
+from .permissions import can_operate_challenge, challenge_history_locked, restricted_host_team_ids, host_scope_allows_reader
 
 
 APPLY_LIFECYCLE_STATES = {
@@ -67,6 +67,37 @@ def _eligible_readers(month):
     )
 
 
+def _validate_target_scope(actor, month, target_type, target_participant, target_team):
+    teams = restricted_host_team_ids(actor, month)
+    if teams is None:
+        return
+    if target_type == GameRewardApplication.TargetType.TEAM and target_team and target_team.pk in teams:
+        return
+    if (target_type == GameRewardApplication.TargetType.READER and target_participant
+            and host_scope_allows_reader(actor, month, target_participant.pk)):
+        return
+    raise ValidationError("Game reward target is outside your Host team authority.")
+
+
+def visible_game_reward_applications(actor, game):
+    applications = game.reward_applications.all()
+    teams = restricted_host_team_ids(actor, game.month)
+    if teams is None:
+        return applications
+    in_scope = TeamAssignment.objects.filter(
+        month=game.month, team_id__in=teams, ended_at__isnull=True,
+        participant__month_enrollments__month=game.month,
+        participant__month_enrollments__is_active=True,
+    ).values("participant_id")
+    outside = GameRewardRecipient.objects.filter(application__game=game).exclude(participant_id__in=in_scope)
+    return applications.exclude(
+        pk__in=outside.values("application_id"),
+    ).exclude(target_type=GameRewardApplication.TargetType.CHALLENGE).filter(
+        models.Q(target_type=GameRewardApplication.TargetType.READER, target_participant_id__in=in_scope)
+        | models.Q(target_type=GameRewardApplication.TargetType.TEAM, target_team_id__in=teams)
+    )
+
+
 def _resolve_recipients(*, month, target_type, target_participant, target_team):
     eligible = _eligible_readers(month)
     if target_type == GameRewardApplication.TargetType.READER:
@@ -108,6 +139,7 @@ def preview_game_reward(*, game, actor, target_type, target_participant=None, ta
     game = Game.objects.select_for_update().select_related("month__group").get(pk=game.pk)
     _validate_operator(actor, game.month)
     _validate_apply_state(game)
+    _validate_target_scope(actor, game.month, target_type, target_participant, target_team)
     return _resolve_recipients(
         month=game.month,
         target_type=target_type,
@@ -150,6 +182,7 @@ def apply_game_reward(
     game = Game.objects.select_for_update().select_related("month__group").get(pk=game.pk)
     _validate_operator(actor, game.month)
     _validate_apply_state(game)
+    _validate_target_scope(actor, game.month, target_type, target_participant, target_team)
 
     payload = {
         "game": game,
@@ -163,6 +196,8 @@ def apply_game_reward(
         idempotency_key=idempotency_key
     ).first()
     if existing:
+        if not visible_game_reward_applications(actor, game).filter(pk=existing.pk).exists():
+            raise ValidationError("Game reward is outside your Host team authority.")
         return _reuse_or_reject(existing, **payload)
 
     recipients, target_label = _resolve_recipients(
@@ -238,7 +273,12 @@ def void_game_reward(*, application, actor, reason):
     application = GameRewardApplication.objects.select_for_update().select_related(
         "game__month__group"
     ).get(pk=application.pk)
-    _validate_operator(actor, application.game.month)
+    month = application.game.month
+    _validate_operator(actor, month)
+    if challenge_history_locked(month):
+        raise ValidationError("Completed and Archived Challenges are read-only.")
+    if not visible_game_reward_applications(actor, application.game).filter(pk=application.pk).exists():
+        raise ValidationError("Game reward is outside your Host team authority.")
     if application.is_voided:
         raise ValidationError("This Game reward application has already been voided.")
 

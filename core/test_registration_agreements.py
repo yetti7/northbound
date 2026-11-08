@@ -211,12 +211,30 @@ class RegistrationAgreementMigrationTests(TransactionTestCase):
             answer=apps.get_model('core','ChallengeSignupAnswer').objects.create(enrollment=enrollment,question=question,value='Historical response')
             answer_before=apps.get_model('core','ChallengeSignupAnswer').objects.values().get(pk=answer.pk)
             before=apps.get_model('core','MonthEnrollment').objects.values().get(pk=enrollment.pk)
-            MigrationExecutor(connection).migrate([('core','0064_registration_agreements')])
-            new=ChallengeMonth.objects.get(pk=month.pk)
+            target = [("core", "0064_registration_agreements")]
+            executor = MigrationExecutor(connection)
+            executor.migrate(target)
+            apps = executor.loader.project_state(target).apps
+            new = apps.get_model("core", "ChallengeMonth").objects.get(pk=month.pk)
             self.assertFalse(new.registration_agreement_enabled)
-            self.assertEqual(new.registration_agreement_text,DEFAULT_REGISTRATION_AGREEMENT)
-            self.assertEqual(MonthEnrollment.objects.values().get(pk=enrollment.pk),before)
-            self.assertFalse(RegistrationAgreementAcceptance.objects.exists())
-            self.assertEqual(ChallengeSignupAnswer.objects.values().get(pk=answer.pk),answer_before)
+            self.assertEqual(new.registration_agreement_text, DEFAULT_REGISTRATION_AGREEMENT)
+            historical_enrollment = apps.get_model("core", "MonthEnrollment").objects
+            self.assertEqual(historical_enrollment.values().get(pk=enrollment.pk), before)
+            self.assertFalse(apps.get_model("core", "RegistrationAgreementAcceptance").objects.exists())
+            self.assertEqual(
+                apps.get_model("core", "ChallengeSignupAnswer").objects.values().get(pk=answer.pk),
+                answer_before,
+            )
+
+            # Legacy removals do not imply an authorization to restore Host scope.
+            historical_enrollment.filter(pk=enrollment.pk).update(is_active=False, inactive_reason="removed")
+            inactive_before = historical_enrollment.values().get(pk=enrollment.pk)
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())
+            self.assertEqual(
+                MonthEnrollment.objects.values().get(pk=enrollment.pk),
+                {**inactive_before, "host_scope_restored": False},
+            )
         finally:
-            MigrationExecutor(connection).migrate([('core','0064_registration_agreements')])
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())

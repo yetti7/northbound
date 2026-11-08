@@ -432,11 +432,14 @@ class GamesManagementUITests(TestCase):
             self.assertContains(team_preview, participant.display_name)
         self.assertNotContains(team_preview, self.floater.display_name)
         self.assertNotContains(team_preview, self.root.username)
-        challenge_preview = self.client.post(self.apply_url, self.reward_payload(
+        challenge_payload = self.reward_payload(
             target_type=GameRewardApplication.TargetType.CHALLENGE,
             target_participant="",
             target_team="",
-        ))
+        )
+        self.assertNotContains(self.client.post(self.apply_url, challenge_payload), "Confirm Reward")
+        self.client.force_login(self.root)
+        challenge_preview = self.client.post(self.apply_url, challenge_payload)
         self.assertContains(challenge_preview, "Confirm Reward")
         self.assertFalse(GameRewardApplication.objects.exists())
 
