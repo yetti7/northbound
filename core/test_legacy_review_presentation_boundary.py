@@ -169,7 +169,10 @@ class LegacyReviewPresentationBoundaryTests(TestCase):
             response = self.client.get(review_url)
             with self.subTest(user=user.username):
                 self.assertContains(response, "Reader Private Book")
-                self.assertContains(response, "Opponent Private Book")
+                if user == self.floater_user:
+                    self.assertContains(response, "Opponent Private Book")
+                else:
+                    self.assertNotContains(response, "Opponent Private Book")
         self.client.force_login(self.leader_user)
         response = self.client.get(review_url)
         self.assertContains(response, "Reader Private Book")

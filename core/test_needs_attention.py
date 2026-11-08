@@ -69,9 +69,10 @@ class NeedsAttentionTests(TestCase):
     def test_host_plus_team_leader_does_not_double_count(self):
         ChallengeStaffAssignment.objects.create(month=self.month, membership=self.leader, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user, host_assignment_notice_seen_at=timezone.now())
         summary = needs_attention_summary(self.leader_user)
-        self.assertEqual(summary["total"], 4)
+        self.assertEqual(summary["total"], 2)
         self.assertEqual(len(summary["challenges"]), 1)
-        self.assertEqual(summary["challenges"][0]["scope_label"], "Entire Challenge")
+        self.assertEqual(summary["challenges"][0]["review_count"], 2)
+        self.assertEqual(summary["challenges"][0]["scope_label"], self.team_one.name)
 
     def test_multiple_challenges_aggregate_and_unauthorized_challenge_is_excluded(self):
         ChallengeStaffAssignment.objects.create(month=self.other_month, membership=self.host, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner_user, host_assignment_notice_seen_at=timezone.now())

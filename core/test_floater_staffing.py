@@ -143,7 +143,7 @@ class FloaterStaffingTests(TestCase):
             reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
             {"title": "Blocked", "author": "Author", "book_format": BookSubmission.Format.EBOOK, "started_on": "2026-08-01", "completed_on": "2026-08-02", "submitted_pages": 100},
         )
-        self.assertRedirects(response, self.month.get_absolute_url())
+        self.assertEqual(response.status_code, 403)
         self.assertFalse(BookSubmission.objects.filter(participant=self.member).exists())
         self.assertEqual(self.client.get(reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 200)
 

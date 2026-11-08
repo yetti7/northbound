@@ -50,10 +50,11 @@ class DurableParticipationMigrationTests(TransactionTestCase):
         super().tearDown()
 
     def test_existing_rows_become_active_current_history_without_fabricated_provenance(self):
-        enrollment = MonthEnrollment.objects.get(pk=self.enrollment_pk)
-        assignment = TeamAssignment.objects.get(pk=self.assignment_pk)
+        apps = MigrationExecutor(connection).loader.project_state(self.migrate_to).apps
+        enrollment = apps.get_model("core", "MonthEnrollment").objects.get(pk=self.enrollment_pk)
+        assignment = apps.get_model("core", "TeamAssignment").objects.get(pk=self.assignment_pk)
         self.assertTrue(enrollment.is_active)
-        self.assertEqual(enrollment.origin, MonthEnrollment.Origin.LEGACY)
+        self.assertEqual(enrollment.origin, "legacy")
         self.assertEqual(enrollment.inactive_reason, "")
         self.assertIsNone(enrollment.inactivated_at)
         self.assertIsNone(assignment.assigned_at)
