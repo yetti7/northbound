@@ -93,6 +93,30 @@ class GroupCapabilityCleanupTests(TestCase):
         self.assertEqual(self.client.get(reverse("participant-deactivate", kwargs={"group_slug": self.group.slug, "pk": self.reader_membership.pk})).status_code, 200)
         self.assertEqual(self.client.get(reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 403)
 
+    def test_member_creation_requires_role_authority_for_owner(self):
+        self.grant("manage_participants")
+        url = reverse("member-create", args=[self.group.slug])
+        payload = {
+            "username": "new-owner", "display_name": "New Owner",
+            "temporary_password": "synthetic-password", "role": Membership.Role.OWNER,
+        }
+        response = self.client.post(url, payload)
+        self.assertIn("role", response.context["form"].errors)
+        self.assertFalse(get_user_model().objects.filter(username="new-owner").exists())
+        role_url = reverse("participant-role-edit", args=[self.group.slug, self.reader_membership.pk])
+        self.assertEqual(self.client.post(role_url, {"role": Membership.Role.OWNER, "is_active": True}).status_code, 403)
+        response = self.client.post(url, {**payload, "username": "new-member", "role": Membership.Role.MEMBER})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(self.group.memberships.filter(user__username="new-member", role=Membership.Role.MEMBER).exists())
+
+        self.client.force_login(self.owner)
+        self.assertEqual(self.client.post(url, payload).status_code, 302)
+        self.assertTrue(self.group.memberships.filter(user__username="new-owner", role=Membership.Role.OWNER).exists())
+        root = get_user_model().objects.create_superuser("cleanup-root")
+        self.client.force_login(root)
+        self.assertEqual(self.client.post(url, {**payload, "username": "root-created-owner"}).status_code, 302)
+        self.assertTrue(self.group.memberships.filter(user__username="root-created-owner", role=Membership.Role.OWNER).exists())
+
     def test_manage_months_controls_core_month_and_host_management_not_themes(self):
         self.grant("manage_months")
         self.assertEqual(self.client.get(reverse("month-create", kwargs={"group_slug": self.group.slug})).status_code, 200)

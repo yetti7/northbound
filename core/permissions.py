@@ -176,6 +176,21 @@ def challenge_review_scope(user, month):
     return None
 
 
+def challenge_roster_read_scope(user, month):
+    """Scope staff access to historical planning and Discord on Challenge rosters."""
+    if not user.is_active or not can_view_challenge(user, month):
+        return None
+    return challenge_review_scope(user, month)
+
+
+def roster_read_scope_includes(scope, team_id):
+    return bool(scope and (scope[0] == "challenge" or team_id in scope[1]))
+
+
+def challenge_history_locked(month):
+    return month.status in {month.Status.COMPLETED, month.Status.ARCHIVED}
+
+
 def can_review_challenge(user, month):
     return challenge_review_scope(user, month) is not None
 

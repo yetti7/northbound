@@ -98,13 +98,16 @@ def staff_tbr_version(tbr):
 def save_staff_challenge_tbr(*, enrollment, actor, books, complete=False, version=""):
     """Explicit, permission-checked exception; no registration, score or sync writes."""
     from django.core import signing
-    from .permissions import can_manage_challenge_tbr
+    from .permissions import can_manage_challenge_tbr, challenge_history_locked
     enrollment = MonthEnrollment.objects.select_for_update().select_related(
         "month__group", "participant__user"
     ).get(pk=enrollment.pk)
     if not can_manage_challenge_tbr(actor, enrollment):
         raise ValidationError("You may not manage this Reader's Challenge TBR.")
-    if not enrollment.month.tbr_enabled:
+    month = enrollment.month
+    if challenge_history_locked(month):
+        raise ValidationError("Completed and Archived Challenges are read-only.")
+    if not month.tbr_enabled:
         raise ValidationError("Challenge TBR is disabled for this Challenge.")
     tbr = PersonalTBR.objects.select_for_update().filter(enrollment=enrollment).first()
     try:

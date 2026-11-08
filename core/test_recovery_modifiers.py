@@ -460,3 +460,72 @@ class ModifierDomainRecoveryTests(TestCase):
             self.assertContains(response, "Backup Advisory")
             self.tbr_one.refresh_from_db()
             self.assertEqual(self.tbr_one.title_snapshot, "Stacked Book")
+
+    def test_completed_and_archived_ordinary_writes_are_denied_and_recovery_is_preserved(self):
+        from .botm_matching import synchronize_challenge
+        from .game_rewards import void_game_reward
+        from .personal_tbr import save_staff_challenge_tbr, staff_tbr_version
+
+        host_assignment = self.month.staff_assignments.get(membership=self.host)
+        floater_assignment = ChallengeStaffAssignment.objects.create(
+            month=self.month, membership=self.floater, role=ChallengeStaffAssignment.Role.FLOATER,
+        )
+        leader_assignment = ChallengeStaffAssignment.objects.create(
+            month=self.month, membership=self.reader, team=self.team,
+            role=ChallengeStaffAssignment.Role.TEAM_LEADER,
+        )
+        month_args = [self.group.slug, self.month.pk]
+        writes = [
+            ("month-edit", [], {"name": "Changed"}),
+            ("challenge-general-settings", [], {"name": "Changed"}),
+            ("challenge-schedule-settings", [], {}),
+            ("challenge-host-list", [], {"membership": self.group_owner.pk}),
+            ("challenge-host-end", [host_assignment.pk], {}),
+            ("challenge-floater-list", [], {"membership": self.leader.pk}),
+            ("challenge-floater-end", [floater_assignment.pk], {}),
+            ("team-leader-list", [self.team.pk], {"membership": self.reader.pk}),
+            ("team-leader-end", [self.team.pk, leader_assignment.pk], {}),
+            ("botm-match-synchronize", [], {}),
+            ("game-reward-void", [self.game.pk, self.application.pk], {"reason": "Ordinary void"}),
+            ("staff-challenge-tbr", [self.reader.pk], {"action": "save"}),
+            ("staff-challenge-tbr-catalog", [self.reader.pk], {"action": "search"}),
+        ]
+        for status in (ChallengeMonth.Status.COMPLETED, ChallengeMonth.Status.ARCHIVED):
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+            for name, suffix, data in writes:
+                with self.subTest(status=status, route=name):
+                    self.client.force_login(self.group_owner.user if name in {
+                        "month-edit", "challenge-host-list", "challenge-host-end",
+                    } else self.host_user)
+                    self.assertEqual(self.client.post(reverse(name, args=[*month_args, *suffix]), data).status_code, 403)
+            with self.assertRaisesMessage(ValidationError, "read-only"):
+                synchronize_challenge(self.month)
+            with self.assertRaisesMessage(ValidationError, "read-only"):
+                void_game_reward(application=self.application, actor=self.host_user, reason="Ordinary void")
+            with self.assertRaisesMessage(ValidationError, "read-only"):
+                save_staff_challenge_tbr(
+                    enrollment=self.enrollment, actor=self.host_user, books=[],
+                    version=staff_tbr_version(self.tbr),
+                )
+
+        self.assertFalse(self.month.staff_assignments.filter(ended_at__isnull=False).exists())
+        self.application.refresh_from_db()
+        self.assertFalse(self.application.is_voided)
+        self.assertEqual(self.tbr.books.count(), 2)
+        self.botm_match.refresh_from_db()
+        self.assertTrue(self.botm_match.is_qualifying)
+
+        set_botm_book_retired(
+            book=self.botm_one, retired=True,
+            recovery_request=self.request(action="botm_book.retire", target=self.botm_one, label=str(self.botm_one)),
+        )
+        self.botm_one.refresh_from_db()
+        self.assertTrue(self.botm_one.is_retired)
+        recover_game_application(
+            application=self.application, mode="void",
+            recovery_request=self.request(
+                action="game_reward.void", target=self.application, label=game_application_label(self.application),
+            ),
+        )
+        self.application.refresh_from_db()
+        self.assertTrue(self.application.is_voided)

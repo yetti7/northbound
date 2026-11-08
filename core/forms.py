@@ -1430,6 +1430,13 @@ class MemberCreateForm(forms.Form):
     role = forms.ChoiceField(choices=Membership.Role.choices, initial=Membership.Role.MEMBER)
     temporary_password = forms.CharField(label="Temporary Password", widget=forms.PasswordInput, min_length=12)
 
+    def __init__(self, *args, can_assign_roles=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not can_assign_roles:
+            self.fields["role"].choices = [
+                choice for choice in Membership.Role.choices if choice[0] != Membership.Role.OWNER
+            ]
+
     def clean_username(self):
         username = self.cleaned_data["username"]
         if get_user_model().objects.filter(username=username).exists():

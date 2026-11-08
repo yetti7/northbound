@@ -16,7 +16,7 @@ from .models import (
     MonthEnrollment,
     TeamAssignment,
 )
-from .permissions import can_operate_challenge
+from .permissions import can_operate_challenge, challenge_history_locked
 
 
 APPLY_LIFECYCLE_STATES = {
@@ -238,7 +238,10 @@ def void_game_reward(*, application, actor, reason):
     application = GameRewardApplication.objects.select_for_update().select_related(
         "game__month__group"
     ).get(pk=application.pk)
-    _validate_operator(actor, application.game.month)
+    month = application.game.month
+    _validate_operator(actor, month)
+    if challenge_history_locked(month):
+        raise ValidationError("Completed and Archived Challenges are read-only.")
     if application.is_voided:
         raise ValidationError("This Game reward application has already been voided.")
 

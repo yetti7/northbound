@@ -226,3 +226,73 @@ class TeamDetailReportingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse("challenge-participant-detail", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.alpha.pk}))
         self.assertContains(response, ">Remove</a>" if response.context["can_remove_roster"] else "Current Roster")
+
+    def test_scoped_staff_planning_and_discord_do_not_unlock_competition_or_registration(self):
+        from .models import ChallengeSignupAnswer, ChallengeSignupQuestion
+
+        floater_user = get_user_model().objects.create_user("report-floater")
+        floater = self.member(floater_user, "Floater")
+        ChallengeStaffAssignment.objects.create(
+            month=self.month, membership=floater, role=ChallengeStaffAssignment.Role.FLOATER,
+        )
+        other_team = self.month.teams.exclude(pk=self.team.pk).get()
+        profile = self.ordinary_user.northbound_profile
+        profile.discord_username = "OutsideTeamDiscord"
+        profile.save(update_fields=["discord_username"])
+        previous = ChallengeMonth.objects.create(
+            group=self.group, name="Past", starts_on=date(2026, 7, 1),
+            ends_on=date(2026, 7, 31), status=ChallengeMonth.Status.COMPLETED,
+        )
+        for member, pages in ((self.alpha, 731), (self.ordinary, 947)):
+            MonthEnrollment.objects.create(month=previous, participant=member)
+            BookSubmission.objects.create(
+                month=previous, participant=member, title="Past Reading", author="Writer",
+                book_format=BookSubmission.Format.PAPERBACK, completed_on=date(2026, 7, 10),
+                submitted_pages=pages, approved_pages=pages, status=BookSubmission.Status.APPROVED,
+            )
+        enrollment = self.month.enrollments.get(participant=self.alpha)
+        question = ChallengeSignupQuestion.objects.create(month=self.month, wording="Private registration question", question_type="short_text")
+        ChallengeSignupAnswer.objects.create(enrollment=enrollment, question=question, value="Private registration answer")
+        month_args = [self.group.slug, self.month.pk]
+        other_url = reverse("team-detail", args=[*month_args, other_team.pk])
+        list_url = reverse("month-participant-list", args=month_args)
+        detail_url = reverse("challenge-participant-detail", args=[*month_args, self.alpha.pk])
+        registration_url = reverse("challenge-registration-detail", args=[*month_args, enrollment.pk])
+        query = {"show_discord": "1", "show_average": "1", "from": "2026-08-05", "bonuses": "1"}
+
+        for user, whole_challenge in ((floater_user, True), (self.leader_user, False)):
+            with self.subTest(user=user.username):
+                response = self.get_as(user, query)
+                self.assertContains(response, "AlphaDiscord")
+                self.assertContains(response, "731")
+                self.assertNotContains(response, 'name="from"')
+                self.assertNotContains(response, 'name="bonuses"')
+                self.assertIsNone(response.context["team_total"])
+                self.assertFalse(hasattr(response.context["roster"][0], "base_pages"))
+                listing = self.client.get(list_url, {"sort": "average"})
+                self.assertContains(listing, "AlphaDiscord")
+                self.assertContains(listing, "731")
+                other = self.client.get(other_url, query)
+                if whole_challenge:
+                    self.assertContains(listing, "OutsideTeamDiscord")
+                    self.assertContains(other, "947")
+                else:
+                    self.assertNotContains(listing, "OutsideTeamDiscord")
+                    self.assertNotContains(listing, "947")
+                    self.assertNotContains(other, "Show Columns")
+                    self.assertNotContains(other, "OutsideTeamDiscord")
+                    self.assertEqual(self.client.get(reverse(
+                        "challenge-participant-detail", args=[*month_args, self.ordinary.pk],
+                    )).status_code, 403)
+                detail = self.client.get(detail_url)
+                self.assertContains(detail, "AlphaDiscord")
+                self.assertContains(detail, "731")
+                self.assertNotContains(detail, "Private registration answer")
+                self.assertNotContains(listing, reverse("challenge-registration-detail", args=[*month_args, enrollment.pk]))
+                self.assertEqual(self.client.get(registration_url).status_code, 403)
+                self.assertEqual(self.client.get(reverse("team-create", args=month_args)).status_code, 403)
+
+        response = self.get_as(self.ordinary_user, query)
+        self.assertNotContains(response, "Show Columns")
+        self.assertNotContains(response, "AlphaDiscord")
+        self.assertNotContains(response, "731")

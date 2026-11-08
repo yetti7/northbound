@@ -18,21 +18,21 @@
       {% endif %}
       <th><a class="table-sort" href="{{ sort_headers.team.url }}">Team{% if sort_headers.team.active %} {% if sort_headers.team.direction == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
       <th>Registration</th>
-      {% if can_view_planning_data or can_manage_teams or can_remove %}<th>Actions</th>{% endif %}
+      {% if can_view_registration_answers or can_manage_teams or can_remove %}<th>Actions</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for enrollment in enrollments %}
       <tr{% if not enrollment.is_active %} class="inactive-participation"{% endif %}>
         <td><div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span><strong><a href="{% url 'challenge-participant-detail' month.group.slug month.pk enrollment.participant.pk %}">{{ enrollment.participant.display_name }}</a></strong></span></div></td>
         {% if can_view_planning_data %}
-          <td>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</td>
+          {% if enrollment.can_view_roster_details %}<td>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</td>
           <td>{{ enrollment.planning.average_pages_display }}</td>
           <td>{{ enrollment.planning.last_challenge_pages_display }}</td>
-          <td>{{ enrollment.planning.completed_challenges }}</td>
+          <td>{{ enrollment.planning.completed_challenges }}</td>{% else %}<td>—</td><td>—</td><td>—</td><td>—</td>{% endif %}
         {% endif %}
         <td>{% if enrollment.current_team_name %}<span class="member-chip">{{ enrollment.current_team_name }}</span>{% else %}<span class="muted">Unassigned</span>{% endif %}</td>
         <td>{% if enrollment.is_active %}<span class="pill status-badge status-success">Active</span>{% else %}<span class="pill status-badge status-inactive">{{ enrollment.get_inactive_reason_display }}</span>{% endif %}{% for warning in enrollment.checkpoint_warnings %}<span class="checkpoint-warning"><span class="checkpoint-warning-dot" aria-hidden="true"></span>Below {{ warning.threshold_percentage }}% checkpoint · {{ warning.checkpoint.scheduled_at|date:"M j" }}</span>{% endfor %}</td>
-        {% if can_view_planning_data or can_manage_teams or can_remove %}<td><div class="planning-actions">
+        {% if can_view_registration_answers or can_manage_teams or can_remove %}<td><div class="planning-actions">
           {% if enrollment.can_manage_tbr %}<a class="button" href="{% url 'staff-challenge-tbr' month.group.slug month.pk enrollment.participant.pk %}">Manage TBR</a>{% endif %}{% if enrollment.is_active %}{% if can_manage_teams %}<a class="button subtle" href="{% url 'month-participant-edit' month.group.slug month.pk enrollment.pk %}">Edit Team</a>{% endif %}{% if can_remove %}<a class="button subtle operational-danger-link" href="{% url 'month-participant-remove' month.group.slug month.pk enrollment.pk %}">Remove</a>{% endif %}{% elif can_manage_participants %}<a class="button subtle" href="{% url 'month-participant-reactivate' month.group.slug month.pk enrollment.pk %}">Reactivate</a>{% endif %}
         </div></td>{% endif %}
       </tr>
@@ -46,9 +46,9 @@
     <article class="card participant-planning-card{% if not enrollment.is_active %} inactive-participation{% endif %}">
       <div class="participant-cell">{% if enrollment.participant.user.northbound_profile.avatar_url %}<img class="profile-picture" src="{{ enrollment.participant.user.northbound_profile.avatar_url }}" alt="">{% else %}<span class="profile-picture profile-picture-fallback">{{ enrollment.participant.display_name|first|upper }}</span>{% endif %}<span><strong><a href="{% url 'challenge-participant-detail' month.group.slug month.pk enrollment.participant.pk %}">{{ enrollment.participant.display_name }}</a></strong></span></div>
       <dl class="details planning-card-details">
-        {% if can_view_planning_data %}<dt>Discord Username</dt><dd>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</dd>{% endif %}
+        {% if enrollment.can_view_roster_details %}<dt>Discord Username</dt><dd>{{ enrollment.participant.user.northbound_profile.discord_username|default:"—" }}</dd>{% endif %}
         <dt>Team</dt><dd>{{ enrollment.current_team_name|default:"Unassigned" }}</dd>
-        {% if can_view_planning_data %}<dt>Avg Pages</dt><dd>{{ enrollment.planning.average_pages_display }}</dd><dt>Last Challenge</dt><dd>{{ enrollment.planning.last_challenge_pages_display }}</dd><dt>Completed</dt><dd>{{ enrollment.planning.completed_challenges }}</dd>{% endif %}
+        {% if enrollment.can_view_roster_details %}<dt>Avg Pages</dt><dd>{{ enrollment.planning.average_pages_display }}</dd><dt>Last Challenge</dt><dd>{{ enrollment.planning.last_challenge_pages_display }}</dd><dt>Completed</dt><dd>{{ enrollment.planning.completed_challenges }}</dd>{% endif %}
         <dt>Registration</dt><dd>{% if enrollment.is_active %}<span class="pill status-badge status-success">Active</span>{% else %}<span class="pill status-badge status-inactive">{{ enrollment.get_inactive_reason_display }}</span>{% endif %}{% for warning in enrollment.checkpoint_warnings %}<span class="checkpoint-warning"><span class="checkpoint-warning-dot" aria-hidden="true"></span>Below {{ warning.threshold_percentage }}% checkpoint · {{ warning.checkpoint.scheduled_at|date:"M j" }}</span>{% endfor %}</dd>
       </dl>
       <div class="planning-card-actions">
