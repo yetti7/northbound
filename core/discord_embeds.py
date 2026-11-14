@@ -21,6 +21,8 @@ SUCCESS_COLOR = 0x16A34A
 FOOTER = 'Northbound • Reading Challenges, Together'
 TEST_FOOTER = 'Northbound • Discord Integration Test'
 MENTIONS = {'parse': [], 'users': [], 'roles': [], 'replied_user': False}
+REVIEW_FIELDS = (('books','📖 Books'), ('themes','🎨 Themes'), ('immersive','📚 Immersive Reading'),
+    ('bingo','🎯 Bingo'), ('scavenger','🔎 Scavenger Hunt'), ('photos','📸 Photos'))
 
 
 def units(text):
@@ -192,24 +194,29 @@ def moderator_status_embeds(group, timestamp, *, summary=None, selected_only=Fal
     for row in summary['challenges']:
         fields = []
         for team in row['teams']:
-            lines = [f'{label}: {team[key]}' for key, label in discord.REVIEW_LABELS if team[key]]
+            lines = [f'{label} — {team[key]}' for key, label in REVIEW_FIELDS if team[key]]
             if not lines:
                 continue
             prefix = '📋 ' if team['team_name'] == 'Unassigned / Group Reviews' else '⚔️ '
             fields.extend(field_chunks(prefix + name(team['team_name'], markdown=True), lines))
         if not fields:
             continue
-        description = (f'**{clip(name(row["challenge_name"], markdown=True), 1000)}**\nItems awaiting moderator attention.\n'
-            f'**Pending Review Tasks (Group): {summary["total"]}**\n'
-            f'Pending Review Tasks (Challenge): {row["total"]}\n'
-            'A book may need multiple reviews; these totals count tasks, not unique submissions.'
-            + ('\nSelected report categories only.' if selected_only else ''))
-        value = embed(group=group, title='📚 Northbound — Pending Reviews', description=description,
+        challenge = f'**{clip(name(row["challenge_name"], markdown=True), 1000)}**'
+        count = row['total']
+        total = f"**{count} review {'task needs' if count == 1 else 'tasks need'} attention**"
+        scope = '\n_Selected categories only._' if selected_only else ''
+        description = challenge + '\n' + total + scope
+        # Keep Group identity in the title once, rather than repeating it in an
+        # author line and adding equivalent Group/Challenge totals.
+        title = '📚 ' + clip(name(group.name), 195) + ' — Pending Reviews'
+        value = embed(group=group, title=title, description=description,
             color=MODERATOR_COLOR, timestamp=timestamp)
+        value.pop('author')
         link = link_field('Open Review Queue', application_url('review-queue', [group.slug, row['challenge_id']]))
-        # Links are fields, not duplicate embed URLs: Discord otherwise hides all
-        # but the first embed with the same URL in a multi-page message.
-        result.extend(paginate(value, fields, link))
+        pages = paginate(value, fields, link)
+        for continuation in pages[1:]:
+            continuation['description'] = challenge + '\nReview tasks continued.' + scope
+        result.extend(pages)
     if not result:
         raise ValidationError('Pending review details are unavailable.')
     if len(result) > 1:

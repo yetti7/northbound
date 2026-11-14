@@ -116,9 +116,9 @@ class DiscordSchedulingTests(TestCase):
         before=json.dumps(summary,sort_keys=True)
         with patch('core.discord_notifications.group_pending_review_counts',return_value=summary):payloads=scheduling.scheduled_payloads(schedule)
         text=json.dumps(payloads,ensure_ascii=False)
-        self.assertIn('Actual Team',text);self.assertIn('Theme reviews: 2',text);self.assertIn('photos: 1',text)
-        self.assertIn('Pending Review Tasks (Group): 3',text)
-        self.assertNotIn('Book submissions: 9',text);self.assertNotIn('Bingo prompts:',text)
+        self.assertIn('Actual Team',text);self.assertIn('Themes — 2',text);self.assertIn('Photos — 1',text)
+        self.assertIn('3 review tasks need attention',text)
+        self.assertNotIn('Books — 9',text);self.assertNotIn('Bingo prompts:',text)
         self.assertEqual(json.dumps(summary,sort_keys=True),before)
 
     def test_empty_suppression_and_branded_empty_reports(self):
@@ -238,7 +238,7 @@ class DiscordSchedulingTests(TestCase):
         self.client.force_login(self.owner)
         response=self.client.post(self.url,{'destination':'moderator','action':'preferences',**self.data('custom',times='17:00,08:00',weekdays=['0','4'])})
         self.assertEqual(response.status_code,302)
-        page=self.client.get(self.url);self.assertContains(page,'Coming in Stage C');self.assertContains(page,'Custom Times')
+        page=self.client.get(self.url);self.assertContains(page,'Immediate Notifications — Coming Soon');self.assertContains(page,'Custom Times')
         url=reverse('challenge-general-settings',args=[self.group.slug,self.month.pk])
         response=self.client.post(url,{'name':self.month.name,'description':'','discord_community_opt_in':'on'})
         self.assertEqual(response.status_code,302);self.month.refresh_from_db();self.assertTrue(self.month.discord_community_opt_in)

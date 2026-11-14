@@ -1,28 +1,37 @@
-{% extends "base.html" %}{% load static %}
+{% extends "base.html" %}{% load static tz %}
 {% block extra_head %}<link rel="stylesheet" href="{% static 'css/discord_settings.css' %}">{% endblock %}
 {% block title %}Discord Notifications · {{ group.name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">Configure separate public and private destinations. Use the message buttons to send manual messages. Webhook settings and manual actions are separate from scheduled reports. Scheduled delivery requires an activated Discord scheduling service.</p></div></div>
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">Manage your community and moderator channels independently.</p></div></div>
 {% if not editable %}<p class="notice neutral">Moderators have read-only access. A Group Owner or Platform Administrator can configure destinations and send messages.</p>{% endif %}
+<div class="discord-settings" data-discord-tabs>
+<div class="discord-tabs" role="tablist" aria-label="Discord destinations">{% for destination in destinations %}<button type="button" role="tab" id="discord-tab-{{ destination.key }}" aria-controls="discord-panel-{{ destination.key }}" aria-selected="{{ destination.active|yesno:'true,false' }}" tabindex="{{ destination.active|yesno:'0,-1' }}" data-discord-tab="{{ destination.key }}">{{ destination.label }}</button>{% endfor %}</div>
+<p class="muted discord-tab-hint">Switch tabs without losing edits. Save each section to apply its changes.</p>
+<noscript><p>Save edits before following these links: <a href="?destination=community">Community Announcements</a> · <a href="?destination=moderator">Moderator Notifications</a>. Enable JavaScript to switch tabs without reloading.</p></noscript>
 {% for destination in destinations %}
-<section class="card page-section" aria-labelledby="{{ destination.key }}-heading">
-<h2 id="{{ destination.key }}-heading">{{ destination.label }}</h2><h3>Webhook Configuration</h3>
-<p>{% if destination.key == 'community' %}For a public community channel. Test messages identify this Group. Current Status is a branded community card; Challenge details, participation, results and moderation data are excluded.{% else %}For a private moderator channel. Current Status groups book, Theme, Immersive, Bingo, Scavenger Hunt and Photo review tasks by Challenge and Team, without personal or book details.{% endif %}</p>
-<dl class="details"><dt>Destination</dt><dd>{{ destination.status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Webhook</dt><dd>{{ destination.status.configured|yesno:"Saved securely,Not configured" }}</dd><dt>Latest manual result</dt><dd>{{ destination.status.last_result }}</dd>{% if destination.status.last_action %}<dt>Last action</dt><dd>{{ destination.status.last_action }}</dd>{% endif %}<dt>Last manual attempt</dt><dd>{{ destination.status.last_attempt|default:"None" }}</dd></dl><p class="muted">Delivery results describe past attempts and may refer to an earlier webhook configuration.</p>
-<ul>{% for notice in destination.status.notices %}<li>{{ notice }}</li>{% endfor %}</ul>
-<details><summary>Legacy hourly digest status</summary><p>{{ destination.status.scheduler }}</p>{% if destination.key == 'moderator' %}<p>Existing hourly review digest: {{ destination.status.legacy_digest_enabled|yesno:"enabled,disabled" }}. Manual actions do not change its schedule or delivery history.</p>{% else %}<p>Automatic community announcements are not enabled.</p>{% endif %}</details>
-{% if editable %}
-<form method="post" class="stacked-form">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="save">
-{{ destination.form.as_p }}
-<p class="muted">Saved URLs are encrypted and never displayed. Leave the URL blank to keep it, enter a replacement, or select removal to clear and disable this destination. No users or roles are mentioned.</p>
-<div class="action-row"><button class="button primary">Save {{ destination.label }}</button></div>
-</form>
-<div class="action-row">{% for action in destination.actions %}<form method="post">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="{{ action.key }}"><input type="hidden" name="request_token" value="{{ action.token }}"><button class="button secondary" aria-label="Send {{ action.label }} to {{ destination.label }}">Send {{ action.label }}</button></form>{% endfor %}</div>
-{% endif %}
+<section class="card discord-destination" role="tabpanel" id="discord-panel-{{ destination.key }}" aria-labelledby="discord-tab-{{ destination.key }}" tabindex="0"{% if not destination.active %} hidden{% endif %} data-discord-panel="{{ destination.key }}">
+<h2 class="sr-only">{{ destination.label }}</h2>
+<section class="discord-connection" aria-labelledby="{{ destination.key }}-connection"><h3 id="{{ destination.key }}-connection">Connection</h3>
+<div class="discord-connection-state"><span class="pill">{{ destination.status.enabled|yesno:"Enabled,Disabled" }}</span><span class="muted">Webhook {{ destination.status.configured|yesno:"configured,not configured" }}</span></div>
+<p class="discord-manual-result">{{ destination.status.last_result }}</p>
+{% if editable %}<div class="action-row">{% for action in destination.actions %}<form method="post">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="{{ action.key }}"><input type="hidden" name="request_token" value="{{ action.token }}"><button class="button secondary" aria-label="Send {{ action.label }} to {{ destination.label }}">Send {{ action.label }}</button></form>{% endfor %}</div>{% endif %}
+</section>
 {% include 'core/includes/discord_report_settings.html' %}
+<section class="discord-delivery-summary" aria-labelledby="{{ destination.key }}-delivery"><h3 id="{{ destination.key }}-delivery">Delivery Status</h3>
+{% if destination.schedule_status.error %}<p class="notice">{{ destination.schedule_status.error }}</p>{% endif %}
+<dl class="details"><dt>Scheduler</dt><dd>{{ destination.schedule_status.operational }}</dd>{% timezone destination.schedule_status.display_timezone %}<dt>Last successful report</dt><dd>{{ destination.schedule_status.last_sent|date:"M j, Y H:i T"|default:"None" }}</dd><dt>Next scheduled slot</dt><dd>{{ destination.schedule_status.next_run|date:"M j, Y H:i T"|default:"Not scheduled" }}</dd>{% if destination.schedule_status.last_failure %}<dt>Last failure</dt><dd>{{ destination.schedule_status.last_failure|date:"M j, Y H:i T" }} · {{ destination.schedule_status.failure_label }}</dd>{% endif %}{% endtimezone %}</dl>
+</section>
+<details class="discord-advanced"{% if destination.form.errors %} open{% endif %}><summary>Advanced Settings</summary>
+<details{% if destination.form.errors %} open{% endif %}><summary>Manage webhook and destination</summary>
+{% if editable %}<form method="post" class="stacked-form" data-form-errors="{{ destination.form.errors|yesno:'true,false' }}">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="save">{{ destination.form.as_p }}<p class="muted">Leave the URL blank to keep it. Saved URLs are encrypted and never displayed. Saving does not send a message.</p><button class="button primary">Save {{ destination.label }}</button></form>{% else %}<p>Only a Group Owner or Platform Administrator can change the webhook.</p>{% endif %}
+</details>
+<details><summary>Technical diagnostics</summary><ul>{% for notice in destination.status.notices %}<li>{{ notice }}</li>{% endfor %}</ul><p>{{ destination.schedule_status.readiness }}</p><dl class="details"><dt>Scheduled reporting</dt><dd>{{ destination.schedule_status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Frequency</dt><dd>{{ destination.schedule_status.frequency }}</dd><dt>Group timezone</dt><dd>{{ destination.schedule_status.timezone }}</dd><dt>Latest scheduled result</dt><dd>{{ destination.schedule_status.outcome_label }}</dd>{% timezone destination.schedule_status.display_timezone %}<dt>Last scheduled attempt</dt><dd>{{ destination.schedule_status.last_attempt|date:"M j, Y H:i T"|default:"None" }}</dd><dt>Last manual attempt</dt><dd>{{ destination.status.last_attempt|date:"M j, Y H:i T"|default:"None" }}</dd>{% endtimezone %}{% if destination.status.last_action %}<dt>Last manual action</dt><dd>{{ destination.status.last_action }}</dd>{% endif %}</dl><p class="muted">Past results may refer to an earlier webhook. A configured schedule is not proof of an active worker or accepted delivery.</p></details>
+<details><summary>Legacy hourly digest information</summary><p>{{ destination.status.scheduler }}</p>{% if destination.key == 'moderator' %}<p>Existing hourly review digest: {{ destination.status.legacy_digest_enabled|yesno:"enabled,disabled" }}. Its history is preserved separately.</p>{% else %}<p>No automatic community event notifications are active.</p>{% endif %}</details>
+<details><summary>Detailed delivery history</summary>{% timezone destination.schedule_status.display_timezone %}<p class="muted">Most recent ten attempts of each type. Manual actions never advance scheduled reports.</p><h4>Manual messages</h4><ul class="discord-history">{% for row in destination.history.manual %}<li>{{ row.at|date:"M j, Y H:i T" }} · {{ row.action }} · {{ row.result }}{% if row.failure %} — {{ row.failure }}{% endif %}</li>{% empty %}<li>No manual attempts.</li>{% endfor %}</ul><h4>Scheduled reports</h4><ul class="discord-history">{% for row in destination.history.scheduled %}<li>{{ row.at|date:"M j, Y H:i T" }} · {{ row.result }}{% if row.failure %} — {{ row.failure }}{% endif %}</li>{% empty %}<li>No scheduled attempts.</li>{% endfor %}</ul>{% if destination.key == 'moderator' %}<h4>Legacy hourly digest</h4><ul class="discord-history">{% for row in destination.history.legacy %}<li>{{ row.at|date:"M j, Y H:i T" }} · {{ row.result }}</li>{% empty %}<li>No legacy attempts.</li>{% endfor %}</ul>{% endif %}{% endtimezone %}</details>
+</details>
 </section>
 {% endfor %}
+</div>
 <a class="button secondary" href="{{ logical_parent_url }}">Back to Group Settings</a>
 {% endblock %}
-
-{% block extra_scripts %}<script src="{% static 'js/discord_scheduling.js' %}" defer></script>{% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/discord_scheduling.js' %}" defer></script><script src="{% static 'js/discord_tabs.js' %}" defer></script>{% endblock %}

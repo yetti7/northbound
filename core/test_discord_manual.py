@@ -108,9 +108,9 @@ class DiscordManualTests(TestCase):
         for forbidden in ('November','Private book','Pending','Book submissions','Reader','verified pages'):
             self.assertNotIn(forbidden,public)
         self.assertNotIn('Automatic community announcements',public)
-        self.assertIn('Pending Review Tasks (Group): 1',private)
-        self.assertIn('Book submissions: 1',private)
-        self.assertIn('not unique submissions',private)
+        self.assertIn('1 review task needs attention',private)
+        self.assertIn('Books — 1',private)
+        self.assertIn('review task',private)
         for label in ('Theme reviews','Immersive Reading requests','Bingo prompts','Scavenger Hunt Book prompts','Scavenger Hunt photos'):
             self.assertNotIn(label,private)  # Empty categories are omitted.
 

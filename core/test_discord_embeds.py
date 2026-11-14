@@ -31,7 +31,7 @@ class DiscordEmbedTests(TestCase):
             self.assertLessEqual(sum(embed_units(e) for e in payload['embeds']),6000)
             for e in payload['embeds']:
                 self.assertTrue(0<units(e['title'])<=256);self.assertLessEqual(units(e['description']),4096)
-                self.assertLessEqual(units(e['author']['name']),256);self.assertLessEqual(units(e['footer']['text']),2048)
+                self.assertLessEqual(units(e.get('author',{}).get('name','')),256);self.assertLessEqual(units(e['footer']['text']),2048)
                 self.assertIsNotNone(parse_datetime(e['timestamp']));self.assertLessEqual(len(e.get('fields',[])),25)
                 self.assertTrue(0<=e['color']<=0xffffff)
                 for field in e.get('fields',[]):
@@ -90,10 +90,10 @@ class DiscordEmbedTests(TestCase):
         # Reader starts unassigned; the Leader has a separate current Team.
         payloads=manual_payloads(self.group,'moderator','status');self.assert_valid(payloads)
         text=json.dumps(payloads,ensure_ascii=False)
-        self.assertIn('Unassigned / Group Reviews',text);self.assertIn('Book submissions: 1',text)
-        self.assertIn('Pending Review Tasks (Group): 1',text);self.assertNotIn('Bingo prompts:',text)
+        self.assertIn('Unassigned / Group Reviews',text);self.assertIn('Books — 1',text)
+        self.assertIn('1 review task needs attention',text);self.assertNotIn('Bingo prompts:',text)
         self.assertNotIn('Leader team',text);self.assertNotIn('Private book title',text)
-        self.assertIn('not unique submissions',text)
+        self.assertIn('review task',text)
         self.assertIn(reverse('review-queue',args=[self.group.slug,self.month.pk]),text)
 
     def test_many_teams_unicode_and_large_counts_are_not_dropped(self):
@@ -107,7 +107,7 @@ class DiscordEmbedTests(TestCase):
         fields=[f for p in payloads for e in p['embeds'] for f in e['fields'] if f['name']!='🔗 Northbound']
         self.assertEqual(len(fields),180)
         for index,field in enumerate(fields):
-            self.assertIn(f'{index:04}',field['name']);self.assertIn('Book submissions: 1',field['value']);self.assertIn('photos: 2',field['value'])
+            self.assertIn(f'{index:04}',field['name']);self.assertIn('Books — 1',field['value']);self.assertIn('Photos — 2',field['value'])
         self.assertTrue(all(' · ' in e['title'] for p in payloads for e in p['embeds']))
         summary=self.summary();summary['total']=10**30;summary['challenges'][0]['total']=10**30
         summary['challenges'][0]['teams'][0]['books']=10**30
@@ -123,7 +123,8 @@ class DiscordEmbedTests(TestCase):
             payloads=manual_payloads(self.group,'moderator','status')
         self.assert_valid(payloads)
         text='\n'.join(f['value'] for p in payloads for e in p['embeds'] for f in e['fields'])
-        for _,label in discord.REVIEW_LABELS:self.assertIn(f'{label}: {huge}',text)
+        from .discord_embeds import REVIEW_FIELDS
+        for _,label in REVIEW_FIELDS:self.assertIn(f'{label} — {huge}',text)
         self.assertTrue(any('(continued)' in f['name'] or '…' in f['name'] for p in payloads for e in p['embeds'] for f in e['fields']))
 
     @patch('core.discord_notifications.send_webhook',return_value=('sent',0))
@@ -175,9 +176,9 @@ class RichReviewCountIntegrationTests(TestCase):
             author='Private author',book_format='ebook',completed_on=self.month.starts_on,submitted_pages=10,approved_pages=10,status='approved')
         ImmersiveRequest.objects.create(submission=approved,requester=self.reader.user,captured_percent=100)
         payloads=manual_payloads(self.group,'moderator','status');text=json.dumps(payloads,ensure_ascii=False)
-        for phrase in ['Book submissions: 1','Bingo prompts: 1','Scavenger Hunt Book prompts: 1','Scavenger Hunt photos: 1','Theme reviews: 1','Immersive Reading requests: 1']:
+        for phrase in ['Books — 1','Bingo — 1','Scavenger Hunt — 1','Photos — 1','Themes — 1','Immersive Reading — 1']:
             self.assertIn(phrase,text)
-        self.assertIn('Pending Review Tasks (Group): 6',text)
+        self.assertIn('6 review tasks need attention',text)
         self.assertIn(self.team.name,text);self.assertNotIn(self.other_team.name,text)
         for private in [self.book.title,approved.title,self.reader.user.username]:self.assertNotIn(private,text)
         TeamAssignment.objects.filter(month=self.month,participant=self.reader,ended_at__isnull=True).update(ended_at=timezone.now())

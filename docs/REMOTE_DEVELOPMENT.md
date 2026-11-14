@@ -586,3 +586,59 @@ receipts and heartbeat remain empty, every
 Challenge opt-in remains false, both recurring scheduler gates are off, and health
 is HTTP 200. Moderator empty-state wording explicitly scopes itself to selected
 report categories; manual dashboards continue to describe the full queue.
+
+## Discord Stage B.1: compact settings and review embeds
+
+The same Group settings route now provides Community and Moderator tabs with one
+visible panel. Server selection and save/error redirects use a validated destination
+query parameter. Native button tabs use tablist/tab/tabpanel semantics, roving focus,
+Left/Right and Home/End navigation. Switching only hides the other panel; its forms
+and unsaved values remain in memory. Changes are never stored in browser storage
+or URLs. Leaving/reloading with unsaved edits uses the browser's standard warning;
+saving one form still warns if another has unsaved edits. Without JavaScript, links
+switch the same endpoint and explicitly advise saving first.
+
+Connection summaries and manual buttons remain visible. Webhook management,
+technical diagnostics, legacy digest information and recent sanitized histories are
+collapsed under Advanced Settings. Invalid webhook forms open that section and
+retain the correct tab. Scheduling still reveals only applicable time/day fields.
+The six Moderator categories remain selectable; unavailable Community categories
+are summarized in text rather than six disabled controls. Stage C is one Coming
+Soon notice. Its existing saved preferences remain persisted: omission from this
+compact form preserves them, while explicit values still receive choice validation.
+No scheduling calculation, claim, gate, permission, encryption or model is changed.
+
+Moderator review embeds put Group identity in the title, Challenge identity and
+one prominent review-task count in the description, and compact nonzero category
+lines in Team fields. All six categories and unassigned handling use the unchanged
+count service. Each Challenge total appears on its first page only; later pages
+say continued. Selected scheduled categories remain explicitly scoped. Existing
+Unicode-safe budgets, safe links, timestamps, footers and pagination are retained.
+
+Routing inspection found the two user-configured Dev destinations use the same
+webhook endpoint. This can put Community and Moderator messages in the same Discord
+channel without mixing their builders. Shared-endpoint regression tests verify
+Community Test/Status and scheduled Community payloads never contain review data,
+while Moderator actions retain private Team-grouped summaries. No webhook is copied
+or modified to separate them; channel selection remains the owner's configuration.
+
+The pre-deployment private backup is
+`/srv/docker/northbound-dev/rollback-discord-b1-5615238`. This is a source-only change;
+no migration or image rebuild is required. Recurring Discord and Challenge scheduler
+gates remain off. Only the two explicitly authorized Current Status actions may be
+sent during live validation; Stage C and recurring activation remain deferred.
+
+Stage B.1 validation: 87 focused Django tests and both JavaScript checks passed;
+Django checks and migration detection reported no changes. Read-only live-source
+renders covered Owner/Moderator access, all frequencies and validation feedback.
+Desktop browser checks confirmed tab isolation, keyboard switching, retained edits,
+progressive Custom Times controls and disabled Moderator fields. The browser ignored
+requested 375/440px viewport overrides (DOM viewport stayed 1280px), so mobile visual
+verification remains outstanding; requested resize calls are not counted as passes.
+Exactly one real Community Current Status and one Moderator Current Status were
+accepted by Discord with HTTP 204, one embed each. Community payload validation
+forbade private queries and matched the public-safe builder. All pre-existing table,
+media and migration fingerprints matched after these two new manual history rows;
+webhook ciphertext/settings and scheduled history were unchanged. Development health
+returned HTTP 200. Manual testing remains enabled; both recurring scheduler gates
+remain disabled. No production, image, workflow or Stage C change was made.

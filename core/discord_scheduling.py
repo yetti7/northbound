@@ -69,6 +69,15 @@ class ReportScheduleForm(forms.Form):
         kwargs['initial'] = initial
         kwargs.setdefault('auto_id', destination+'_report_%s')
         super().__init__(*args, **kwargs)
+        # The compact UI no longer edits Stage C preferences. Omission must not
+        # erase values saved through the earlier editor; explicit values still
+        # undergo the existing choice validation.
+        if self.is_bound and schedule and 'immediate_categories' not in self.data:
+            self.data = self.data.copy()
+            if hasattr(self.data, 'setlist'):
+                self.data.setlist('immediate_categories', schedule.immediate_categories)
+            else:
+                self.data['immediate_categories'] = list(schedule.immediate_categories)
         self.group = group
         self.destination = destination
         self.legacy_enabled = legacy_enabled and destination=='moderator'
