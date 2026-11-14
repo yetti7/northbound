@@ -106,6 +106,20 @@ TEMPLATES = [{
         "core.context_processors.logical_navigation",
     ]},
 }]
+# Explicit development opt-in; production defaults remain unchanged.
+NORTHBOUND_LIVE_SOURCE = env_bool("NORTHBOUND_LIVE_SOURCE", False)
+if NORTHBOUND_LIVE_SOURCE:
+    if not NORTHBOUND_DEVELOPMENT_BANNER or DEBUG or NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        raise ImproperlyConfigured("Live source requires the development banner, DEBUG=False and Hardcover write-back disabled.")
+    TEMPLATES[0]["APP_DIRS"] = False
+    TEMPLATES[0]["OPTIONS"]["loaders"] = [
+        "django.template.loaders.filesystem.Loader",
+        "django.template.loaders.app_directories.Loader",
+    ]
+    WHITENOISE_USE_FINDERS = True
+    WHITENOISE_AUTOREFRESH = True
+    WHITENOISE_MAX_AGE = 0
+
 WSGI_APPLICATION = "reading_challenge.wsgi.application"
 
 database_url = os.getenv("DATABASE_URL", "").strip()

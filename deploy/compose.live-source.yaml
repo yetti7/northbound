@@ -1,0 +1,28 @@
+# Append to the existing northbound-dev Compose file list; never use in production.
+services:
+  web:
+    environment:
+      NORTHBOUND_LIVE_SOURCE: "1"
+      DJANGO_DEBUG: "0"
+      NORTHBOUND_DEVELOPMENT_BANNER: "1"
+      NORTHBOUND_BACKUP_SCHEDULER_ENABLED: "0"
+      NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED: "0"
+      NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED: "0"
+      NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED: "0"
+      NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT: "0"
+    # Bypass the image startup script: live-source updates must not run migrations.
+    command:
+      - gunicorn
+      - reading_challenge.wsgi:application
+      - --pid=/tmp/northbound-gunicorn.pid
+      - --bind=0.0.0.0:8000
+      - --workers=2
+      - --reload
+      - --reload-engine=poll
+      - --access-logfile=-
+      - --error-logfile=-
+    volumes:
+      - /srv/docker/northbound-dev/source/core:/app/core:ro
+      - /srv/docker/northbound-dev/source/reading_challenge:/app/reading_challenge:ro
+      - /srv/docker/northbound-dev/source/templates:/app/templates:ro
+      - /srv/docker/northbound-dev/source/static:/app/static:ro
