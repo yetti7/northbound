@@ -1,6 +1,5 @@
 """Explicit manual Discord delivery; never claims or updates scheduled digests."""
 import os
-import re
 import uuid
 from datetime import timedelta
 
@@ -110,23 +109,17 @@ def destination_diagnostics(config, destination, *, group):
         'legacy_digest_enabled': bool(config and config.enabled) if destination == 'moderator' else False}
 
 
+def _payloads(group, destination, action):
+    from .discord_embeds import manual_payloads
+    return manual_payloads(group, destination, action)
+
+
 def _payload(group, destination, action):
-    # Neutralize formatting and mentions without exposing names or details of Readers.
-    name = re.sub(r'([\\`*_~|<>\[\]()])', r'\\\1', ' '.join(group.name.split()))
-    if action == 'test':
-        content = f'Northbound test message for {name} — {DESTINATIONS[destination]}. This is a manual webhook test.'
-    elif destination == 'community':
-        # No public audience policy exists for Group/Challenge data. Do not treat
-        # an Owner's private visibility as permission to publish it to a channel.
-        content = (f'Northbound — Community Status for {name}\nCommunity messaging: enabled for manual requests.\n'
-            'Automatic community announcements: off.\nChallenge details, participation and results are not included in this snapshot.')
-    else:
-        summary = discord.group_pending_review_counts(group)
-        counts = {key: sum(row[key] for row in summary['challenges']) for key, _ in discord.REVIEW_LABELS}
-        content = (f'Northbound — Moderator Status for {name}\nOutstanding review tasks: {summary["total"]}\n'
-            + '\n'.join(f'{label}: {counts[key]}' for key, label in discord.REVIEW_LABELS)
-            + '\nThese are review tasks, not unique book submissions; a book can need more than one review.')
-    return {'content': content, 'allowed_mentions': {'parse': [], 'users': [], 'roles': [], 'replied_user': False}}
+    """Single-message compatibility helper; never silently drop extra pages."""
+    payloads = _payloads(group, destination, action)
+    if len(payloads) != 1:
+        raise ValidationError('This status requires multiple messages.')
+    return payloads[0]
 
 
 @sensitive_variables()
@@ -161,16 +154,18 @@ def deliver_manual(*, group, actor, destination, action, request_id):
         if not failure: url, failure = _webhook(config, destination)
     if not failure:
         try:
-            payload = _payload(group, destination, action)
+            payloads = _payloads(group, destination, action)
         except Exception:
             failure = 'snapshot_unavailable'
         else:
             try:
-                status, cooldown = discord.send_webhook(url, payload, detailed=True)
-                if status != 'sent':
-                    failure = status if status in FAILURES else 'delivery_failed'
-                if status == 'rate_limited' and cooldown:
-                    attempt.retry_at = timezone.now() + timedelta(seconds=min(86400, max(1, float(cooldown))))
+                for payload in payloads:
+                    status, cooldown = discord.send_webhook(url, payload, detailed=True)
+                    if status != 'sent':
+                        failure = status if status in FAILURES else 'delivery_failed'
+                        if status == 'rate_limited' and cooldown:
+                            attempt.retry_at = timezone.now() + timedelta(seconds=min(86400, max(1, float(cooldown))))
+                        break
             except Exception:
                 failure = 'delivery_failed'
     attempt.outcome = 'failed' if failure else 'sent'

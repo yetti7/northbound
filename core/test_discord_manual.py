@@ -94,7 +94,7 @@ class DiscordManualTests(TestCase):
                     url,payload=send.call_args.args
                     self.assertEqual(url,fixture.WEBHOOK if destination=='moderator' else fixture.REPLACEMENT)
                     self.assertEqual(payload['allowed_mentions']['parse'],[])
-                    self.assertNotIn('Private book',payload['content']);self.assertNotIn('Private author',payload['content'])
+                    self.assertNotIn('Private book',json.dumps(payload, ensure_ascii=False));self.assertNotIn('Private author',json.dumps(payload, ensure_ascii=False))
             config=GroupDiscordNotification.objects.get(group=self.group)
             self.assertIn('Scheduler disabled',destination_diagnostics(config,'moderator',group=self.group)['scheduler'])
         self.assertEqual(send.call_count,4)
@@ -103,16 +103,16 @@ class DiscordManualTests(TestCase):
 
     def test_public_private_separation_and_task_count_semantics(self):
         self.configure();self.book()
-        public=_payload(self.group,'community','status')['content']
-        private=_payload(self.group,'moderator','status')['content']
+        public=json.dumps(_payload(self.group,'community','status'), ensure_ascii=False)
+        private=json.dumps(_payload(self.group,'moderator','status'), ensure_ascii=False)
         for forbidden in ('November','Private book','Pending','Book submissions','Reader','verified pages'):
             self.assertNotIn(forbidden,public)
-        self.assertIn('Automatic community announcements: off',public)
-        self.assertIn('Outstanding review tasks: 1',private)
+        self.assertNotIn('Automatic community announcements',public)
+        self.assertIn('Pending Review Tasks (Group): 1',private)
         self.assertIn('Book submissions: 1',private)
-        self.assertIn('not unique book submissions',private)
+        self.assertIn('not unique submissions',private)
         for label in ('Theme reviews','Immersive Reading requests','Bingo prompts','Scavenger Hunt Book prompts','Scavenger Hunt photos'):
-            self.assertIn(label,private)
+            self.assertNotIn(label,private)  # Empty categories are omitted.
 
     @patch('core.discord_notifications.send_webhook',return_value=('sent',0))
     def test_no_scheduled_state_mutation(self,send):

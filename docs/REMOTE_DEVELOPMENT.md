@@ -401,20 +401,22 @@ earlier saved URL. Scheduler readiness is separate: a disabled scheduler is show
 as such; when enabled by configuration, process availability remains unverified.
 Manual sends do not require the scheduler or a public application URL.
 
-Moderator Current Status uses existing Group-wide review-count services and only
-aggregate Book, Theme, Immersive, Bingo, Scavenger Hunt Book and Photo task counts.
-It explicitly distinguishes review tasks from unique submissions. Community Current
-Status includes Group identity, manual messaging availability and automatic
-community-announcement status only. Challenge names/lifecycle, participation,
-results, scores and moderation data are excluded pending a public-sharing policy.
-Neither snapshot changes lifecycle, scoring or review state.
+Moderator Current Status uses existing Group-wide review-count services, preserving
+Team transfer, retained-credit, eligibility and unassigned-review rules. Rich embeds
+group Book, Theme, Immersive, Bingo, Scavenger Hunt Book and Photo tasks by Challenge
+and Team, showing only nonzero categories. Totals explicitly count review tasks,
+not unique submissions. An empty queue produces one green All Caught Up card.
+Community Current Status is a neutral branded reading-community card with Group
+identity only; it does not query or disclose Challenge, participation, result,
+score or moderation data. Neither snapshot changes lifecycle or review state.
 
-Development delivery stays globally disabled, development delivery stays disallowed,
-and the Challenge scheduler stays disabled. All automated delivery tests use mocked
-transport. **Real delivery has not been verified.** Before any live test, obtain
-separate authorization naming a development-only test webhook/destination and the
-development-only delivery gates to enable. Never use a production webhook or enable
-the scheduler for a manual test.
+Development's two Discord delivery gates were explicitly enabled for authorized
+real manual testing. The Challenge scheduler and all legacy hourly digests remain
+disabled. The repository's Compose template still defaults both delivery gates off;
+do not overwrite the live host's approved gate values during source synchronization.
+Use only the user's existing development destinations for explicitly authorized real
+tests. Never copy production webhooks or enable the scheduler for manual testing.
+All automated delivery tests use mocked transport.
 
 The consistent pre-Stage-A Dev database, source and private configuration backup is
 `/srv/docker/northbound-dev/rollback-discord4a-f66ba27`. Migration rehearsal on a
@@ -429,3 +431,46 @@ restore the database over subsequent Dev changes or reverse migrations casually.
 Deferred work: Stage B reporting schedules and category controls; Stage C automatic
 lifecycle/moderation event delivery, including privacy and duplicate-prevention
 policy. No new automatic reporting or event subscriptions are implemented here.
+
+## Discord Stage A.1: rich embeds
+
+Manual tests use green connection cards; Community Status uses teal; Moderator
+pending reviews use amber. Every embed has Group identity, an ISO timestamp and a
+Northbound footer. No uploaded assets, external images, new dependencies, model
+changes or migrations are needed. The legacy hourly digest formatter is unchanged.
+
+Link fields use `NORTHBOUND_URL` and Django routes. Missing/invalid origins produce
+no link. Community cards additionally omit literal private/reserved IP addresses,
+local/internal hostnames and malformed origins; the code does not infer a public
+URL from the request host. Private Moderator links may use the configured private
+origin. Public Challenge/participation/results sharing remains a Stage B policy
+decision, and is not inferred from an Owner's private access.
+
+Text budgets conservatively count UTF-16 units, preserving emoji boundaries. Embed
+titles/field names/author names are limited to 256, descriptions to 4096, field
+values to 1024, fields to 25, and all embed text in a message to 6000; up to ten
+embeds share a message. Long display names use a visible ellipsis; review categories
+and counts are split, never silently omitted. Pages keep deterministic service
+ordering and are numbered. Queue links are fields rather than duplicate embed URLs,
+since Discord deduplicates embeds with identical URLs in one message.
+
+One manual action can produce multiple messages for a large queue. It retains one
+existing request claim and one outcome record; only completion of every part is a
+success. Sending stops on any failure with existing rate-limit/cooldown behavior,
+without automatic retries. Earlier parts may have arrived if a later part fails;
+check the channel before a new explicit request. Reusing the original request
+never resends parts. No scheduled claims or timestamps are changed.
+
+Pre-deployment source/configuration/database backup:
+`/srv/docker/northbound-dev/rollback-discord-a1-7c45e48`. Source-only rollback can
+restore its four source directories and restart only Dev; there is no schema change.
+Do not restore a database over later user changes merely to roll back formatting.
+
+Stage A.1 validation: 65 focused Django tests passed, covering rich payload budgets,
+Unicode/long names, many Teams, mixed review categories, task totals, public privacy,
+private/public URL handling, one-claim multipart delivery, cooldown and refresh
+protection. No model changes or migration were needed. The four authorized real
+Dev actions (Community Test/Status, Moderator Test/Status) each sent one embed in
+one message and received HTTP 204. Existing records across 63 tables and all 40
+media files were preserved; four manual outcome rows were added intentionally.
+Health remained HTTP 200 and the scheduler/legacy digests remained disabled.
