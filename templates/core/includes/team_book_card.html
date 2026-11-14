@@ -1,0 +1,12 @@
+{% load navigation %}{% load tz %}
+{% timezone month.group.timezone %}
+<article class="card team-book-card">
+  {% include "core/includes/book_cover.html" with image_url=book.catalog_book__cover_url title=book.title %}
+  <div>
+    <h3>{% if linked %}<a {% url 'team-book-detail' month.group.slug month.pk team.pk book.pk as contextual_link %}href="{% navigation_url contextual_link %}">{{ book.title }}</a>{% else %}{{ book.title }}{% endif %}</h3>
+    <p>{{ book.author }}</p>
+    <p>{{ book.participant__user__username }} · <time datetime="{{ book.submitted_at|date:'c' }}">{{ book.submitted_at|date:"M j, Y · g:i A" }}</time></p>
+    <span class="pill">{% if book.status == "approved" %}Approved{% else %}Pending{% endif %}</span>
+  </div>
+</article>
+{% endtimezone %}

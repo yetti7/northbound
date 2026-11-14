@@ -8,13 +8,17 @@ def personal_tbr_book_reward_source_reference(match):
     return f"personal_tbr_match:{match.pk}"
 
 
+def _reward_amount(match):
+    return match.decision_evidence.get("late_approval_bonus_pages", match.month.tbr_book_bonus_pages)
+
+
 def _reward_is_eligible(match):
     tbr = match.personal_tbr_book.personal_tbr
     return (
         match.status == PersonalTBRMatch.Status.CONFIRMED
         and match.is_qualifying
         and match.month.tbr_enabled
-        and match.month.tbr_book_bonus_pages > 0
+        and (_reward_amount(match) or 0) > 0
         and tbr.confirmed_at is not None
         and tbr.enrollment.month_id == match.month_id
         and tbr.enrollment.participant_id == match.participant_id
@@ -25,8 +29,11 @@ def _reward_is_eligible(match):
     )
 
 
-def _synchronize_locked_reward(match):
+def _synchronize_locked_reward(match, *, earned_only=False, restore_earned=False, late_approval=False):
+    from .historical_restoration import permits_automatic_source
     source_reference = personal_tbr_book_reward_source_reference(match)
+    if not permits_automatic_source(match.submission, source_reference):
+        return None, False
     provenance = ModifierProvenance.objects.select_for_update().filter(
         source_type=ModifierProvenance.SourceType.TBR_BOOK,
         source_reference=source_reference,
@@ -47,6 +54,13 @@ def _synchronize_locked_reward(match):
             return provenance, True
         return provenance, False
 
+    from .personal_tbr_matching import _submission_is_eligible
+    if earned_only and (provenance is None or provenance.voided_at
+                        or (not provenance.is_active and not restore_earned)):
+        return provenance, False
+    if (provenance is None or not provenance.is_active) and not (earned_only or late_approval) and not _submission_is_eligible(match.submission):
+        return provenance, False
+
     if provenance is None:
         provenance = ModifierProvenance.objects.create(
             month=match.month,
@@ -56,7 +70,7 @@ def _synchronize_locked_reward(match):
             source_reference=source_reference,
             source_label=match.tbr_title_snapshot,
             source_context=f"Qualifying Personal TBR match {match.pk}",
-            amount=match.month.tbr_book_bonus_pages,
+            amount=_reward_amount(match),
             effective_date=match.submission.completed_on,
             applied_by=match.reviewer,
             applied_at=match.decided_at,
@@ -87,7 +101,7 @@ def synchronize_personal_tbr_book_reward(match):
 
 
 @transaction.atomic
-def synchronize_personal_tbr_book_rewards_for_submission(submission):
+def synchronize_personal_tbr_book_rewards_for_submission(submission, *, earned_only=False, restore_earned=False):
     submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
     matches = PersonalTBRMatch.objects.select_for_update().select_related(
         "personal_tbr_book__personal_tbr__enrollment", "month", "participant", "submission", "reviewer",
@@ -95,11 +109,13 @@ def synchronize_personal_tbr_book_rewards_for_submission(submission):
     changed = False
     provenances = []
     for match in matches:
-        provenance, reward_changed = _synchronize_locked_reward(match)
+        provenance, reward_changed = _synchronize_locked_reward(
+            match, earned_only=earned_only, restore_earned=restore_earned,
+        )
         changed = changed or reward_changed
         if provenance is not None:
             provenances.append(provenance)
-    if changed:
+    if changed and not earned_only:
         from .scoring import refresh_submission_score
         refresh_submission_score(submission)
     return provenances

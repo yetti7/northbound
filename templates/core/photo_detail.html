@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% load static %}{% load tz %}
+{% block title %}Scavenger Hunt — Photo{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/photo_submissions.css' %}">{% endblock %}
+{% block content %}<section class="card photo-reader-page"><p class="eyebrow">{{ month.name }}</p><h1>Scavenger Hunt — Photo</h1>
+<p><strong>Prompt #{{ photo.prompt_claim.selection_evidence.number }}</strong> — {{ photo.prompt_claim.selection_evidence.description }}</p><p>Status: <span class="pill">{{ photo.get_status_display }}</span></p>
+{% timezone month.group.timezone %}<p>Submitted <time datetime="{{ photo.submitted_at|date:'c' }}">{{ photo.submitted_at|date:'F j, Y · g:i A' }}</time></p>{% endtimezone %}
+<p>You confirmed: I have posted my photo in the designated Discord channel.</p>
+{% if photo.discord_message_url %}<p>Discord Post: <a href="{{ photo.discord_message_url }}" target="_blank" rel="noopener noreferrer">View Post (opens in Discord)</a></p>{% endif %}
+{% if editable %}<div class="action-row"><a class="button secondary" href="{% url 'photo-edit' month.group.slug month.pk photo.pk %}">Edit Photo</a>
+<form method="post" action="{% url 'photo-withdraw' month.group.slug month.pk photo.pk %}">{% csrf_token %}{{ withdraw_form.as_p }}<button class="button secondary">Withdraw Photo</button></form></div>{% else %}<p class="muted">This Photo activity is read-only.</p>{% endif %}
+{% if can_correct and not editable %}<p><a class="button secondary" href="{% url 'photo-correct' month.group.slug month.pk photo.pk %}">Correct Photo</a></p>{% endif %}{% if can_void %}<p><a class="button secondary" href="{% url 'photo-credit-action' month.group.slug month.pk photo.pk 'void' %}">Void Photo</a></p>{% endif %}{% if can_restore %}<p><a class="button secondary" href="{% url 'photo-credit-action' month.group.slug month.pk photo.pk 'restore' %}">Restore Photo</a></p>{% endif %}
+{% if photo_events %}<h2>Photo Activity History</h2>{% for event in photo_events.cards %}<article><strong>{{ event.label }}</strong> <time datetime="{{ event.timestamp|date:'c' }}">{{ event.timestamp|date:'M j, Y · g:i A' }}</time>{% if event.actor %}<p>By {{ event.actor }}</p>{% endif %}{% if event.detail %}<p>{{ event.detail }}</p>{% endif %}</article>{% endfor %}{% if photo_events.page.has_previous %}<a href="?activity_page={{ photo_events.page.previous_page_number }}">Newer activity</a>{% endif %}{% if photo_events.page.has_next %}<a href="?activity_page={{ photo_events.page.next_page_number }}">Older activity</a>{% endif %}{% endif %}
+</section>{% endblock %}

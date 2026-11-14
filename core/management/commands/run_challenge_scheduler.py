@@ -3,6 +3,7 @@ import time
 from django.core.management.base import BaseCommand
 
 from core.scheduling import process_due_challenge_schedules
+from core.discord_notifications import process_due_discord_digests
 
 
 class Command(BaseCommand):
@@ -25,6 +26,10 @@ class Command(BaseCommand):
                     )
             except Exception as exc:
                 self.stderr.write(self.style.ERROR(f"Challenge schedule processing failed: {exc}"))
+            try:
+                process_due_discord_digests()
+            except Exception:
+                self.stderr.write(self.style.ERROR("Discord digest processing failed; Challenge scheduling continues."))
             if options["once"]:
                 return
             time.sleep(interval)

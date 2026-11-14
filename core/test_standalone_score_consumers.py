@@ -241,3 +241,73 @@ class StandaloneScoreConsumerTests(TestCase):
         self.assertEqual(totals[self.team.name], 0)
         self.assertEqual(totals[new_team.name], 160)
         self.assertEqual(list(application.recipients.values_list("participant_id", flat=True)), frozen_ids)
+
+    def test_full_score_follows_assignment_and_survives_departure_and_reactivation(self):
+        from .participation import activate_participation, assign_participant_to_team, deactivate_participation
+        from .score_aggregation import challenge_score_totals, challenge_team_totals
+
+        BookSubmission.objects.filter(pk=self.submission.pk).update(approved_pages=450)
+        month = self.month
+        enrollment = MonthEnrollment.objects.get(month=month, participant=self.reader)
+        team_b = Team.objects.create(month=month, name="Team B")
+        team_c = Team.objects.create(month=month, name="Team C")
+        ids = [self.team.pk, team_b.pk, team_c.pk]
+
+        def team_scores():
+            return challenge_team_totals(month=month, team_ids=ids)
+
+        self.assertEqual(team_scores(), dict(zip(ids, [500, 0, 0])))
+        assign_participant_to_team(month=month, participant=self.reader, team=team_b, actor=self.host_user)
+        self.assertEqual(team_scores(), dict(zip(ids, [0, 500, 0])))
+        BookSubmission.objects.create(
+            month=month, participant=self.reader, title="Second book", author="Writer",
+            book_format="ebook", completed_on=self.submission.completed_on,
+            submitted_pages=300, approved_pages=300, status="approved",
+        )
+        self.assertEqual(team_scores(), dict(zip(ids, [0, 800, 0])))
+        deactivate_participation(enrollment=enrollment, actor=self.reader.user, reason="withdrawn")
+        self.assertEqual(team_scores(), dict(zip(ids, [0, 800, 0])))
+        activate_participation(month=month, participant=self.reader, actor=self.host_user, origin="staff")
+        enrollment.refresh_from_db()
+        self.assertTrue(enrollment.awaiting_scoring_team)
+        self.assertEqual(enrollment.credited_team_id, team_b.pk)
+        self.assertEqual(team_scores(), dict(zip(ids, [0, 800, 0])))
+        self.client.force_login(self.reader.user)
+        submit = reverse("submission-create", args=[self.group.slug, month.pk])
+        self.assertRedirects(self.client.get(submit), month.get_absolute_url(), fetch_redirect_response=False)
+        assign_participant_to_team(month=month, participant=self.reader, team=team_c, actor=self.host_user)
+        enrollment.refresh_from_db()
+        self.assertFalse(enrollment.awaiting_scoring_team)
+        self.assertEqual(team_scores(), dict(zip(ids, [0, 0, 800])))
+        self.assertEqual(challenge_score_totals(month=month)[self.reader.pk]["total_pages"], 800)
+        self.assertEqual(team_c.approved_pages, 800)
+
+    def test_legacy_finalized_totals_do_not_infer_ended_assignments(self):
+        from .score_aggregation import challenge_team_totals
+
+        for status in ("completed", "archived"):
+            with self.subTest(status=status):
+                ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+                self.month.refresh_from_db()
+                self.assertEqual(challenge_team_totals(month=self.month, team_ids=[self.team.pk]), {self.team.pk: 150})
+        TeamAssignment.objects.filter(month=self.month, participant=self.reader).update(ended_at=timezone.now())
+        MonthEnrollment.objects.filter(month=self.month, participant=self.reader).update(is_active=False)
+        self.assertEqual(challenge_team_totals(month=self.month, team_ids=[self.team.pk]), {self.team.pk: 0})
+
+    def test_credited_team_requires_same_challenge_and_prevents_deletion(self):
+        from django.core.exceptions import ValidationError
+        from django.db.models.deletion import RestrictedError
+
+        other = ChallengeMonth.objects.create(
+            group=self.group, name="Other", starts_on=self.month.starts_on, ends_on=self.month.ends_on,
+        )
+        foreign_team = Team.objects.create(month=other, name="Foreign")
+        enrollment = MonthEnrollment.objects.get(month=self.month, participant=self.reader)
+        enrollment.credited_team = foreign_team
+        with self.assertRaises(ValidationError):
+            enrollment.save(update_fields=["credited_team"])
+        team = Team.objects.create(month=self.month, name="Historical credit")
+        enrollment.credited_team = team
+        enrollment.save(update_fields=["credited_team"])
+        with self.assertRaises(RestrictedError):
+            team.delete()

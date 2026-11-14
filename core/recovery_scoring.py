@@ -1,6 +1,8 @@
+import json
 from dataclasses import replace
 
-from django.core.exceptions import ValidationError
+from django.core import signing
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -8,18 +10,18 @@ from .models import (
     ImmersiveRequest, AuditEvent, BookSubmission, BotmCompletionAward,
     BotmCompletionAwardBook, BotmMatch, ModifierProvenance, MonthTheme,
     PersonalTBRCompletionAward, PersonalTBRCompletionAwardBook,
-    PersonalTBRMatch, ThemeClaim,
+    PersonalTBRMatch, ThemeClaim, ChallengeMonth, MonthEnrollment, TeamAssignment,
 )
 from .recovery import (
     RecoveryImpactItem, RecoveryImpactPreview, RecoveryMutationResult,
-    execute_recovery_operation,
+    execute_recovery_operation, validate_reason,
 )
-from .score_aggregation import challenge_score_totals
+from .score_aggregation import challenge_score_totals, challenge_team_totals
 from .scoring import refresh_submission_score, establish_theme_award, establish_restored_theme_awards
 
 
 def submission_recovery_label(submission):
-    return f"Submission #{submission.pk}: {submission.title} — {submission.participant.display_name}"
+    return f"Submission #{submission.pk}: {submission.title} — {submission.participant.user.username}"
 
 
 def _theme_reference(claim):
@@ -55,46 +57,193 @@ def _synchronize_reader_sources(month, participant):
         refresh_submission_score(submission)
 
 
-def set_submission_removed(*, submission, removed, recovery_request):
+def _synchronize_submission_sources(submission, *, restoring=False):
+    from .matching_resolution import synchronize_domain
+    for domain in ("botm", "tbr"):
+        synchronize_domain(submission, domain, earned_only=restoring, restore_earned=restoring)
+    refresh_submission_score(submission)
+
+
+def _set_locked_submission_removed(locked, *, removed, actor, reason, action):
+    previous_removal = {
+        "actor_id": locked.removed_by_id,
+        "timestamp": locked.removed_at.isoformat() if locked.removed_at else None,
+        "reason": locked.removal_reason,
+    }
+    from .historical_restoration import (
+        apply_restoration_plan, has_void_evidence, restoration_plan, suspend_earned_credit,
+    )
+    before_score = _reader_score(locked.month, locked.participant)
+    before_award_ids = list(ModifierProvenance.objects.filter(
+        month=locked.month, participant=locked.participant, is_active=True,
+    ).values_list("pk", flat=True))
+    team_ids = list(locked.month.teams.values_list("pk", flat=True))
+    before_teams = challenge_team_totals(month=locked.month, team_ids=team_ids)
+    plan = restoration_plan(locked, lock=True) if not removed and has_void_evidence(locked) else None
+    if removed:
+        locked.is_removed = True
+        locked.removed_at = timezone.now()
+        locked.removed_by = actor
+        locked.removal_reason = reason
+    else:
+        if not locked.is_removed:
+            raise ValidationError("Only a soft-removed submission can be restored.")
+        locked.is_removed = False
+        locked.removed_at = None
+        locked.removed_by = None
+        locked.removal_reason = ""
+    locked._prompt_actor = actor
+    locked.save(update_fields=[
+        "is_removed", "removed_at", "removed_by", "removal_reason",
+    ])
+    historical_recovery = action.startswith("recovery.") and (
+        locked.month.status in {locked.month.Status.COMPLETED, locked.month.Status.ARCHIVED}
+        or not ordinary_restore_preserves_attribution(locked)
+        or MonthEnrollment.objects.filter(
+            month=locked.month, participant=locked.participant, awaiting_scoring_team=True,
+        ).exists()
+    )
+    held = []
+    if removed and locked.participation_period_id:
+        suspend_earned_credit(locked)
+    elif plan is not None:
+        held = apply_restoration_plan(locked, plan)
+    elif historical_recovery:
+        # Only this submission changed. Reconcile its sources and dependent
+        # completion sets without re-awarding the rest of the Reader's history.
+        from .matching_resolution import synchronize_domain
+
+        for domain in ("botm", "tbr"):
+            synchronize_domain(locked, domain, earned_only=True, restore_earned=not removed)
+        refresh_submission_score(locked, earned_only=True, restore_earned=not removed)
+    else:
+        if not removed:
+            establish_restored_theme_awards(locked)
+        _synchronize_submission_sources(locked, restoring=not removed)
+    locked.refresh_from_db(fields=["bonus_pages", "final_scored_pages"])
+    after_score = _reader_score(locked.month, locked.participant)
+    AuditEvent.objects.create(
+        actor=actor, group=locked.month.group,
+        action=action,
+        object_type="BookSubmission", object_id=str(locked.pk),
+        summary=json.dumps({
+            "submission_id": locked.pk, "previous_removal": previous_removal,
+            "previous_status": locked.status, "status": locked.status,
+            "restoration_reason": reason,
+            "reader_score_before": before_score, "reader_score_after": after_score,
+            "held_credit": held,
+        }) if action == "submission.restored" else
+        f"Platform recovery {'soft removed' if removed else 'restored'} submission {locked.title}.",
+    )
+    return {
+        "is_removed": locked.is_removed,
+        "bonus_pages": locked.bonus_pages,
+        "final_scored_pages": locked.final_scored_pages,
+        "reader_score_before": before_score,
+        "reader_score_after": after_score,
+        "team_score_before": before_teams,
+        "team_score_after": challenge_team_totals(month=locked.month, team_ids=team_ids),
+        "held_credit": held,
+        "awards": list(ModifierProvenance.objects.filter(
+            month=locked.month, participant=locked.participant, is_active=True,
+        ).exclude(pk__in=before_award_ids).order_by("pk").values("source_type", "source_reference", "amount")),
+    }
+
+
+def set_submission_removed(*, submission, removed, recovery_request, preview_token=None):
+    if not removed and recovery_request.tier < 2:
+        raise ValidationError("Submission restoration requires Tier 2 Advanced Recovery.")
     def mutation():
+        ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
         locked = BookSubmission.objects.select_for_update().select_related(
             "month__group", "participant__user"
         ).get(pk=submission.pk)
-        before_score = _reader_score(locked.month, locked.participant)
-        if removed:
-            locked.is_removed = True
-            locked.removed_at = timezone.now()
-            locked.removed_by = recovery_request.actor
-            locked.removal_reason = recovery_request.reason
-        else:
-            if not locked.is_removed:
-                raise ValidationError("Only a soft-removed submission can be restored.")
-            locked.is_removed = False
-            locked.removed_at = None
-            locked.removed_by = None
-            locked.removal_reason = ""
-        locked.save(update_fields=[
-            "is_removed", "removed_at", "removed_by", "removal_reason",
-        ])
+        from .historical_restoration import lock_restoration_state
+        lock_restoration_state(locked)
         if not removed:
-            establish_restored_theme_awards(locked)
-        _synchronize_reader_sources(locked.month, locked.participant)
-        locked.refresh_from_db(fields=["bonus_pages", "final_scored_pages"])
-        after_score = _reader_score(locked.month, locked.participant)
-        AuditEvent.objects.create(
-            actor=recovery_request.actor, group=locked.month.group,
+            from .recovery import validate_typed_confirmation
+            validate_typed_confirmation(required=submission_recovery_label(locked),
+                                        supplied=recovery_request.supplied_confirmation)
+            if preview_token is None:
+                raise ValidationError("Review the current restoration score preview before confirming.")
+            if preview_token is not None:
+                _validate_restore_preview(locked, recovery_request.actor, preview_token)
+        result = _set_locked_submission_removed(
+            locked, removed=removed, actor=recovery_request.actor, reason=recovery_request.reason,
             action="recovery.submission_soft_removed" if removed else "recovery.submission_restored",
-            object_type="BookSubmission", object_id=str(locked.pk),
-            summary=f"Platform recovery {'soft removed' if removed else 'restored'} submission {locked.title}.",
         )
-        return {
-            "is_removed": locked.is_removed,
-            "bonus_pages": locked.bonus_pages,
-            "final_scored_pages": locked.final_scored_pages,
-            "reader_score_before": before_score,
-            "reader_score_after": after_score,
-        }
+        if not removed and preview_token is not None and json.loads(json.dumps(result, default=str)) != expected_restore_result(preview_token):
+            raise ValidationError("The executed score changes differ from the approved preview.")
+        return RecoveryMutationResult(after_state=result, impact=result)
     return execute_recovery_operation(recovery_request, mutation)
+
+
+RESTORE_CONFIRMATION_SALT = "northbound.staff-submission-restore"
+
+
+def _void_confirmation_state(submission, actor):
+    return [actor.pk, submission.pk, submission.is_removed,
+            submission.removed_at.isoformat() if submission.removed_at else None,
+            submission.removed_by_id, submission.removal_reason, submission.status,
+            AuditEvent.objects.filter(
+                group_id=submission.month.group_id, object_type="BookSubmission", object_id=str(submission.pk),
+                action__in=["submission.removed", "recovery.submission_soft_removed"],
+            ).order_by("-pk").values_list("pk", flat=True).first(),
+            restoration_state(submission)]
+
+
+def staff_restore_confirmation(submission, actor):
+    return signing.dumps(_void_confirmation_state(submission, actor), salt=RESTORE_CONFIRMATION_SALT)
+
+
+def ordinary_restore_preserves_attribution(submission):
+    if submission.participation_period_id:
+        from .historical_restoration import ordinary_historical_eligible
+        return ordinary_historical_eligible(submission)
+    enrollment = MonthEnrollment.objects.filter(month_id=submission.month_id, participant_id=submission.participant_id)
+    if not (submission.participant.is_active and submission.participant.user.is_active
+            and enrollment.filter(is_active=True).exists()):
+        return False
+    if TeamAssignment.objects.filter(
+        month_id=submission.month_id, participant_id=submission.participant_id, ended_at__isnull=False,
+    ).exists():
+        return False
+    # A Reader can have left and reenrolled without ever having a team.
+    return not AuditEvent.objects.filter(
+        group_id=submission.month.group_id, object_type="MonthEnrollment",
+        object_id__in=[str(pk) for pk in enrollment.values_list("pk", flat=True)],
+        action__in=["participation.self_reactivated", "participation.staff_reactivated",
+                    "participation.self_withdrew", "participation.staff_removed"],
+    ).exists()
+
+
+@transaction.atomic
+def restore_submission_as_staff(*, submission, actor, confirmation, reason=""):
+    from .permissions import can_restore_submission
+
+    month = ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
+    locked = BookSubmission.objects.select_for_update().select_related("participant__user").get(
+        pk=submission.pk, month=month,
+    )
+    locked.month = month
+    from .historical_restoration import lock_restoration_state
+    lock_restoration_state(locked)
+    if not locked.is_removed:
+        raise ValidationError("This submission is already restored.")
+    if not can_restore_submission(actor, locked):
+        raise PermissionDenied("Submission restoration permission is required.")
+    try:
+        confirmed = signing.loads(confirmation if isinstance(confirmation, str) else "", salt=RESTORE_CONFIRMATION_SALT, max_age=900)
+    except signing.BadSignature:
+        confirmed = None
+    if confirmed != _void_confirmation_state(locked, actor):
+        raise ValidationError("This confirmation is stale or invalid. Reload and confirm the current void.")
+    if not ordinary_restore_preserves_attribution(locked):
+        raise ValidationError("Ordinary restoration is unavailable for this Reader’s enrollment or team history.")
+    return _set_locked_submission_removed(
+        locked, removed=False, actor=actor, reason=validate_reason(reason, required=False),
+        action="submission.restored",
+    )
 
 
 def submission_purge_impact(submission):
@@ -341,6 +490,9 @@ def recover_theme_claim(*, claim, status, recovery_request, force_rebuild=False)
 
 
 def void_provenance(*, provenance, recovery_request):
+    from .prompt_scoring import SOURCE_TYPES
+    if provenance.source_type in SOURCE_TYPES:
+        raise ValidationError('Prompt provenance requires a previewed prompt qualification correction; generic provenance recovery cannot rewrite frozen receipts.')
     def mutation():
         locked = ModifierProvenance.objects.select_for_update().select_related("submission").get(pk=provenance.pk)
         if locked.source_type not in {
@@ -370,6 +522,9 @@ def void_provenance(*, provenance, recovery_request):
 
 
 def rebuild_provenance(*, provenance, recovery_request):
+    from .prompt_scoring import SOURCE_TYPES
+    if provenance.source_type in SOURCE_TYPES:
+        raise ValidationError('Prompt provenance requires a previewed prompt qualification correction; generic provenance recovery cannot rewrite frozen receipts.')
     def mutation():
         locked = ModifierProvenance.objects.select_for_update().select_related("submission").get(pk=provenance.pk)
         if locked.source_type == ModifierProvenance.SourceType.THEME_BONUS:
@@ -403,6 +558,9 @@ def rebuild_provenance(*, provenance, recovery_request):
 
 
 def purge_malformed_provenance(*, provenance, recovery_request):
+    from .prompt_scoring import SOURCE_TYPES
+    if provenance.source_type in SOURCE_TYPES:
+        raise ValidationError('Prompt provenance requires a previewed prompt qualification correction; generic provenance recovery cannot rewrite frozen receipts.')
     if recovery_request.tier != 3:
         raise ValidationError("Malformed provenance purge requires Tier 3 recovery.")
 
@@ -420,3 +578,73 @@ def purge_malformed_provenance(*, provenance, recovery_request):
             refresh_submission_score(submission)
         return {"exists": False, "purged_provenance_id": target_id}
     return execute_recovery_operation(recovery_request, mutation)
+
+
+RESTORE_PREVIEW_SALT = "northbound.restore-score-preview"
+
+
+def restoration_state(submission):
+    from .historical_restoration import fingerprint
+    from .submission_review_matching import review_state
+    return fingerprint({
+        "review": review_state(submission),
+        "group_timezone": submission.month.group.timezone,
+        "provenance": list(ModifierProvenance.objects.filter(
+            month=submission.month, participant=submission.participant,
+        ).order_by("pk").values()),
+        "immersive": list(submission.immersive_requests.order_by("pk").values()),
+        "botm_completion": list(BotmCompletionAward.objects.filter(
+            month=submission.month, participant=submission.participant,
+        ).order_by("pk").values()),
+        "botm_frozen": list(BotmCompletionAwardBook.objects.filter(
+            award__month=submission.month, award__participant=submission.participant,
+        ).order_by("pk").values()),
+        "tbr_completion": list(PersonalTBRCompletionAward.objects.filter(
+            month=submission.month, participant=submission.participant,
+        ).order_by("pk").values()),
+        "tbr_frozen": list(PersonalTBRCompletionAwardBook.objects.filter(
+            award__month=submission.month, award__participant=submission.participant,
+        ).order_by("pk").values()),
+    })
+
+
+def expected_restore_result(token):
+    try:
+        return signing.loads(token, salt=RESTORE_PREVIEW_SALT, max_age=900)["result"]
+    except (signing.BadSignature, KeyError, TypeError):
+        raise ValidationError("The restoration score preview expired. Reload and review it again.") from None
+
+
+def _validate_restore_preview(submission, actor, token):
+    try:
+        payload = signing.loads(token, salt=RESTORE_PREVIEW_SALT, max_age=900)
+    except (signing.BadSignature, TypeError):
+        raise ValidationError("The restoration score preview expired. Reload and review it again.") from None
+    if (payload.get("actor"), payload.get("submission"), payload.get("state")) != (
+        actor.pk, submission.pk, restoration_state(submission),
+    ):
+        raise ValidationError("The restoration evidence changed. Review the current score preview again.")
+
+
+@transaction.atomic
+def preview_submission_restoration(*, submission, actor):
+    from .recovery import require_platform_owner
+    require_platform_owner(actor)
+    ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
+    locked = BookSubmission.objects.select_for_update().get(pk=submission.pk)
+    if not locked.is_removed:
+        raise ValidationError("Only a voided submission can be previewed.")
+    from .historical_restoration import lock_restoration_state
+    lock_restoration_state(locked)
+    state = restoration_state(locked)
+    # Match the established correction-preview pattern. All database writes and
+    # on-commit callbacks in this savepoint are rolled back before returning.
+    with transaction.atomic():
+        result = _set_locked_submission_removed(
+            locked, removed=False, actor=actor, reason="Restoration preview", action="recovery.submission_restored",
+        )
+        transaction.set_rollback(True)
+    result = json.loads(json.dumps(result, default=str))
+    token = signing.dumps({"actor": actor.pk, "submission": submission.pk, "state": state,
+                           "result": result}, salt=RESTORE_PREVIEW_SALT, serializer=signing.JSONSerializer)
+    return result, token

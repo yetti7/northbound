@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Edit {{ month.name }} · Northbound{% endblock %}
 {% block content %}
-<section class="form-card task-card"><p class="eyebrow">{{ month.group.name }}</p><h1>Edit Challenge</h1><p class="muted">Challenge schedule date/times use {{ month.group.timezone }}. Lifecycle changes are managed from the Challenge page.</p><form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Save Challenge</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div></form></section>
+<div class="page-heading"><div><p class="eyebrow">{{ month.group.name }}</p><h1>Edit Challenge</h1><p class="lede">All times use {{ month.group.timezone }}.</p></div></div>
+<form method="post" class="stacked-form schedule-settings-form">{% csrf_token %}{{ form.non_field_errors }}
+  <section class="card"><h2>Challenge Details</h2>{{ form.name.as_field_group }}{{ form.description.as_field_group }}</section>
+  {% include "core/includes/challenge_schedule_panels.html" %}
+  <div class="action-row"><button class="button primary">{% if schedule_confirmation %}Save and Make Results Final{% else %}Save Changes{% endif %}</button><a class="button secondary" href="{{ month.get_absolute_url }}">Cancel</a></div>
+</form>
 {% if can_delete_draft %}<section class="form-card danger-zone"><h2>Delete Draft</h2><p class="muted">Permanently remove this draft and its prepared teams and enrollments.</p><a class="button danger-button" href="{% url 'month-delete' month.group.slug month.pk %}">Delete Draft</a></section>{% endif %}
 {% endblock %}

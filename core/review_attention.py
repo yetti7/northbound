@@ -19,7 +19,11 @@ def challenge_attention_count(user, month):
         submission_id__in=submissions.values("pk"),
         status=ThemeClaim.Status.PENDING,
     ).count()
-    return manual_count + theme_claim_count + review_queue_requests(actor=user, month=month).count()
+    from .prompt_scoring import pending_submission_ids
+    from .models import PromptClaim
+    prompt_count=PromptClaim.objects.filter(submission_id__in=submissions.filter(pk__in=pending_submission_ids(month)).values('pk'),is_current=True,state='reserved',category__enabled=True).count()
+    from .photo_review import pending_review_photos
+    return manual_count + theme_claim_count + prompt_count + pending_review_photos(user,month).count() + review_queue_requests(actor=user, month=month).count()
 
 
 def needs_attention_summary(user):
@@ -84,7 +88,7 @@ def needs_attention_summary(user):
                     participant__month_enrollments__is_active=True,
                 )
             checkpoint_results = list(checkpoints.select_related("checkpoint", "participant").order_by(
-                "checkpoint__scheduled_at", "participant__display_name"
+                "checkpoint__scheduled_at", "participant__user__username"
             ))
         if not review_count and not checkpoint_results and not month_host_notices:
             continue

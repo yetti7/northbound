@@ -26,7 +26,7 @@ def _participant_is_eligible(month, participant):
         and participant.group_id == month.group_id
         and participant.is_active
         and not participant.user.is_superuser
-        and MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists()
+        and MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True, awaiting_scoring_team=False).exists()
     )
 
 
@@ -81,7 +81,7 @@ def _deactivate_award(award, now):
 
 
 @transaction.atomic
-def synchronize_botm_completion_for_reader(*, month, participant, now=None):
+def synchronize_botm_completion_for_reader(*, month, participant, now=None, earned_only=False, restore_earned=False, late_award=None):
     month = ChallengeMonth.objects.select_for_update().select_related("group").get(pk=month.pk)
     participant = Membership.objects.select_for_update().select_related("user").get(pk=participant.pk)
     now = now or timezone.now()
@@ -101,21 +101,33 @@ def synchronize_botm_completion_for_reader(*, month, participant, now=None):
         ).values_list("botm_book_id", flat=True)
     )
     configured_book_ids = {book.pk for book in active_books}
+    current_award = next((award for award in awards if award.completion_set_fingerprint == fingerprint), None)
+    if (late_award is None and current_award is None and qualifying_book_ids == configured_book_ids
+            and BotmMatch.objects.filter(month=month, participant=participant,
+                status="confirmed", is_qualifying=True, decision_evidence__late_approval_completion_held=True).exists()):
+        return None
     complete = (
         bool(active_books)
-        and _participant_is_eligible(month, participant)
+        and ((late_award is not None and month.botm_enabled) or (not earned_only and _participant_is_eligible(month, participant)) or (
+            month.botm_enabled and current_award is not None
+            and (current_award.is_qualifying or restore_earned)
+        ))
         and qualifying_book_ids == configured_book_ids
     )
 
-    current_award = next((award for award in awards if award.completion_set_fingerprint == fingerprint), None)
-    for award in awards:
-        if not complete or award is not current_award:
-            _deactivate_award(award, now)
+    if late_award is None:
+        for award in awards:
+            if not complete or award is not current_award:
+                _deactivate_award(award, now)
+    elif current_award is not None:
+        return current_award
     if not complete:
         return current_award
 
     if current_award is None:
-        effective_date = timezone.localtime(now, ZoneInfo(month.group.timezone)).date()
+        bonus_amount, effective_date = late_award if late_award is not None else (
+            month.botm_completion_bonus_pages, timezone.localtime(now, ZoneInfo(month.group.timezone)).date(),
+        )
         try:
             with transaction.atomic():
                 current_award = BotmCompletionAward.objects.create(
@@ -123,7 +135,7 @@ def synchronize_botm_completion_for_reader(*, month, participant, now=None):
                     participant=participant,
                     completion_set_fingerprint=fingerprint,
                     configured_book_count=len(active_books),
-                    bonus_amount_snapshot=month.botm_completion_bonus_pages,
+                    bonus_amount_snapshot=bonus_amount,
                     qualified_at=now,
                     last_qualified_at=now,
                     effective_date=effective_date,

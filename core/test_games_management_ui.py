@@ -298,7 +298,7 @@ class GamesManagementUITests(TestCase):
 
     def test_operator_history_is_frozen_read_only_and_void_context_is_visible(self):
         application = self.apply_reward()
-        frozen_names = list(application.recipients.values_list("participant__display_name", flat=True))
+        frozen_names = list(application.recipients.values_list("participant__user__username", flat=True))
         TeamAssignment.objects.filter(month=self.month, participant=self.reader, ended_at__isnull=True).update(ended_at=timezone.now())
         self.client.force_login(self.host_user)
         response = self.client.get(self.detail_url)
@@ -387,7 +387,7 @@ class GamesManagementUITests(TestCase):
         payload = self.reward_payload(amount="25")
         preview = self.client.post(self.apply_url, payload)
         self.assertContains(preview, "Confirm Reward")
-        self.assertContains(preview, self.reader.display_name)
+        self.assertContains(preview, self.reader.user.username)
         self.assertContains(preview, "Resolved Recipients")
         self.assertFalse(GameRewardApplication.objects.exists())
         payload["step"] = "apply"
@@ -429,8 +429,8 @@ class GamesManagementUITests(TestCase):
             target_team=str(self.team.pk),
         ))
         for participant in (self.reader, self.leader, self.host):
-            self.assertContains(team_preview, participant.display_name)
-        self.assertNotContains(team_preview, self.floater.display_name)
+            self.assertContains(team_preview, participant.user.username)
+        self.assertNotContains(team_preview, self.floater.user.username)
         self.assertNotContains(team_preview, self.root.username)
         challenge_payload = self.reward_payload(
             target_type=GameRewardApplication.TargetType.CHALLENGE,
@@ -459,7 +459,7 @@ class GamesManagementUITests(TestCase):
         response = self.client.get(void_url)
         self.assertContains(response, application.reason)
         for recipient in application.recipients.all():
-            self.assertContains(response, recipient.participant.display_name)
+            self.assertContains(response, recipient.participant.user.username)
         self.assertContains(self.client.post(void_url, {"reason": ""}), "This field is required")
         recipients = list(application.recipients.values_list("pk", flat=True))
         provenances = list(application.recipients.values_list("provenance_id", flat=True))

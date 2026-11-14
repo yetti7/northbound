@@ -118,6 +118,9 @@ class SubmissionHotfixTests(TestCase):
         self.assertEqual(response.status_code, 302)
         submission = BookSubmission.objects.get()
         self.assertEqual((submission.status, submission.approved_pages), ('approved', 384))
+        self.assertEqual(list(AuditEvent.objects.filter(
+            object_type="BookSubmission", object_id=str(submission.pk),
+        ).order_by("pk").values_list("action", flat=True)), ["submission.created", "submission.approved"])
         self.assertEqual(build_personal_tbr_reader_presentation(personal_tbr=self.tbr)['completed_count'], 1)
         match = PersonalTBRMatch.objects.get()
         self.assertTrue(match.is_qualifying)

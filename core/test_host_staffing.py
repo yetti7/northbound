@@ -179,7 +179,7 @@ class ChallengeHostStaffingTests(TestCase):
 
         history = self.client.get(self.list_url)
         self.assertContains(history, "Host History")
-        self.assertContains(history, self.member.display_name)
+        self.assertContains(history, self.member.user.username)
 
     def test_host_management_uses_existing_month_capability(self):
         self.client.force_login(self.member_user)

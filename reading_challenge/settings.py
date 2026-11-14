@@ -19,6 +19,8 @@ def env_list(name, default=""):
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-development-key-change-me")
 NORTHBOUND_VERSION = os.getenv("NORTHBOUND_VERSION", "development").strip() or "development"
 NORTHBOUND_DEVELOPMENT_BANNER = env_bool("NORTHBOUND_DEVELOPMENT_BANNER", False)
+# Activation requires separate authorization; isolated tests may override this setting.
+NORTHBOUND_PROMPT_RESERVATIONS_READY = False
 NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED = env_bool("NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED", True)
 SESSION_COOKIE_NAME = os.getenv("DJANGO_SESSION_COOKIE_NAME", "sessionid").strip() or "sessionid"
 CSRF_COOKIE_NAME = os.getenv("DJANGO_CSRF_COOKIE_NAME", "csrftoken").strip() or "csrftoken"
@@ -205,3 +207,7 @@ if not DEBUG:
             },
         },
     }
+
+# Separate opt-in: neither ordinary scheduling nor a restored database enables delivery.
+NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED = env_bool("NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED", False)
+NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT = env_bool("NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT", False)

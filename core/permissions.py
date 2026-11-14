@@ -57,6 +57,13 @@ def can_manage_group(user, group):
     return has_capability(user, group, "manage_group_settings")
 
 
+def can_view_group_settings(user, group):
+    if not user.is_authenticated or not user.is_active:
+        return False
+    member = membership_for(user, group)
+    return can_manage_group(user, group) or bool(member and member.role == Membership.Role.MODERATOR)
+
+
 def can_manage_participants(user, group):
     return has_capability(user, group, "manage_participants")
 
@@ -280,9 +287,8 @@ def can_review_submission(user, submission):
     ).exists()
 
 
-def can_void_submission(user, submission):
-    """Soft-removal authority; callers also enforce the Challenge lifecycle."""
-    if not user.is_authenticated or not user.is_active or submission.is_removed:
+def _has_submission_void_authority(user, submission):
+    if not user.is_authenticated or not user.is_active:
         return False
     if user.is_superuser:
         return True
@@ -291,6 +297,21 @@ def can_void_submission(user, submission):
             and restricted_host_team_ids(user, submission.month) is None):
         return True
     return can_review_submission(user, submission)
+
+
+def can_void_submission(user, submission):
+    """Soft-removal authority; callers also enforce the Challenge lifecycle."""
+    return not submission.is_removed and _has_submission_void_authority(user, submission)
+
+
+def can_restore_submission(user, submission):
+    month = submission.month
+    return (
+        submission.is_removed
+        and submission.participant.group_id == month.group_id
+        and month.status in {month.Status.DRAFT, month.Status.UPCOMING, month.Status.ACTIVE}
+        and _has_submission_void_authority(user, submission)
+    )
 
 
 def _has_competition_staff_access(user, month, membership):
@@ -396,6 +417,22 @@ def can_view_access_code(user, group):
     return membership.role == Membership.Role.OWNER
 
 
+def can_correct_registration_answers(user, enrollment):
+    month = enrollment.month
+    if (not user.is_authenticated or not user.is_active
+            or enrollment.participant.group_id != month.group_id
+            or month.status not in {
+                month.Status.DRAFT, month.Status.UPCOMING, month.Status.ACTIVE, month.Status.FINALIZING,
+            }):
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, month.group)
+    return bool(member and (
+        member.role in STAFF_ROLES or is_challenge_host(user, month)
+    ) and host_scope_allows_reader(user, month, enrollment.participant_id))
+
+
 def can_manage_challenge_tbr(user, enrollment):
     """TBR-only staff authority; never grants registration or account access."""
     month = enrollment.month
@@ -463,3 +500,56 @@ def can_edit_submission(user, submission):
     if member and member.role == Membership.Role.OWNER and restricted_host_team_ids(user, submission.month) is None:
         return True
     return can_review_submission(user, submission)
+
+
+def can_manage_team_assignments(user, month, participant=None):
+    """Authority over existing team assignments, separate from enrollment and scoring."""
+    if not user.is_authenticated or not user.is_active or month.status not in {month.Status.DRAFT, month.Status.UPCOMING, month.Status.ACTIVE}:
+        return False
+    if participant is not None and participant.group_id != month.group_id:
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, month.group)
+    if not member:
+        return False
+    host_teams = restricted_host_team_ids(user, month)
+    if host_teams is not None and participant is not None and participant.user_id == user.pk:
+        return False
+    if member.role == Membership.Role.OWNER or is_challenge_host(user, month):
+        return True
+    return is_active_floater(month, member.pk)
+
+
+def can_view_team_books(user, team):
+    month = team.month
+    if not user.is_authenticated or not user.is_active or team.is_archived or not can_view_challenge(user, month):
+        return False
+    if user.is_superuser:
+        return True
+    member = membership_for(user, month.group)
+    if not member:
+        return False
+    host_teams = restricted_host_team_ids(user, month)
+    if host_teams is not None:
+        return team.pk in host_teams
+    if member.role == Membership.Role.OWNER or is_challenge_host(user, month) or is_active_floater(month, member.pk):
+        return True
+    return (
+        MonthEnrollment.objects.filter(month=month, participant=member, is_active=True).exists()
+        and TeamAssignment.objects.filter(month=month, participant=member, team=team, ended_at__isnull=True).exists()
+    )
+
+
+def can_configure_discord_notifications(user, group):
+    if not user.is_authenticated or not user.is_active:
+        return False
+    member = membership_for(user, group)
+    return user.is_superuser or bool(member and member.role == Membership.Role.OWNER)
+
+
+def can_view_discord_notifications(user, group):
+    if can_configure_discord_notifications(user, group):
+        return True
+    member = membership_for(user, group) if user.is_authenticated and user.is_active else None
+    return bool(member and member.role == Membership.Role.MODERATOR)

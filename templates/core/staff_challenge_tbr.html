@@ -1,13 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Manage TBR · {{ participant.display_name }}{% endblock %}
+{% block title %}Manage TBR · {{ participant.user.username }}{% endblock %}
 {% block content %}
 <section class="form-card">
-<p class="eyebrow"><a href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">{{ month.name }} · {{ participant.display_name }}</a></p>
+<p class="eyebrow"><a href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">{{ month.name }} · {{ participant.user.username }}</a></p>
 <h1>Manage TBR</h1>
-<p class="lede">Help {{ participant.display_name }} with their Challenge TBR. Saving or completing this list does not complete registration.</p>
+<p class="lede">Help {{ participant.user.username }} with their Challenge TBR. Saving or completing this list does not complete registration.</p>
 {% if personal_tbr.confirmed_at %}<p class="notice">This TBR is complete. Staff may correct selections after the Reader lock. Books with match or award history must retain their selection and position.</p>{% endif %}
 {% if latest_change %}<p class="muted">Last updated by {{ latest_change.actor.get_username|default:"a former member" }} · {{ latest_change.created_at|date:"M j, Y, g:i a" }} · {% if latest_change.action == 'challenge_tbr.staff_updated' %}Staff-assisted{% else %}Reader-managed{% endif %}</p>{% endif %}
 {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+{% if entry_actions %}
+<section aria-labelledby="saved-tbr-books">
+<h2 id="saved-tbr-books">Saved Books</h2>
+<ul class="plain-list">
+{% for book, locked_reason in entry_actions %}
+<li class="card"><strong>Book {{ book.position }} · {{ book.title_snapshot }}</strong><p>{{ book.author_snapshot }}</p>
+{% if locked_reason %}<p class="muted">{{ locked_reason }}</p>{% else %}<a class="button secondary" href="{% url 'staff-challenge-tbr-book-edit' month.group.slug month.pk participant.pk book.pk %}" aria-label="Edit Book {{ book.position }}: {{ book.title_snapshot }}">Edit Book</a>{% endif %}
+</li>
+{% endfor %}
+</ul>
+</section>
+<h2>Manage Selections</h2>
+<p class="muted">Use Edit Book above for title or author corrections.</p>
+{% endif %}
 <form method="post" class="stacked-form" data-tbr-registration>{% csrf_token %}<input type="hidden" name="version" value="{{ version }}">
 {% include 'core/includes/challenge_tbr_fields.html' %}
 <div class="action-row"><button class="button primary" name="action" value="save">Save TBR</button>{% if not personal_tbr.confirmed_at %}<button class="button" name="action" value="complete">Save &amp; Complete TBR</button>{% endif %}<a class="button" href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">Cancel</a></div>

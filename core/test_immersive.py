@@ -212,12 +212,12 @@ class ImmersiveTests(TestCase):
         score=challenge_score_totals(month=self.month,participant_ids=[self.reader.pk])[self.reader.pk]
         self.assertEqual(score['total_pages'],350+20+30+25+175)
 
-    def test_participation_withdrawal_and_reactivation_suspend_restore(self):
+    def test_participation_withdrawal_and_reactivation_preserve_award(self):
         from .participation import deactivate_participation, activate_participation
         self.enable();request=self.approve(self.request())
         enrollment=MonthEnrollment.objects.get(month=self.month,participant=self.reader)
         deactivate_participation(enrollment=enrollment,actor=self.host,reason='withdrawn')
-        self.assertFalse(self.source(request).is_active)
+        self.assertTrue(self.source(request).is_active)
         activate_participation(month=self.month,participant=self.reader,actor=self.host,origin='staff')
         self.assertTrue(self.source(request).is_active)
 

@@ -181,7 +181,13 @@ def generate_group_access_code():
             return code
 
 
+from .branding_files import branding_path
+
+
 class ReadingGroup(models.Model):
+    logo = models.ImageField(upload_to=branding_path, blank=True)
+    banner = models.ImageField(upload_to=branding_path, blank=True)
+    branding_mode = models.CharField(max_length=16, choices=[("logo", "Logo Only"), ("banner", "Logo + Banner")], default="logo")
     class AccessCodeVisibility(models.TextChoices):
         OWNER = "owner", "Group owners only"
         STAFF = "staff", "Owners and moderators"
@@ -213,6 +219,29 @@ class ReadingGroup(models.Model):
         if not self.join_code:
             self.regenerate_access_code()
         super().save(*args, **kwargs)
+
+
+class GroupDiscordNotification(models.Model):
+    group = models.OneToOneField(ReadingGroup, on_delete=models.CASCADE, related_name="discord_notifications")
+    enabled = models.BooleanField(default=False)
+    encrypted_webhook = models.TextField(blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_status = models.CharField(max_length=32, blank=True)
+
+    def __str__(self):
+        return f"Discord notification settings for Group {self.group_id}"
+
+
+class DiscordDigestDelivery(models.Model):
+    group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE, related_name="discord_deliveries")
+    hour = models.DateTimeField()
+    attempted_at = models.DateTimeField()
+    status = models.CharField(max_length=32, default="claimed")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["group", "hour"], name="unique_group_discord_digest_hour")]
 
 
 class HardcoverConnection(models.Model):
@@ -415,8 +444,12 @@ class Membership(models.Model):
         constraints = [models.UniqueConstraint(fields=["group", "user"], name="unique_group_user_membership")]
         ordering = ["display_name"]
 
+    @classmethod
+    def compatibility_display_name(cls, user):
+        return user.username[:cls._meta.get_field("display_name").max_length]
+
     def __str__(self):
-        return f"{self.display_name} — {self.group}"
+        return f"{self.user.username} — {self.group}"
 
 
 DEFAULT_REGISTRATION_AGREEMENT = (
@@ -426,6 +459,10 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    prompt_automation_excluded = models.BooleanField(default=False, editable=False)
+
+    logo = models.ImageField(upload_to=branding_path, blank=True)
+    banner = models.ImageField(upload_to=branding_path, blank=True)
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         UPCOMING = "upcoming", "Upcoming"
@@ -467,6 +504,10 @@ class ChallengeMonth(models.Model):
     auto_end_challenge = models.BooleanField(default=True)
     auto_complete_challenge = models.BooleanField(default=False)
     registration_is_open = models.BooleanField(default=False)
+    registration_open_handled = models.BooleanField(default=False, editable=False)
+    registration_close_handled = models.BooleanField(default=False, editable=False)
+    held_schedule_milestones = models.JSONField(default=list, blank=True, editable=False)
+
     registration_answer_editing_policy = models.CharField(
         max_length=12,
         choices=RegistrationAnswerEditingPolicy.choices,
@@ -585,61 +626,42 @@ class ChallengeMonth(models.Model):
         self.status = target_status
         return self
 
-    def apply_scheduled_actions(self, *, now=None):
-        current_time = now or timezone.now()
+    def apply_scheduled_actions(self, *, now=None, registration=True, lifecycle=True):
+        from .scheduling import lifecycle_due_target
+
+        now = now or timezone.now()
         actions = []
-        original_status = self.status
-        lifecycle_target = None
+        fields = []
+        publish = False
+        if registration:
+            if (
+                self.auto_open_registration and not self.registration_open_handled
+                and self.registration_opens_at and self.registration_opens_at <= now
+                and self.status in {self.Status.DRAFT, self.Status.UPCOMING, self.Status.ACTIVE}
+            ):
+                self.registration_open_handled = True
+                fields.append("registration_open_handled")
+                if not self.registration_is_open:
+                    self.registration_is_open = True
+                    actions.append("registration_opened")
+                publish = self.status == self.Status.DRAFT
+            if (
+                self.auto_close_registration and not self.registration_close_handled
+                and self.registration_closes_at and self.registration_closes_at <= now
+                and self.status not in {self.Status.COMPLETED, self.Status.ARCHIVED}
+            ):
+                self.registration_close_handled = True
+                fields.append("registration_close_handled")
+                if self.registration_is_open:
+                    self.registration_is_open = False
+                    actions.append("registration_closed")
 
-        if (
-            self.auto_open_registration
-            and self.registration_opens_at
-            and current_time >= self.registration_opens_at
-            and original_status in {self.Status.DRAFT, self.Status.UPCOMING, self.Status.ACTIVE}
-        ):
-            if not self.registration_is_open:
-                self.registration_is_open = True
-                actions.append("registration_opened")
-            if original_status == self.Status.DRAFT:
-                lifecycle_target = self.Status.UPCOMING
-
-        if (
-            self.auto_close_registration
-            and self.registration_closes_at
-            and current_time >= self.registration_closes_at
-            and self.registration_is_open
-        ):
-            self.registration_is_open = False
-            actions.append("registration_closed")
-
-        if (
-            self.auto_start_challenge
-            and self.starts_at
-            and current_time >= self.starts_at
-            and original_status == self.Status.UPCOMING
-        ):
-            lifecycle_target = self.Status.ACTIVE
-        elif (
-            self.auto_end_challenge
-            and self.ends_at
-            and current_time >= self.ends_at
-            and original_status == self.Status.ACTIVE
-        ):
-            lifecycle_target = self.Status.FINALIZING
-        elif (
-            self.auto_complete_challenge
-            and self.final_announcement_at
-            and current_time >= self.final_announcement_at
-            and original_status == self.Status.FINALIZING
-        ):
-            lifecycle_target = self.Status.COMPLETED
-
-        registration_changed = "registration_opened" in actions or "registration_closed" in actions
-        if registration_changed:
-            self.save(update_fields=["registration_is_open"])
-        if lifecycle_target:
-            self.transition_to(lifecycle_target)
-            actions.append(f"lifecycle_{lifecycle_target}")
+        if fields:
+            self.save(update_fields=[*fields, "registration_is_open"])
+        target = self.Status.UPCOMING if publish else lifecycle_due_target(self, now) if lifecycle else None
+        if target:
+            self.transition_to(target)
+            actions.append(f"lifecycle_{target}")
         return actions
 
     def save(self, *args, **kwargs):
@@ -814,7 +836,7 @@ class ChallengeStaffAssignment(models.Model):
         return self.ended_at is None
 
     def __str__(self):
-        return f"{self.month.name} — {self.get_role_display()}: {self.membership.display_name}"
+        return f"{self.month.name} — {self.get_role_display()}: {self.membership.user.username}"
 
 
 class MonthTheme(models.Model):
@@ -896,6 +918,8 @@ class MonthTheme(models.Model):
 
 
 class Team(models.Model):
+    logo = models.ImageField(upload_to=branding_path, blank=True)
+    banner = models.ImageField(upload_to=branding_path, blank=True)
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="teams")
     name = models.CharField(max_length=80)
     color = models.CharField(max_length=7, default="#6d5dfc")
@@ -910,16 +934,9 @@ class Team(models.Model):
 
     @property
     def approved_pages(self):
-        """Compatibility total for the current active team roster."""
-        from .score_aggregation import challenge_score_totals
+        from .score_aggregation import challenge_team_totals
 
-        participant_ids = self.assignments.filter(
-            ended_at__isnull=True,
-            participant__month_enrollments__month=self.month,
-            participant__month_enrollments__is_active=True,
-        ).values_list("participant_id", flat=True)
-        scores = challenge_score_totals(month=self.month, participant_ids=participant_ids)
-        return sum(score["total_pages"] for score in scores.values())
+        return challenge_team_totals(month=self.month, team_ids=[self.pk])[self.pk]
 
 
 
@@ -939,6 +956,10 @@ class MonthEnrollment(models.Model):
     enrolled_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_month_enrollments")
     is_active = models.BooleanField(default=True)
     origin = models.CharField(max_length=10, choices=Origin.choices, default=Origin.LEGACY)
+    credited_team = models.ForeignKey(
+        Team, null=True, blank=True, on_delete=models.RESTRICT, related_name="credited_enrollments",
+    )
+    awaiting_scoring_team = models.BooleanField(default=False, editable=False)
     host_scope_restored = models.BooleanField(default=False, editable=False)
     inactive_reason = models.CharField(max_length=12, choices=InactiveReason.choices, blank=True)
     inactivated_at = models.DateTimeField(null=True, blank=True)
@@ -955,6 +976,8 @@ class MonthEnrollment(models.Model):
         ordering = ["participant__display_name"]
 
     def clean(self):
+        if self.credited_team_id and self.credited_team.month_id != self.month_id:
+            raise ValidationError({"credited_team": "The credited team must belong to this Challenge."})
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the same reading group.")
         if self.participant_id and self.month_id and ChallengeStaffAssignment.objects.filter(
@@ -970,7 +993,7 @@ class MonthEnrollment(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.month.name} — {self.participant.display_name}"
+        return f"{self.month.name} — {self.participant.user.username}"
 
     @property
     def registration_answer_editing_deadline(self):
@@ -1362,7 +1385,7 @@ def end_active_team_leader_assignments(*, month, participant, team, actor=None, 
             object_type="ChallengeStaffAssignment",
             object_id=str(staffing.pk),
             summary=(
-                f"Ended {participant.display_name}'s Team Leader assignment for {team.name} "
+                f"Ended {participant.user.username}'s Team Leader assignment for {team.name} "
                 f"in {month.name} because {reason}."
             ),
         )
@@ -1655,6 +1678,9 @@ class PersonalTBRMatch(models.Model):
         ]
 
     def clean(self):
+        if self.is_qualifying and self.submission_id:
+            from .prompt_reservations import assert_tbr_allowed
+            assert_tbr_allowed(self.submission)
         errors = {}
         if self.personal_tbr_book_id and self.month_id:
             enrollment = self.personal_tbr_book.personal_tbr.enrollment
@@ -1671,7 +1697,10 @@ class PersonalTBRMatch(models.Model):
         if errors:
             raise ValidationError(errors)
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
+        if self.submission_id:
+            BookSubmission.objects.select_for_update().get(pk=self.submission_id)
         self.full_clean()
         return super().save(*args, **kwargs)
 
@@ -1769,6 +1798,40 @@ class PersonalTBRCompletionAwardBook(models.Model):
         raise ValidationError("Frozen Personal TBR completion-set history cannot be deleted.")
 
 
+class ParticipationPeriod(models.Model):
+    class StartReason(models.TextChoices):
+        ENROLLMENT = "enrollment", "Initial enrollment"
+        TEAM_ASSIGNMENT = "team_assignment", "Eligible team assignment"
+        OBSERVED = "observed", "Existing eligibility first observed"
+
+    enrollment = models.ForeignKey(MonthEnrollment, on_delete=models.CASCADE, related_name="participation_periods")
+    started_at = models.DateTimeField(editable=False)
+    start_reason = models.CharField(max_length=16, choices=StartReason.choices, editable=False)
+    ended_at = models.DateTimeField(null=True, blank=True, editable=False)
+    end_reason = models.CharField(max_length=12, choices=MonthEnrollment.InactiveReason.choices, blank=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["enrollment"], condition=Q(ended_at__isnull=True), name="one_open_participation_period"),
+            models.CheckConstraint(
+                condition=Q(ended_at__isnull=True, end_reason="") | Q(
+                    ended_at__isnull=False, ended_at__gte=F("started_at"), end_reason__in=MonthEnrollment.InactiveReason.values,
+                ),
+                name="participation_period_valid_end",
+            ),
+        ]
+
+    def includes_acceptance(self, accepted_at):
+        return self.started_at <= accepted_at and (self.ended_at is None or accepted_at < self.ended_at)
+
+    def includes_completion(self, completed_on, accepted_at, group_timezone):
+        zone = ZoneInfo(group_timezone)
+        return (
+            self.includes_acceptance(accepted_at)
+            and timezone.localdate(self.started_at, zone) <= completed_on <= timezone.localdate(accepted_at, zone)
+        )
+
+
 class BookSubmission(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending review"
@@ -1794,6 +1857,15 @@ class BookSubmission(models.Model):
     selected_botm_book = models.ForeignKey('BotmBook', null=True, blank=True, on_delete=models.PROTECT, related_name='reader_selected_submissions')
     selected_tbr_book = models.ForeignKey('PersonalTBRBook', null=True, blank=True, on_delete=models.PROTECT, related_name='reader_selected_submissions')
     reader_intent = models.JSONField(default=dict, blank=True, editable=False)
+    participation_period = models.ForeignKey(
+        ParticipationPeriod, null=True, blank=True, editable=False,
+        on_delete=models.PROTECT, related_name="submissions",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True, editable=False)
+    accepted_completed_on = models.DateField(null=True, blank=True, editable=False)
+    acceptance_claims = models.JSONField(default=dict, blank=True, editable=False)
+    late_approval_evidence = models.JSONField(default=dict, blank=True, editable=False)
+    void_earning_evidence = models.JSONField(default=dict, blank=True, editable=False)
     catalog_book = models.ForeignKey(CatalogBook, null=True, blank=True, on_delete=models.PROTECT, related_name="submissions")
     catalog_edition = models.ForeignKey(CatalogEdition, null=True, blank=True, on_delete=models.PROTECT, related_name="submissions")
     scoring_catalog_edition = models.ForeignKey(CatalogEdition, null=True, blank=True, on_delete=models.PROTECT, related_name="scored_submissions")
@@ -1831,11 +1903,44 @@ class BookSubmission(models.Model):
     class Meta:
         ordering = ["-submitted_at"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(participation_period__isnull=True, accepted_at__isnull=True, accepted_completed_on__isnull=True)
+                | Q(participation_period__isnull=False, accepted_at__isnull=False, accepted_completed_on__isnull=False),
+                name="submission_acceptance_fields_together",
+            ),
             models.CheckConstraint(condition=Q(submitted_pages__gt=0), name="submitted_pages_positive"),
             models.CheckConstraint(condition=Q(approved_pages__isnull=True) | Q(approved_pages__gt=0), name="approved_pages_positive_or_null"),
         ]
 
+    def validate_acceptance(self):
+        if self.participation_period_id is None:
+            if self.accepted_at is not None or self.accepted_completed_on is not None or self.acceptance_claims:
+                raise ValidationError("Acceptance evidence requires a participation period.")
+            return
+        period = self.participation_period
+        enrollment = period.enrollment
+        if (enrollment.month_id, enrollment.participant_id) != (self.month_id, self.participant_id):
+            raise ValidationError("The participation period must belong to this Reader and Challenge.")
+        if not self.accepted_at or not self.accepted_completed_on or not period.includes_acceptance(self.accepted_at):
+            raise ValidationError("Acceptance must be recorded within its participation period.")
+        try:
+            ZoneInfo(self.acceptance_claims["group_timezone"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError("Acceptance evidence requires a valid Group timezone.") from exc
+        if self._state.adding and (
+            period.ended_at is not None or not enrollment.is_active or enrollment.awaiting_scoring_team
+            or self.accepted_completed_on != self.completed_on
+        ):
+            raise ValidationError("New acceptance evidence must reflect the current eligible enrollment and completion date.")
+
+    @property
+    def has_verified_completion_period(self):
+        return bool(self.participation_period_id and self.participation_period.includes_completion(
+            self.accepted_completed_on, self.accepted_at, self.acceptance_claims["group_timezone"],
+        ))
+
     def clean(self):
+        self.validate_acceptance()
         if self.participant_id and self.month_id and self.participant.group_id != self.month.group_id:
             raise ValidationError("The participant must belong to the selected reading group.")
         if self.selected_botm_book_id or self.selected_tbr_book_id or self.reader_intent:
@@ -1861,24 +1966,47 @@ class BookSubmission(models.Model):
                 raise ValidationError("Hardcover-verified submissions must use the locked catalog page count.")
 
     def __str__(self):
-        return f"{self.participant.display_name}: {self.title}"
+        return f"{self.participant.user.username}: {self.title}"
 
     @transaction.atomic
     def save(self, *args, **kwargs):
+        previous = None
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).values(
-                'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent').first()
-            if previous and any(previous[key] != getattr(self, key) for key in previous):
+                'status', 'is_removed', 'removed_at', 'month_id', 'participant_id',
+                'participation_period_id', 'accepted_at', 'accepted_completed_on', 'acceptance_claims', 'late_approval_evidence', 'void_earning_evidence',
+                'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent',
+            ).first()
+            if previous and any(previous[key] != getattr(self, key) for key in (
+                'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent',
+            )):
                 raise ValidationError('Reader selection intent cannot be changed after submission.')
-        elif self.selected_botm_book_id or self.selected_tbr_book_id or self.reader_intent:
-            from .matching_intent import validate_intent
-            validate_intent(self, initial=True)
+            if previous and any(previous[key] != getattr(self, key) for key in (
+                'participation_period_id', 'accepted_at', 'accepted_completed_on', 'acceptance_claims', 'late_approval_evidence', 'void_earning_evidence',
+            )):
+                raise ValidationError('Acceptance evidence cannot be changed after submission.')
+            if self.participation_period_id:
+                self.validate_acceptance()
+        else:
+            if self.void_earning_evidence:
+                raise ValidationError("Void earning evidence can only be recorded through the void service.")
+            if self.late_approval_evidence:
+                raise ValidationError("Late-approval evidence can only be recorded through submission review.")
+            self.validate_acceptance()
+            if self.selected_botm_book_id or self.selected_tbr_book_id or self.reader_intent:
+                from .matching_intent import validate_intent
+                validate_intent(self, initial=True)
         if self.status == self.Status.APPROVED and self.approved_pages and self.final_scored_pages is None:
             self.final_scored_pages = self.approved_pages + self.bonus_pages
         elif self.status != self.Status.APPROVED:
             self.final_scored_pages = None
             self.bonus_pages = 0
+        if previous and (previous['month_id'],previous['participant_id'])!=(self.month_id,self.participant_id) and self.prompt_claims.exists():
+            raise ValidationError('Prompt selection history cannot be moved to another Reader or Challenge.')
         super().save(*args, **kwargs)
+        if previous and (previous['status'],previous['is_removed'])!=(self.status,self.is_removed):
+            from .prompt_reservations import synchronize_lifecycle
+            synchronize_lifecycle(self, previous=previous, actor=getattr(self, "_prompt_actor", None))
 
     def recalculate_score(self, save=True):
         from .scoring import preview_submission_score, refresh_submission_score
@@ -2094,6 +2222,10 @@ class ModifierProvenance(models.Model):
         TBR_COMPLETION = "tbr_completion", "Personal TBR completion bonus"
         IMMERSIVE = "immersive", "Immersive Reading bonus"
         GAME_REWARD = "game_reward", "Game/manual reward"
+        BINGO_PROMPT = 'bingo_prompt', 'Bingo prompt'
+        SCAVENGER_PROMPT = 'scavenger_prompt', 'Scavenger Hunt prompt'
+        BINGO_COMPLETION = 'bingo_completion', 'Bingo completion'
+        SCAVENGER_COMPLETION = 'scavenger_completion', 'Scavenger Hunt completion'
 
     month = models.ForeignKey(ChallengeMonth, on_delete=models.PROTECT, related_name="modifier_provenance")
     participant = models.ForeignKey(Membership, on_delete=models.PROTECT, related_name="modifier_provenance")
@@ -2150,7 +2282,7 @@ class ModifierProvenance(models.Model):
                 raise ValidationError("The related submission must belong to the same Challenge and Reader.")
 
     def __str__(self):
-        return f"{self.participant.display_name}: {self.source_label} (+{self.amount})"
+        return f"{self.participant.user.username}: {self.source_label} (+{self.amount})"
 
 
 class Game(models.Model):
@@ -2356,7 +2488,7 @@ class GameRewardRecipient(models.Model):
                 raise ValidationError({"provenance": "The scoring effect must match this Game reward recipient."})
 
     def __str__(self):
-        return f"{self.application.game_name_snapshot} — {self.participant.display_name}"
+        return f"{self.application.game_name_snapshot} — {self.participant.user.username}"
 
 
 AUDIT_ACTION_LABELS = {
@@ -2581,3 +2713,7 @@ class RegistrationAgreementAcceptance(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Historical agreement acceptance must be preserved.')
+
+
+# Shared optional prompt foundations; imported after related core models are defined.
+from .prompt_models import PromptCategory, ChallengePrompt, PromptClaim, PromptCompletion, ScavengerPhotoSubmission  # noqa: E402,F401

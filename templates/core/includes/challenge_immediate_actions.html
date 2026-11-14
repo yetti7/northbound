@@ -1,0 +1,62 @@
+{% load tz %}
+
+<section class="challenge-immediate" aria-label="Manage this Challenge">
+  <section class="card challenge-immediate-panel" aria-labelledby="manage-registration-title">
+    <div class="challenge-immediate-heading">
+      <h2 id="manage-registration-title">Registration</h2>
+      <span class="pill status-badge {% if registration_available %}status-success{% else %}status-neutral{% endif %}">{{ registration_available|yesno:"Open,Closed" }}</span>
+    </div>
+    <p>{% if registration_available %}Readers can currently sign up.{% else %}Readers can’t sign up right now.{% endif %}</p>
+    {% if registration_action %}
+      {% if registration_action == "close" %}
+        {% include "core/includes/challenge_action_dialog.html" with dialog_id="registration-dialog" label="Close Registration" description="Readers won’t be able to sign up after registration closes. Existing registrations will be kept." is_registration=True %}
+      {% else %}
+        {% include "core/includes/challenge_action_dialog.html" with dialog_id="registration-dialog" label="Open Registration" description="Eligible Readers will be able to sign up for this Challenge." is_registration=True %}
+      {% endif %}
+    {% elif can_edit_general %}
+      {% if registration_available and month.auto_close_registration and month.registration_closes_at and not month.registration_close_handled %}
+        <p>Registration is set to close automatically{% if month.registration_closes_at %} on {{ month.registration_closes_at|timezone:month.group.timezone|date:"M j, g:i A T" }}{% endif %}.</p>
+      {% elif registration_available and month.auto_close_registration %}
+        <p>Edit the closing schedule or turn off automatic closing to close registration manually.</p>
+      {% elif not registration_available and month.auto_open_registration and month.registration_opens_at and not month.registration_open_handled and month.status != "finalizing" %}
+        <p>Registration is set to open automatically{% if month.registration_opens_at %} on {{ month.registration_opens_at|timezone:month.group.timezone|date:"M j, g:i A T" }}{% endif %}.</p>
+      {% elif not registration_available and registration_stage and month.auto_open_registration %}
+        <p>To reopen registration, edit its opening schedule or turn off automatic opening.</p>
+      {% elif month.status == "draft" %}
+        <p>Publish this Challenge before opening registration manually.</p>
+      {% else %}
+        <p>Registration is unavailable at this stage.</p>
+      {% endif %}
+      <a class="button secondary" href="{% url 'challenge-schedule-settings' month.group.slug month.pk %}">Edit Schedule</a>
+    {% endif %}
+  </section>
+
+  <section class="card challenge-immediate-panel" aria-labelledby="manage-challenge-title">
+    <div class="challenge-immediate-heading">
+      <h2 id="manage-challenge-title">Challenge</h2>
+      <span class="pill status-badge {% if month.status == 'active' %}status-success{% else %}status-info{% endif %}">{{ schedule_status }}</span>
+    </div>
+    <p>{% if month.status == "draft" %}Publish when you’re ready for Group members to see the Challenge.
+      {% elif month.status == "upcoming" %}Readers can get ready. Book submissions open when the Challenge starts.
+      {% elif month.status == "active" %}Eligible Readers can submit books and staff can review them.
+      {% elif month.status == "finalizing" %}Submissions are closed. Staff can still review books.
+      {% elif month.status == "completed" %}Results are final.
+      {% else %}The Challenge and its results are available for reference.{% endif %}</p>
+    {% if forward_action %}
+      {% if forward_action.value in month.held_schedule_milestones %}<p>Automatic advancement is paused. Confirm when you’re ready.</p>{% endif %}
+      {% url 'challenge-lifecycle-transition' month.group.slug month.pk forward_action.value as transition_url %}
+      {% include "core/includes/challenge_action_dialog.html" with dialog_id="lifecycle-dialog" label=forward_action.label description=forward_action.description action_url=transition_url confirmation=forward_action.confirmation %}
+    {% elif month.status != "archived" %}
+      <p>Challenge changes require management permission.</p>
+    {% endif %}
+    {% if backward_action %}
+      <details class="schedule-reversal"><summary>Return to an earlier stage</summary>
+        {% if backward_conflict %}<p>{{ backward_conflict }}</p>
+        {% else %}
+          {% url 'challenge-lifecycle-transition' month.group.slug month.pk backward_action.value as backward_url %}
+          {% include "core/includes/challenge_action_dialog.html" with dialog_id="backward-dialog" label=backward_action.label description=backward_action.description action_url=backward_url confirmation=backward_action.confirmation secondary=True %}
+        {% endif %}
+      </details>
+    {% endif %}
+  </section>
+</section>

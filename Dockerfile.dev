@@ -1,0 +1,8 @@
+# Prepared context: full approved runtime tree at app/, never a previous-image delta.
+ARG NORTHBOUND_DEV_FOUNDATION=ghcr.io/yetti7/northbound@sha256:71b03b2446270d51e031011dbabe6d8affe05de77b8430c8cc1acc34b9c277ad
+FROM ${NORTHBOUND_DEV_FOUNDATION}
+ENV NORTHBOUND_VERSION=development
+COPY --chown=0:0 app/ /app/
+# Only image-local collected output is cleared; source static and media are distinct.
+RUN python -c "from reading_challenge.settings import BASE_DIR, STATIC_ROOT, MEDIA_ROOT; assert STATIC_ROOT == BASE_DIR / 'staticfiles'; assert STATIC_ROOT not in (BASE_DIR / 'static', MEDIA_ROOT)" \
+    && python manage.py collectstatic --clear --noinput

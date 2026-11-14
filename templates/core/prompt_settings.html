@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} Settings · {{ month.name }}{% endblock %}
+{% block content %}
+<section class="form-card"><p class="eyebrow">{{ month.name }} · Challenge Settings</p>
+<h1>{{ label }} Settings</h1><p>{{ month.name }}</p>
+<div class="notice">Phase 1: configuration only. Submission selectors, qualification and point awards are not operational.</div>
+{% if excluded %}<p class="notice" role="status">This Challenge is excluded from automated Bingo and Scavenger Hunt. Both categories must remain disabled.</p>{% endif %}
+{% if structure_locked %}<p class="notice" role="status">Activity has begun. Required prompt membership, numbers and retirement are locked. Wording and point settings may be corrected; existing selection and earning evidence remains unchanged. Structural corrections need a future previewed workflow.</p>{% endif %}
+<p>{{ prompts|length }} / 30 configured prompts (including retired prompts).</p>
+<form method="post" class="stacked-form standard-form">{% csrf_token %}<input type="hidden" name="action" value="category">{{ config_form.as_p }}<div class="form-actions"><button class="button primary" type="submit">Save Category Settings</button></div></form>
+</section>
+<section class="form-card"><h2>{% if prompt %}Edit Prompt {{ prompt.number }}{% else %}Add Prompt{% endif %}</h2>
+{% if structure_locked and not prompt %}<p>The required prompt set is frozen. Choose Edit on an existing prompt to correct its wording or points.</p>{% else %}
+<form method="post" class="stacked-form standard-form">{% csrf_token %}<input type="hidden" name="action" value="prompt">{{ prompt_form.as_p }}<div class="form-actions"><button type="submit" class="button primary">Save Prompt</button><a class="button secondary" href="{% url 'challenge-prompt-settings' month.group.slug month.pk kind %}">Cancel</a></div></form>{% endif %}
+</section>
+<section class="page-section"><h2>Configured Prompts</h2><div class="card-grid">
+{% for item in prompts %}<article class="card" style="min-width:0;overflow-wrap:anywhere"><h3>Prompt {{ item.number }}</h3><p style="white-space:pre-wrap">{{ item.description }}</p><p>{{ item.points }} points · {% if item.is_active %}Required{% else %}Retired{% endif %} · Revision {{ item.revision }}</p><a class="button secondary" href="{% url 'challenge-prompt-settings' month.group.slug month.pk kind %}?edit={{ item.pk }}">Edit Prompt {{ item.number }}</a></article>{% empty %}<p>No prompts configured. Both categories start disabled.</p>{% endfor %}
+</div></section>
+{% endblock %}

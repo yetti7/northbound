@@ -10,10 +10,10 @@ from django.utils import timezone
 from .botm_matching import synchronize_reader as synchronize_botm_reader
 from .game_rewards import apply_game_reward
 from .models import (
-    BookSubmission, BotmBook, BotmCompletionAward, BotmMatch, CatalogBook,
+    BookSubmission, BotmBook, BotmCompletionAward, BotmMatch, CatalogBook, CatalogEdition,
     ChallengeMonth, ChallengeStaffAssignment, Game, GameRewardApplication,
     GameRewardRecipient, Membership, ModifierProvenance, MonthEnrollment,
-    PersonalTBR, PersonalTBRBook, PersonalTBRCompletionAward,
+    PersonalTBR, PersonalTBRBook, PersonalTBRCompletionAward, PersonalTBRCompletionAwardBook,
     PersonalTBRMatch, ReadingGroup, RecoveryOperation, Team, TeamAssignment,
 )
 from .personal_tbr_matching import synchronize_reader as synchronize_tbr_reader
@@ -261,6 +261,152 @@ class ModifierDomainRecoveryTests(TestCase):
         self.assertEqual(self.botm_one.display_page_count, 310)
         self.assertIsNone(self.botm_one.display_refreshed_at)
 
+    def title_correction_entry(self):
+        PersonalTBR.objects.filter(pk=self.tbr.pk).update(confirmed_at=None)
+        catalog = CatalogBook.objects.create(
+            provider="hardcover", provider_book_id="title-only", title="Corrected Title", author="Writer",
+        )
+        edition = CatalogEdition.objects.create(
+            book=catalog, provider="hardcover", provider_edition_id="title-only-edition",
+        )
+        book = PersonalTBRBook.objects.create(
+            personal_tbr_id=self.tbr.pk, position=3, catalog_book=catalog, catalog_edition=edition,
+            title_snapshot="Mistyped Title", author_snapshot="Writer", page_count_snapshot=368,
+        )
+        PersonalTBR.objects.filter(pk=self.tbr.pk).update(confirmed_at=self.tbr.confirmed_at)
+        return book
+
+    def test_title_only_recovery_preserves_entry_and_all_scoring_records(self):
+        book = self.title_correction_entry()
+        url = reverse("recovery-tbr-title", args=[book.pk])
+        self.client.force_login(self.root)
+        self.assertContains(self.client.get(reverse("recovery-tbr-detail", args=[self.tbr.pk])), url)
+        models = (BookSubmission, PersonalTBRMatch, PersonalTBRCompletionAward, ModifierProvenance, PersonalTBR)
+        snapshots = {model: list(model.objects.order_by("pk").values()) for model in models}
+        before = PersonalTBRBook.objects.values().get(pk=book.pk)
+        preview = self.client.post(url, {"title": "Corrected Title"})
+        self.assertContains(preview, "Mistyped Title")
+        self.assertContains(preview, "Corrected Title")
+        self.assertEqual(PersonalTBRBook.objects.values().get(pk=book.pk), before)
+        self.assertFalse(RecoveryOperation.objects.filter(action="personal_tbr.correct_title").exists())
+        response = self.client.post(url, {
+            "action": "apply", "preview_token": preview.context["preview_token"],
+            "title": "Untrusted posted title", "reason": "Correct a spelling error",
+            "confirmation": f"Correct TBR title #{book.pk}", "current_password": "root-password-581!",
+        })
+        self.assertRedirects(response, reverse("recovery-tbr-detail", args=[self.tbr.pk]))
+        self.assertEqual(PersonalTBRBook.objects.values().get(pk=book.pk), {
+            **before, "title_snapshot": "Corrected Title", "display_title": "Corrected Title",
+            "normalized_title": "corrected title",
+        })
+        for model, snapshot in snapshots.items():
+            self.assertEqual(list(model.objects.order_by("pk").values()), snapshot)
+        operation = RecoveryOperation.objects.get(action="personal_tbr.correct_title")
+        self.assertEqual(operation.actor, self.root)
+        self.assertEqual(operation.target_id, str(book.pk))
+        self.assertEqual(operation.before_state["title_snapshot"], "Mistyped Title")
+        self.assertEqual(operation.after_state["title_snapshot"], "Corrected Title")
+
+    def test_title_only_recovery_rejects_unauthorized_duplicate_and_matched_entries(self):
+        book = self.title_correction_entry()
+        url = reverse("recovery-tbr-title", args=[book.pk])
+        self.client.force_login(self.owner_user)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.post(url, {"title": "Corrected Title"}).status_code, 403)
+        self.client.force_login(self.root)
+        self.assertContains(self.client.post(url, {"title": "STACKED BOOK"}), "already on the Personal TBR")
+        self.assertContains(self.client.post(
+            reverse("recovery-tbr-title", args=[self.tbr_one.pk]), {"title": "Corrected Title"},
+        ), "match, award, or Reader selection history")
+
+    def test_title_only_recovery_rejects_bad_confirmation_and_stale_preview(self):
+        book = self.title_correction_entry()
+        url = reverse("recovery-tbr-title", args=[book.pk])
+        self.client.force_login(self.root)
+        preview = self.client.post(url, {"title": "Corrected Title"})
+        data = {
+            "action": "apply", "preview_token": preview.context["preview_token"],
+            "reason": "Correct a spelling error", "confirmation": "wrong",
+            "current_password": "root-password-581!",
+        }
+        self.assertContains(self.client.post(url, data), "exactly to confirm")
+        data["confirmation"] = f"Correct TBR title #{book.pk}"
+        self.assertContains(self.client.post(url, {**data, "current_password": "wrong"}), "current Platform Owner password")
+        self.assertContains(self.client.post(url, {**data, "preview_token": data["preview_token"] + "x"}), "invalid or expired")
+        PersonalTBRBook.objects.filter(pk=book.pk).update(display_title="Refreshed after preview")
+        self.assertContains(self.client.post(url, data), "changed after the preview")
+        book.refresh_from_db()
+        self.assertEqual(book.title_snapshot, "Mistyped Title")
+        self.assertEqual(book.display_title, "Refreshed after preview")
+        self.assertFalse(RecoveryOperation.objects.filter(
+            action="personal_tbr.correct_title", result=RecoveryOperation.Result.SUCCEEDED,
+        ).exists())
+
+    def test_title_only_recovery_rechecks_selection_and_award_history_after_preview(self):
+        book = self.title_correction_entry()
+        url = reverse("recovery-tbr-title", args=[book.pk])
+        self.client.force_login(self.root)
+        preview = self.client.post(url, {"title": "Corrected Title"})
+        data = {
+            "action": "apply", "preview_token": preview.context["preview_token"],
+            "reason": "Correct a spelling error", "confirmation": f"Correct TBR title #{book.pk}",
+            "current_password": "root-password-581!",
+        }
+        BookSubmission.objects.filter(pk=self.submission.pk).update(selected_tbr_book=book)
+        self.assertContains(self.client.post(url, data), "match, award, or Reader selection history")
+        BookSubmission.objects.filter(pk=self.submission.pk).update(selected_tbr_book=None)
+        now = timezone.now()
+        award = PersonalTBRCompletionAward.objects.create(
+            personal_tbr=self.tbr, month=self.month, participant=self.reader,
+            completion_set_fingerprint="a" * 64, qualified_at=now, last_qualified_at=now,
+            effective_date=now.date(), is_qualifying=False,
+        )
+        PersonalTBRCompletionAwardBook.objects.bulk_create([PersonalTBRCompletionAwardBook(
+            award=award, personal_tbr_book=book, position_snapshot=book.position,
+            title_snapshot=book.title_snapshot, author_snapshot=book.author_snapshot,
+        )])
+        self.assertContains(self.client.post(url, data), "match, award, or Reader selection history")
+        book.refresh_from_db()
+        self.assertEqual(book.title_snapshot, "Mistyped Title")
+        self.assertFalse(RecoveryOperation.objects.filter(
+            action="personal_tbr.correct_title", result=RecoveryOperation.Result.SUCCEEDED,
+        ).exists())
+
+    def test_title_recovery_service_requires_owner_reason_and_audits_scope(self):
+        from django.core.exceptions import PermissionDenied
+        from .recovery_tbr_title import apply_tbr_title, preview_tbr_title, confirmation_label
+        book=self.title_correction_entry()
+        book.refresh_from_db()  # Discard the fixture's pre-confirmation relation cache.
+        with self.assertRaises(PermissionDenied):
+            preview_tbr_title(book=book,actor=self.owner_user,title='Corrected Title')
+        token=preview_tbr_title(book=book,actor=self.root,title='Corrected Title')
+        kwargs=dict(book=book,actor=self.root,token=token,confirmation=confirmation_label(book),current_password='root-password-581!')
+        with self.assertRaises(ValidationError):apply_tbr_title(**kwargs,reason='  ')
+        book.refresh_from_db()
+        self.assertEqual(book.title_snapshot,'Mistyped Title')
+        operation=apply_tbr_title(**kwargs,reason='Correct spelling only')
+        self.assertEqual(operation.group_id,self.group.pk)
+        self.assertEqual(operation.challenge_id,self.month.pk)
+        self.assertEqual(operation.reason,'Correct spelling only')
+        self.assertEqual(operation.actor_id,self.root.pk)
+        self.assertEqual(operation.tier,3)
+
+    def test_title_recovery_preserves_explicit_completed_and_archived_exception(self):
+        from .recovery_tbr_title import apply_tbr_title, preview_tbr_title, confirmation_label
+        book = self.title_correction_entry()
+        for stage in ('completed', 'archived'):
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(status=stage)
+            book.refresh_from_db()
+            title = 'Corrected Title ' + stage
+            apply_tbr_title(book=book, actor=self.root,
+                token=preview_tbr_title(book=book, actor=self.root, title=title),
+                reason='Correct historical spelling without changing credit',
+                confirmation=confirmation_label(book), current_password='root-password-581!')
+            book.refresh_from_db()
+            self.assertEqual(book.title_snapshot, title)
+        self.assertEqual(RecoveryOperation.objects.filter(action='personal_tbr.correct_title',
+            target_id=str(book.pk), result=RecoveryOperation.Result.SUCCEEDED).count(), 2)
+
     def test_locked_tbr_entry_repair_requires_tier_three_and_reruns_matching(self):
         values = {
             "catalog_book": self.catalog_one, "catalog_edition": None,
@@ -443,7 +589,7 @@ class ModifierDomainRecoveryTests(TestCase):
     def test_tier_three_ui_requires_reason_exact_confirmation_and_password(self):
         self.client.force_login(self.root)
         url = reverse("recovery-tbr-entry", kwargs={"pk": self.tbr_one.pk})
-        label = f"Locked TBR entry #{self.tbr_one.pk}: {self.reader.display_name} — position {self.tbr_one.position}"
+        label = f"Locked TBR entry #{self.tbr_one.pk}: {self.reader.user.username} — position {self.tbr_one.position}"
         base = {
             "catalog_book": self.catalog_one.pk, "catalog_edition": "",
             "title_snapshot": self.tbr_one.title_snapshot,

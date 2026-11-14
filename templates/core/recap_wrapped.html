@@ -1,0 +1,39 @@
+{% extends "base.html" %}{% load static %}
+{% block title %}Wrapped · Northbound{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/recap.css' %}"><link rel="stylesheet" href="{% static 'css/wrapped.css' %}?v=team-branding-c1">{% endblock %}
+{% block content %}
+<div class="wrapped-top"><p class="eyebrow">Northbound Wrapped</p>{% if not logical_parent_url %}{% include "core/includes/page_return.html" with destination=dashboard_url label="Back to Chronicle" only %}{% endif %}</div>
+{% if slides %}
+<section class="wrapped-shell" data-wrapped role="region" aria-roledescription="carousel" aria-label="Northbound Wrapped" aria-describedby="wrapped-help">
+<p id="wrapped-help" class="visually-hidden">Use Previous and Next, Left and Right arrow keys, Home and End, or swipe horizontally. Scroll vertically within a slide if needed.</p>
+<div class="wrapped-stage" id="wrapped-stage" data-wrapped-stage>
+{% for slide in slides %}<article class="wrapped-slide wrapped-slide-{{ slide.kind }}" data-wrapped-slide role="group" aria-roledescription="slide" aria-labelledby="wrapped-heading-{{ forloop.counter }}" aria-label="Slide {{ forloop.counter }} of {{ slides|length }}" tabindex="-1">
+<div class="wrapped-slide-inner"><header class="wrapped-slide-heading">{% if slide.kind == 'opening' %}<div class="wrapped-opening-branding"><img class="wrapped-full-logo wrapped-opening-northbound" src="{% static 'branding/northbound-header-dark.png' %}" alt="Northbound — Reading. Challenges. Together." width="700" height="233"></div>{% endif %}<span class="pill">{{ slide.mode }}</span><h1 id="wrapped-heading-{{ forloop.counter }}">{{ slide.title }}</h1>
+{% if slide.subject %}<p class="wrapped-subject">{{ slide.subject }} · {{ slide.challenge }}</p><p class="muted">{{ slide.group }} · {{ slide.timezone }} · {{ slide.period }}{% if slide.from_date %}<br>{{ slide.from_date }} through {{ slide.to_date }}{% endif %}</p>{% else %}<p class="wrapped-subject">{{ slide.perspective }}{% if slide.perspective %} · {% endif %}{{ slide.period }}</p>{% endif %}</header>
+
+{% if slide.cards %}<div class="wrapped-metrics">{% for card in slide.cards %}<div class="wrapped-metric"><p class="eyebrow">{{ card.label }}</p><strong class="recap-value" style="--recap-digits:{{ card.digits }}">{{ card.value }}</strong>{% if card.detail %}<p class="muted">{{ card.detail }}</p>{% endif %}</div>{% endfor %}</div>{% endif %}
+{% if slide.books %}<div class="wrapped-books">{% for book in slide.books %}<figure>{% include "core/includes/book_cover.html" with image_url=book.cover_url title=book.title defer_load=True %}<figcaption><strong>{{ book.title }}</strong><span>{{ book.author }}</span></figcaption></figure>{% endfor %}</div>{% endif %}
+{% if slide.kind == 'teams' %}{% include 'core/includes/recap_team_bars.html' with rows=slide.rows %}{% elif slide.rows %}<ol class="wrapped-results plain-list">{% for row in slide.rows %}<li><span>{% if slide.kind == 'teams' %}{{ row.name }}{% else %}{{ row.reader }}{% endif %}</span><strong>{{ row.points }} points</strong></li>{% endfor %}</ol>{% endif %}
+{% if slide.caption %}<p class="wrapped-caption">{{ slide.caption }}</p>{% endif %}
+{% if slide.kind == 'summary' %}{% include 'core/includes/recap_summary_card.html' with suppress_community_branding=True %}{% endif %}
+{% if slide.notes %}<ul class="wrapped-notes">{% for note in slide.notes %}<li>{{ note }}</li>{% endfor %}</ul><a class="button primary" href="{{ dashboard_url }}">Return to your Chronicle</a>{% endif %}
+</div></article>{% endfor %}
+</div>
+<nav class="wrapped-controls" data-wrapped-controls aria-label="Wrapped navigation" hidden><button class="button secondary" type="button" data-wrapped-prev aria-controls="wrapped-stage" disabled>← Previous</button><div class="wrapped-progress"><span data-wrapped-status role="status" aria-live="polite" aria-atomic="true">Slide 1 of {{ slides|length }}</span><progress data-wrapped-progress value="1" max="{{ slides|length }}" aria-label="Wrapped slide progress"></progress></div><button class="button primary" type="button" data-wrapped-next aria-controls="wrapped-stage">Next →</button></nav>
+<fieldset class="wrapped-export" data-wrapped-export hidden>
+<legend>Download Wrapped</legend>
+<p class="muted">Names and community artwork are excluded unless selected below.</p>
+{% if recap.perspective == 'reader' %}<label><input type="checkbox" data-export-identity="reader"> Include Reader username</label>{% endif %}
+<div class="wrapped-branding-controls"><label for="id_branding_source">Branding Source</label>{{ branding_form.branding_source }}{% if has_team_branding %}<div data-branding-team-control><label for="id_branding_team">Team artwork only</label>{{ branding_form.branding_team }}</div>{% endif %}</div>
+<label><input type="checkbox" data-export-identity="community" aria-describedby="wrapped-branding-help"> Include Community Branding</label>
+<p class="muted" id="wrapped-branding-help">Branding changes artwork only, never the recap. Community Branding includes the selected identity’s name and artwork, including a selected Team name. Separate Reader/team-name controls affect report labels only.</p>
+{% if recap.perspective != 'reader' %}<label><input type="checkbox" data-export-identity="team"> Include team names in report labels</label>{% endif %}
+<div class="wrapped-export-actions"><button type="button" class="button secondary" data-export-slide>Download This Slide</button><button type="button" class="button primary" data-export-summary>Download Summary</button></div>
+<p role="status" aria-live="polite" data-export-status></p>
+</fieldset>
+{{ export_data|json_script:"wrapped-export-data" }}
+<noscript><p class="notice">JavaScript is unavailable. Your slides are shown below in reading order; book-cover placeholders remain available.</p></noscript>
+</section>
+{% else %}<section class="empty-state"><h1>No Wrapped slides available</h1>{% if form.errors %}<div role="alert">{{ form.errors }}</div>{% else %}<p>{{ recap.empty_message|default:"Choose valid Chronicle filters to view your Wrapped." }}</p>{% endif %}<a class="button primary" href="{{ dashboard_url }}">Adjust Chronicle filters</a></section>{% endif %}
+{% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/wrapped.js' %}" defer></script><script src="{% static 'js/wrapped_export.js' %}?v=team-branding-c1" defer></script>{% endblock %}

@@ -14,6 +14,7 @@ from django.views.decorators.debug import sensitive_variables
 
 from .integrations.hardcover import fetch_edition_metadata, resolve_scoring_edition
 from .models import (
+    MonthEnrollment,
     AuditEvent, BookSubmission, CatalogEdition, ThemeClaim, MonthTheme,
     PersonalTBRMatch, BotmMatch, ModifierProvenance, PersonalTBRCompletionAward,
     BotmCompletionAward, PersonalTBRBook, BotmBook, ImmersiveRequest,
@@ -31,7 +32,7 @@ FIELDS = ('title', 'author', 'catalog_book_id', 'catalog_edition_id', 'scoring_c
           'reviewed_by_id', 'reviewed_at', 'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent')
 CLAIM_FIELDS = ('id', 'theme_id', 'status', 'approved_bonus_pages', 'award_finalized', 'award_rule',
                 'award_version', 'award_percentage', 'award_basis_pages', 'award_bonus_pages')
-ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode'}
+ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode', 'bingo_prompt_id', 'scavenger_prompt_id', 'prompt_decisions'}
 PER_BOOK = (ModifierProvenance.SourceType.THEME_BONUS, ModifierProvenance.SourceType.TBR_BOOK,
             ModifierProvenance.SourceType.BOTM_BOOK)
 
@@ -72,6 +73,8 @@ def _reader_state(submission):
         state[model.__name__] = _rows(model.objects.filter(**scope), fields)
     state['ImmersiveRequest'] = _rows(ImmersiveRequest.objects.filter(submission=submission),
         ('id', 'status', 'captured_percent', 'awarded_pages', 'is_active'))
+    from .prompt_reservations import prompt_state
+    state['prompt_reservations'] = prompt_state(submission)
     return state
 
 
@@ -319,6 +322,9 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
     if changes.get('association_mode') == 'only' and (
             set(changes) != {'catalog_edition_id', 'association_mode'} or type(changes['catalog_edition_id']) is not int):
         raise ValidationError('Associate Only requires a selected edition and no other corrections.')
+    from .prompt_reservations import require_ready, replace_selections, selection_changes
+    prompt_selections = {kind:changes[kind+'_prompt_id'] for kind in ('bingo','scavenger') if kind+'_prompt_id' in changes}
+    if prompt_selections or changes.get("prompt_decisions"): require_ready()
     current = _load(submission.pk)
     _authorize(actor, current)
     _check_version(current, actor, version)
@@ -340,23 +346,45 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
         if changes.get("association_mode") != "only" and is_active_floater(current.month, current.participant_id):
             raise ValidationError("Active Floater scores cannot be changed through ordinary corrections.")
         before = _reader_state(current)
+        current._prompt_actor = actor
         _apply_fields(current, changes, edition_data)
         if changes.get('association_mode') == 'only':
             current.save()
         else:
             theme_plan = _theme_plan(current, changes)
+            if current.status == "approved" and MonthEnrollment.objects.filter(
+                month=current.month, participant=current.participant,
+            ).exclude(is_active=True, awaiting_scoring_team=False).exists():
+                claims, _, eligible_ids, _ = theme_plan
+                if any(key not in claims or claims[key].status != "approved" for key in eligible_ids):
+                    raise ValidationError("Current scoring eligibility is required to add new Theme credit.")
+            earned_prompt_change = bool(changes.get('prompt_decisions') or (prompt_selections and current.prompt_claims.filter(is_current=True).exclude(earning_evidence={}).exists()))
+            if earned_prompt_change and not (_preview or _expected_impact is not None):
+                raise ValidationError('Preview earned prompt corrections before applying.')
+            identity_changed=any(before['submission'][key]!=getattr(current,key) for key in ('title','author','catalog_book_id','catalog_edition_id','completed_on'))
+            if identity_changed:
+                for claim in current.prompt_claims.filter(is_current=True,state='qualified').exclude(earning_evidence={} ).select_related('category'):
+                    kind=claim.category.kind
+                    if prompt_selections.get(kind,claim.prompt_id)==claim.prompt_id and changes.get('prompt_decisions',{}).get(kind)!='rejected':
+                        raise ValidationError('Reject or remove earned prompt qualification in the preview before changing the book identity or completion date.')
             meaningful_fields = set(FIELDS) - {'status', 'reviewed_by_id', 'reviewed_at'}
             original_themes = {key for key, claim in theme_plan[0].items() if claim.status != 'rejected'}
             if (not any(before['submission'][key] != getattr(current, key) for key in meaningful_fields)
-                    and set(theme_plan[1]) == original_themes):
+                    and set(theme_plan[1]) == original_themes
+                    and not selection_changes(current, prompt_selections) and not changes.get("prompt_decisions")):
                 raise ValidationError('No changes to save. Change a field or select a new Hardcover edition.')
             matching_changed = any(before['submission'][key] != getattr(current, key)
                                    for key in ('title', 'author', 'catalog_book_id', 'status', 'completed_on'))
             old_tbr = set(current.personal_tbr_matches.filter(is_qualifying=True).values_list('personal_tbr_book_id', flat=True)) if matching_changed else set()
             old_botm = set(current.botm_matches.filter(is_qualifying=True).values_list('botm_book_id', flat=True)) if matching_changed else set()
-            current.reviewed_by = actor
-            current.reviewed_at = timezone.now()
+            # Replace explicit choices before status transitions re-reserve retained choices.
+            from .prompt_scoring import correction_ticket,review_prompts
+            ticket=correction_ticket(current,actor,prompt_selections) if earned_prompt_change else None
+            replace_selections(submission=current, actor=actor, selections=prompt_selections,preview_authorization=ticket)
             current.save()
+            decisions=changes.get('prompt_decisions',{})
+            review_ticket=correction_ticket(current,actor,{'decisions':decisions}) if earned_prompt_change else None
+            review_prompts(current,actor,decisions,correction_authorization=review_ticket)
             _themes(current, actor, theme_plan)
             refresh_submission_score(current)
             if matching_changed:
@@ -381,6 +409,7 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
             return result
         AuditEvent.objects.create(actor=actor, group=current.month.group, action='submission.corrected',
             object_type='BookSubmission', object_id=str(current.pk), summary=_json({
+                'challenge_id': current.month_id,
                 'manual_page_override': 'page_count' in changes,
                 'association_mode': changes.get('association_mode', 'update'),
                 'before': before, 'after': after,
@@ -403,6 +432,9 @@ def _correction_impact(submission):
                           (ModifierProvenance, ('submission_id', 'source_type', 'source_label', 'amount', 'effective_date', 'is_active'))):
         rows = list(model.objects.filter(month=submission.month, participant=submission.participant).values_list(*fields))
         data[model.__name__] = sorted(rows, key=_json)
+    data['prompt_selections'] = list(submission.prompt_claims.filter(is_current=True).order_by('category__kind').values_list('category__kind','prompt_id','state'))
+    from .prompt_models import PromptCompletion
+    data['prompt_completions'] = list(PromptCompletion.objects.filter(category__month=submission.month,participant_id=submission.participant_id).order_by('category_id').values_list('category_id','is_active','bonus_amount_snapshot','effective_date'))
     data['themes'] = list(submission.theme_claims.order_by('theme_id').values_list(
         'theme_id', 'status', 'approved_bonus_pages', 'award_percentage'))
     data['immersive'] = list(ImmersiveRequest.objects.filter(submission=submission).order_by('pk').values_list(

@@ -148,9 +148,9 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertContains(teams, "team-card-entry")
         self.assertNotContains(teams, "View Team")
         self.assertNotContains(teams, "member-chip")
-        self.assertNotContains(teams, "Aaron Reader")
-        self.assertNotContains(teams, "Beth Reader")
-        self.assertContains(teams, "Team Leaders: Amy Leader, Zoe Leader")
+        self.assertNotContains(teams, "hierarchy-reader")
+        self.assertNotContains(teams, "hierarchy-reader-b")
+        self.assertContains(teams, "Team Leaders: hierarchy-leader-a, hierarchy-leader-z")
         self.assertContains(teams, "Edit Team")
         self.assertContains(teams, "Manage Team Leaders")
 
@@ -167,15 +167,15 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, self.team.name)
         self.assertContains(response, self.team.color)
-        self.assertContains(response, "Displayed Team Total")
+        self.assertContains(response, "Team Total")
         self.assertContains(response, ">430<")
         self.assertEqual(
-            [assignment.participant.display_name for assignment in response.context["roster"]],
-            ["Amy Leader", "Zoe Leader", "Aaron Reader", "Beth Reader"],
+            [assignment.participant.user.username for assignment in response.context["roster"]],
+            ["hierarchy-leader-a", "hierarchy-leader-z", "hierarchy-reader", "hierarchy-reader-b"],
         )
         self.assertEqual(
-            [assignment.membership.display_name for assignment in response.context["current_leaders"]],
-            ["Amy Leader", "Zoe Leader"],
+            [assignment.membership.user.username for assignment in response.context["current_leaders"]],
+            ["hierarchy-leader-a", "hierarchy-leader-z"],
         )
         self.assertEqual(response.context["logical_parent_url"], self.teams_url)
         reader_assignment = next(assignment for assignment in response.context["roster"] if assignment.participant_id == self.reader.pk)
@@ -185,7 +185,7 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertContains(response, reverse("challenge-participant-detail", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": self.reader.pk}))
         self.assertContains(response, "team-detail-desktop")
         self.assertContains(response, "team-detail-mobile")
-        self.assertNotContains(response, "private-leader")
+        self.assertContains(response, 'data-discord="private-leader"')
         self.assertEqual(TeamAssignment.objects.filter(month=self.month, team=self.team, ended_at__isnull=True).count(), 4)
 
     def test_show_bonuses_display_contract_is_local_and_preserves_all_data(self):
@@ -208,7 +208,8 @@ class TeamPlanningFoundationTests(TestCase):
         base_only = self.client.get(self.team_url, {"bonuses": "0"})
         self.assertNotContains(base_only, "<th>Modifier</th>", html=True)
         self.assertContains(base_only, "Filtered roster · Base only")
-        self.assertEqual(base_only.context["team_total"], 350)
+        self.assertEqual(base_only.context["roster_total"], 350)
+        self.assertEqual(base_only.context["team_total"], 430)
         submission.refresh_from_db()
         self.month.refresh_from_db()
         state_after = (
@@ -223,26 +224,26 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertContains(self.client.get(self.teams_url), ">430<")
         self.assertContains(self.client.get(self.detail_url), ">430<")
 
-    def test_team_detail_sorting_is_numeric_predictable_and_preserves_leader_priority(self):
+    def test_team_detail_numeric_sorting_ignores_roles_and_default_preserves_priority(self):
         self.client.force_login(self.host_user)
         expectations = {
-            ("reader", "asc"): ["Amy Leader", "Zoe Leader", "Aaron Reader", "Beth Reader"],
-            ("reader", "desc"): ["Zoe Leader", "Amy Leader", "Beth Reader", "Aaron Reader"],
-            ("base", "asc"): ["Zoe Leader", "Amy Leader", "Beth Reader", "Aaron Reader"],
-            ("base", "desc"): ["Amy Leader", "Zoe Leader", "Aaron Reader", "Beth Reader"],
-            ("modifier", "asc"): ["Amy Leader", "Zoe Leader", "Aaron Reader", "Beth Reader"],
-            ("modifier", "desc"): ["Amy Leader", "Zoe Leader", "Beth Reader", "Aaron Reader"],
-            ("total", "asc"): ["Zoe Leader", "Amy Leader", "Beth Reader", "Aaron Reader"],
-            ("total", "desc"): ["Amy Leader", "Zoe Leader", "Aaron Reader", "Beth Reader"],
+            ("reader", "asc"): ["hierarchy-leader-a", "hierarchy-leader-z", "hierarchy-reader", "hierarchy-reader-b"],
+            ("reader", "desc"): ["hierarchy-leader-z", "hierarchy-leader-a", "hierarchy-reader-b", "hierarchy-reader"],
+            ("base", "asc"): ['hierarchy-leader-z', 'hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a'],
+            ("base", "desc"): ['hierarchy-leader-a', 'hierarchy-reader', 'hierarchy-reader-b', 'hierarchy-leader-z'],
+            ("modifier", "asc"): ['hierarchy-leader-a', 'hierarchy-leader-z', 'hierarchy-reader', 'hierarchy-reader-b'],
+            ("modifier", "desc"): ['hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a', 'hierarchy-leader-z'],
+            ("total", "asc"): ['hierarchy-leader-z', 'hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a'],
+            ("total", "desc"): ['hierarchy-leader-a', 'hierarchy-reader', 'hierarchy-reader-b', 'hierarchy-leader-z'],
         }
         for (sort, direction), expected in expectations.items():
             with self.subTest(sort=sort, direction=direction):
                 response = self.client.get(self.team_url, {"sort": sort, "direction": direction})
-                self.assertEqual([item.participant.display_name for item in response.context["roster"]], expected)
+                self.assertEqual([item.participant.user.username for item in response.context["roster"]], expected)
                 self.assertEqual(response.context["sort_key"], sort)
                 self.assertEqual(response.context["sort_direction"], direction)
         response = self.client.get(self.team_url)
-        self.assertContains(response, "team-mobile-sort")
+        self.assertContains(response, "team-roster-sort")
         modifier_desc = self.client.get(self.team_url, {"sort": "modifier", "direction": "desc"})
         self.assertEqual(modifier_desc.context["sort_key"], "modifier")
         self.assertContains(modifier_desc, 'value="modifier" selected')
@@ -271,3 +272,50 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertFalse(Membership.objects.filter(user=self.platform_owner).exists())
         self.assertFalse(ChallengeStaffAssignment.objects.filter(membership__user=self.platform_owner).exists())
         self.assertFalse(MonthEnrollment.objects.filter(participant__user=self.platform_owner).exists())
+
+    def test_numeric_progress_sorts_all_roles_and_preserves_missing_last(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        self.client.force_login(self.host_user)
+        readers=[self.leader_a,self.leader_z,self.reader,self.reader_b]
+        # Real view sorting with isolated progress-source fixtures: Reader beats Leaders.
+        from .models import MonthTheme,BotmBook
+        for i in range(2):
+            MonthTheme.objects.create(month=self.month,name='Sort Theme '+str(i),starts_on=self.month.starts_on,ends_on=self.month.ends_on)
+            BotmBook.objects.create(month=self.month,position=i+1,title_snapshot='Sort BOTM '+str(i),author_snapshot='Author',page_count_snapshot=100)
+        theme_rows=[(self.reader.pk,1),(self.reader.pk,2),(self.leader_a.pk,1)]
+        tbrs=[SimpleNamespace(enrollment=SimpleNamespace(participant_id=m.pk),books=SimpleNamespace(count=lambda n=n:n))
+              for m,n in [(self.reader,4),(self.leader_a,2),(self.reader_b,4)]]
+        tbr_rows=[(self.reader.pk,11),(self.reader.pk,12),(self.reader.pk,13),(self.leader_a.pk,21)]
+        botm_rows=[(self.reader.pk,1),(self.reader.pk,2),(self.leader_a.pk,1)]
+        with patch('core.views.ThemeClaim') as themes,patch('core.views.PersonalTBR') as lists,patch('core.views.PersonalTBRMatch') as tbr,patch('core.views.BotmMatch') as botm:
+            themes.objects.filter.return_value.values_list.return_value=theme_rows
+            lists.objects.filter.return_value.select_related.return_value.prefetch_related.return_value=tbrs
+            tbr.objects.filter.return_value.values_list.return_value=tbr_rows
+            botm.objects.filter.return_value.values_list.return_value=botm_rows
+            for metric in ['themes','tbr','botm']:
+                for direction in ['asc','desc']:
+                    response=self.client.get(self.team_url,{'sort':metric,'direction':direction})
+                    roster=response.context['roster']
+                    if metric=='themes':values=[r.theme_completed for r in roster]
+                    elif metric=='tbr':values=[r.tbr_completed/r.tbr_total for r in roster if r.tbr_total]
+                    else:values=[r.botm_completed/r.botm_total for r in roster if r.botm_total]
+                    self.assertEqual(values,sorted(values,reverse=direction=='desc'))
+                    if metric=='tbr':self.assertIsNone(roster[-1].tbr_total)
+        for direction in ['asc','desc']:
+            response=self.client.get(self.team_url,{'sort':'role','direction':direction})
+            roles=[r.is_team_leader for r in response.context['roster']]
+            self.assertEqual(roles,sorted(roles,reverse=direction=='asc'))
+        default=self.client.get(self.team_url).context['roster']
+        self.assertEqual([r.is_team_leader for r in default],[True,True,False,False])
+
+    def test_numeric_tie_uses_username_not_role_and_keeps_ids_stable(self):
+        user=get_user_model().objects.create_user('aardvark-reader')
+        member=self.member(user,'Reader')
+        MonthEnrollment.objects.create(month=self.month,participant=member)
+        TeamAssignment.objects.create(month=self.month,participant=member,team=self.team)
+        self.client.force_login(self.host_user)
+        for direction in ['asc','desc']:
+            rows=self.client.get(self.team_url,{'sort':'base','direction':direction}).context['roster']
+            zeros=[r.participant_id for r in rows if r.base_pages==0]
+            self.assertEqual(zeros,[member.pk,self.leader_z.pk])

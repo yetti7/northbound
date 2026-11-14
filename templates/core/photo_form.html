@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}{% if photo %}Edit{% else %}Submit{% endif %} Photo · {{ month.name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/photo_submissions.css' %}">{% endblock %}
+{% block content %}<div class="photo-reader-page">
+<div class="page-heading"><div><p class="eyebrow">{{ month.name }}</p><h1>{% if photo %}Edit Pending Photo{% else %}Scavenger Hunt — Photo{% endif %}</h1><p>Photos stay in Discord. No book or image upload is required.</p></div></div>
+{% if not photo %}{% include 'core/includes/photo_submission_type.html' %}{% endif %}
+<section class="form-card"><form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.non_field_errors }}{{ form.version }}{{ form.version.errors }}
+{{ form.prompt.as_field_group }}{{ form.discord_message_url.as_field_group }}
+{% if photo %}<p class="muted">Your original confirmation and submission time are preserved.</p>{% else %}<fieldset class="photo-confirmation"><legend>Required confirmation</legend>{{ form.reader_confirmed.errors }}<label for="{{ form.reader_confirmed.id_for_label }}">{{ form.reader_confirmed }} <span>I have posted my photo in the designated Discord channel.</span></label></fieldset>{% endif %}
+<div class="form-actions"><button class="button primary">{% if photo %}Save Photo{% else %}Submit Photo{% endif %}</button><a class="button secondary" href="{% if photo %}{% url 'photo-detail' month.group.slug month.pk photo.pk %}{% else %}{{ month.get_absolute_url }}{% endif %}">Cancel</a></div>
+</form></section></div>{% endblock %}

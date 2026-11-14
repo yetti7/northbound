@@ -1,3 +1,7 @@
+from .photo_history import reader_photo_history
+from .photo_submissions import can_submit_photo
+from .prompt_scoring import pending_submission_ids as pending_prompt_submissions
+from .prompt_reservations import reservations_ready as prompt_reservations_ready
 from django.contrib import messages
 from django.conf import settings
 from django.core import signing
@@ -18,7 +22,7 @@ from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 import secrets
 import hashlib
 import csv
@@ -43,7 +47,7 @@ from .permissions import (
     challenge_roster_read_scope, roster_read_scope_includes,
     restricted_host_team_ids, host_scope_allows_reader, can_run_challenge_wide_operations, is_active_floater, group_directory_visible_member_ids,
 )
-from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_void_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
+from .permissions import can_configure_competition_visibility, can_manage_challenge_announcements, can_manage_challenge_hosts, can_manage_group, can_manage_group_announcements, can_manage_months, can_manage_participants, can_manage_permissions, can_operate_challenge, can_review_challenge, can_review_submission, can_restore_submission, can_void_submission, can_transition_challenge, can_view_access_code, can_view_challenge, can_view_reader_scores, can_view_team_standings, challenge_review_scope, membership_for, scope_reviewable_submissions, visible_challenges_for
 from .backups import automatic_backup_directory, create_stored_backup, list_automatic_backups, list_stored_backups, next_scheduled_backup, pending_restore_path, stage_restore, stage_stored_restore, stored_backup_path
 from .platform_config import get_platform_settings, get_platform_timezone
 from .maintenance import AUDIT_RETENTION_YEARS, audit_prune_preview, cleanup_disposable_cache, disposable_cache_usage, optimize_sqlite_database, prune_audit_history, storage_overview
@@ -53,7 +57,7 @@ from .review_attention import needs_attention_summary
 from .participation import activate_participation, assign_participant_to_team, deactivate_participation, end_team_assignment
 from .reader_planning import historical_reader_planning_data
 from .scoring import apply_submission_review
-from .score_aggregation import challenge_score_totals
+from .score_aggregation import challenge_score_totals, challenge_team_totals
 from .game_rewards import apply_game_reward, game_reward_application_unavailable_reason, preview_game_reward, void_game_reward
 from .botm_configuration import add_botm_book, delete_unused_botm_book, reactivate_botm_book, retire_botm_book, update_botm_book
 from .botm_matching import adjudicate_match, synchronize_challenge, synchronize_submission
@@ -67,6 +71,8 @@ from .hardcover_oauth import (
 )
 from .hardcover_sync import make_existing_reader_events_due, reader_sync_capability, reader_sync_health
 from .health import health_response
+from .permissions import can_manage_team_assignments, can_view_team_books
+from .submission_activity import can_view_staff_activity, submission_timeline
 from .personal_tbr import confirm_personal_tbr, replace_draft_personal_tbr, save_staff_challenge_tbr, staff_tbr_version
 from .permissions import can_manage_challenge_tbr
 from .forms import StaffChallengeTbrBookFormSet
@@ -141,16 +147,35 @@ def reject_locked_month(request, month, action="change this Challenge"):
     return True
 
 
+LIFECYCLE_STATUS_LABELS = {
+    "draft": "Draft", "upcoming": "Coming Soon", "active": "In Progress",
+    "finalizing": "Reviewing Results", "completed": "Completed", "archived": "Archived",
+}
+LIFECYCLE_FORWARD_ACTIONS = {
+    "upcoming": ("Publish Challenge", "Group members will be able to see this Challenge."),
+    "active": ("Start Challenge", "Eligible Readers can start submitting books."),
+    "finalizing": ("End Submissions", "Readers will no longer be able to submit new books. Staff can still review existing submissions."),
+    "completed": ("Make Results Final", "Results will become final, and ordinary submission and scoring changes will be locked."),
+    "archived": ("Archive Challenge", "The Challenge and its results will be kept for reference. This cannot be undone through normal settings."),
+}
+LIFECYCLE_BACKWARD_ACTIONS = {
+    "draft": "Return to Draft", "upcoming": "Return to Coming Soon",
+    "active": "Resume Submissions", "finalizing": "Reopen Results for Review",
+}
+
+
 def lifecycle_transition_targets(month):
     order = month.lifecycle_order()
-    current_index = order.index(month.status)
-    if month.status == ChallengeMonth.Status.ARCHIVED:
+    index = order.index(month.status)
+    if month.status == month.Status.ARCHIVED:
         return []
     targets = []
-    if current_index > 0:
-        targets.append({"value": order[current_index - 1], "label": dict(ChallengeMonth.Status.choices)[order[current_index - 1]], "backward": True})
-    if current_index < len(order) - 1:
-        targets.append({"value": order[current_index + 1], "label": dict(ChallengeMonth.Status.choices)[order[current_index + 1]], "backward": False})
+    if index + 1 < len(order):
+        value = order[index + 1]
+        targets.append({"value": value, "label": LIFECYCLE_FORWARD_ACTIONS[value][0], "backward": False})
+    if index > 0:
+        value = order[index - 1]
+        targets.append({"value": value, "label": LIFECYCLE_BACKWARD_ACTIONS[value], "backward": True})
     return targets
 
 
@@ -595,6 +620,7 @@ def my_stats(request):
         "groups": groups,
         "months": months,
         "submissions": submissions,
+        **reader_photo_history(request),
         "profile": profile,
     })
 
@@ -682,14 +708,16 @@ def _add_recovery_error(form, error):
             form.add_error(None, message)
 
 
-def _recovery_confirmation_page(request, *, form, title, description, cancel_url, tier, impact=None, action_label="Confirm Recovery", checkpoint=None):
+def _recovery_confirmation_page(request, *, form, title, description, cancel_url, tier, impact=None, action_label="Confirm Recovery", checkpoint=None, score_preview=None):
+    request._recovery_navigation_parent = cancel_url
+    request.__dict__.pop('_logical_navigation_result', None)
     return render(request, "core/recovery_confirmation.html", {
         "form": form, "title": title, "description": description,
         "cancel_url": cancel_url, "tier": tier, "impact": impact,
         "action_label": action_label,
         "backup_advisory": stored_backup_advisory() if tier == 3 else None,
         "platform_timezone": get_platform_settings().timezone,
-        "recovery_checkpoint": checkpoint,
+        "recovery_checkpoint": checkpoint, "score_preview": score_preview,
     })
 
 
@@ -708,7 +736,7 @@ def recovery_challenge_detail(request, pk):
     if denied:
         return denied
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=pk)
-    enrollments = list(month.enrollments.select_related("participant__user").order_by("participant__display_name"))
+    enrollments = list(month.enrollments.select_related("participant__user").order_by("participant__user__username"))
     host_ids = set(month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.HOST, ended_at__isnull=True,
     ).values_list("membership_id", flat=True))
@@ -720,10 +748,10 @@ def recovery_challenge_detail(request, pk):
     return render(request, "core/recovery_challenge_detail.html", {
         "month": month,
         "impact": challenge_purge_impact(month),
-        "staffing": month.staff_assignments.select_related("membership", "team").order_by("ended_at", "membership__display_name"),
+        "staffing": month.staff_assignments.select_related("membership", "team").order_by("ended_at", "membership__user__username"),
         "enrollments": enrollments,
         "teams": month.teams.order_by("name"),
-        "assignments": month.team_assignments.select_related("participant", "team").order_by("ended_at", "participant__display_name"),
+        "assignments": month.team_assignments.select_related("participant", "team").order_by("ended_at", "participant__user__username"),
     })
 
 
@@ -774,7 +802,7 @@ def recovery_group_detail(request, pk):
     group = get_object_or_404(ReadingGroup, pk=pk)
     return render(request, "core/recovery_group_detail.html", {
         "group": group,
-        "memberships": group.memberships.select_related("user").order_by("display_name"),
+        "memberships": group.memberships.select_related("user").order_by("user__username"),
     })
 
 
@@ -822,7 +850,7 @@ def recovery_group_transfer_owner(request, pk):
         except ValidationError as error:
             _add_recovery_error(form, error)
         else:
-            messages.success(request, f"Group ownership was transferred to {target.display_name}.")
+            messages.success(request, f"Group ownership was transferred to {target.user.username}.")
             return redirect("recovery-group-detail", pk=group.pk)
     return _recovery_confirmation_page(request, form=form, tier=2, title=f"Transfer ownership of {group.name}?", description="The selected active membership becomes the sole active Group Owner. Other current owners become Members.", cancel_url=reverse("recovery-group-detail", kwargs={"pk": group.pk}), action_label="Transfer Ownership")
 
@@ -870,17 +898,17 @@ def recovery_membership_status(request, pk):
     membership = get_object_or_404(Membership.objects.select_related("group", "user"), pk=pk)
     active = not membership.is_active
     verb = "Reactivate" if active else "Deactivate"
-    form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=membership.display_name)
+    form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=membership.user.username)
     if request.method == "POST" and form.is_valid():
-        operation_request = _recovery_request_from_form(request, form, tier=2, action=f"membership.{'reactivate' if active else 'deactivate'}", target_type="Membership", target_id=membership.pk, target_label=membership.display_name, group=membership.group, before_state={"is_active": membership.is_active, "role": membership.role})
+        operation_request = _recovery_request_from_form(request, form, tier=2, action=f"membership.{'reactivate' if active else 'deactivate'}", target_type="Membership", target_id=membership.pk, target_label=membership.user.username, group=membership.group, before_state={"is_active": membership.is_active, "role": membership.role})
         try:
             set_membership_active(membership=membership, active=active, recovery_request=operation_request)
         except ValidationError as error:
             _add_recovery_error(form, error)
         else:
-            messages.success(request, f"{membership.display_name}'s Membership was {verb.lower()}d.")
+            messages.success(request, f"{membership.user.username}'s Membership was {verb.lower()}d.")
             return redirect("recovery-group-detail", pk=membership.group_id)
-    return _recovery_confirmation_page(request, form=form, tier=2, title=f"{verb} Membership for {membership.display_name}?", description="Historical Group and Challenge relationships remain stored. Active staffing and participation must be ended first.", cancel_url=reverse("recovery-group-detail", kwargs={"pk": membership.group_id}), action_label=verb)
+    return _recovery_confirmation_page(request, form=form, tier=2, title=f"{verb} Membership for {membership.user.username}?", description="Historical Group and Challenge relationships remain stored. Active staffing and participation must be ended first.", cancel_url=reverse("recovery-group-detail", kwargs={"pk": membership.group_id}), action_label=verb)
 
 
 @login_required(login_url="config-login")
@@ -889,17 +917,17 @@ def recovery_membership_role(request, pk):
     if denied:
         return denied
     membership = get_object_or_404(Membership.objects.select_related("group"), pk=pk)
-    form = MembershipRoleRecoveryForm(request.POST or None, expected_confirmation=membership.display_name)
+    form = MembershipRoleRecoveryForm(request.POST or None, expected_confirmation=membership.user.username)
     if request.method == "POST" and form.is_valid():
-        operation_request = _recovery_request_from_form(request, form, tier=2, action="membership.correct_role", target_type="Membership", target_id=membership.pk, target_label=membership.display_name, group=membership.group, before_state={"role": membership.role})
+        operation_request = _recovery_request_from_form(request, form, tier=2, action="membership.correct_role", target_type="Membership", target_id=membership.pk, target_label=membership.user.username, group=membership.group, before_state={"role": membership.role})
         try:
             correct_membership_role(membership=membership, role=form.cleaned_data["role"], recovery_request=operation_request)
         except ValidationError as error:
             _add_recovery_error(form, error)
         else:
-            messages.success(request, f"{membership.display_name}'s Group role was corrected.")
+            messages.success(request, f"{membership.user.username}'s Group role was corrected.")
             return redirect("recovery-group-detail", pk=membership.group_id)
-    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Correct Group role for {membership.display_name}?", description="Final active Group Owner protections remain enforced.", cancel_url=reverse("recovery-group-detail", kwargs={"pk": membership.group_id}), action_label="Correct Role")
+    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Correct Group role for {membership.user.username}?", description="Final active Group Owner protections remain enforced.", cancel_url=reverse("recovery-group-detail", kwargs={"pk": membership.group_id}), action_label="Correct Role")
 
 
 @login_required(login_url="config-login")
@@ -941,7 +969,7 @@ def recovery_staffing_role(request, pk):
         else:
             messages.success(request, "The historical staffing assignment was ended and a corrected assignment was created.")
             return redirect("recovery-challenge-detail", pk=assignment.month_id)
-    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Correct staffing role for {assignment.membership.display_name}?", description="Recovery ends the current historical row and creates a coherent replacement. It never rewrites the original role.", cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": assignment.month_id}), action_label="Correct Staffing Role")
+    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Correct staffing role for {assignment.membership.user.username}?", description="Recovery ends the current historical row and creates a coherent replacement. It never rewrites the original role.", cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": assignment.month_id}), action_label="Correct Staffing Role")
 
 
 @login_required(login_url="config-login")
@@ -952,7 +980,7 @@ def recovery_enrollment_status(request, pk):
     enrollment = get_object_or_404(MonthEnrollment.objects.select_related("month__group", "participant"), pk=pk)
     active = not enrollment.is_active
     verb = "Reactivate" if active else "Withdraw"
-    label = f"{enrollment.participant.display_name} — {enrollment.month.name}"
+    label = f"{enrollment.participant.user.username} — {enrollment.month.name}"
     form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=label)
     if request.method == "POST" and form.is_valid():
         operation_request = _recovery_request_from_form(request, form, tier=2, action=f"enrollment.{'reactivate' if active else 'withdraw'}", target_type="MonthEnrollment", target_id=enrollment.pk, target_label=label, group=enrollment.month.group, challenge=enrollment.month, before_state={"is_active": enrollment.is_active, "origin": enrollment.origin, "inactive_reason": enrollment.inactive_reason})
@@ -977,7 +1005,7 @@ def recovery_host_scope_restore(request, pk):
     )
     if restricted_host_team_ids(enrollment.participant.user, enrollment.month) is None:
         raise Http404("This enrollment does not belong to a restricted Host.")
-    label = f"{enrollment.participant.display_name} — {enrollment.month.name}"
+    label = f"{enrollment.participant.user.username} — {enrollment.month.name}"
     form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=label)
     if request.method == "POST" and form.is_valid():
         operation = _recovery_request_from_form(
@@ -1007,7 +1035,7 @@ def recovery_enrollment_origin(request, pk):
     if denied:
         return denied
     enrollment = get_object_or_404(MonthEnrollment.objects.select_related("month__group", "participant"), pk=pk)
-    label = f"{enrollment.participant.display_name} — {enrollment.month.name}"
+    label = f"{enrollment.participant.user.username} — {enrollment.month.name}"
     form = EnrollmentOriginRecoveryForm(request.POST or None, expected_confirmation=label)
     if request.method == "POST" and form.is_valid():
         operation_request = _recovery_request_from_form(request, form, tier=2, action="enrollment.correct_origin", target_type="MonthEnrollment", target_id=enrollment.pk, target_label=label, group=enrollment.month.group, challenge=enrollment.month, before_state={"origin": enrollment.origin, "is_active": enrollment.is_active})
@@ -1069,7 +1097,7 @@ def recovery_team_assignment_status(request, pk):
     assignment = get_object_or_404(TeamAssignment.objects.select_related("month__group", "participant", "team"), pk=pk)
     active = assignment.ended_at is not None
     verb = "Restore" if active else "End"
-    label = f"{assignment.participant.display_name} → {assignment.team.name}"
+    label = f"{assignment.participant.user.username} → {assignment.team.name}"
     form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=label)
     if request.method == "POST" and form.is_valid():
         operation_request = _recovery_request_from_form(request, form, tier=2, action=f"team_assignment.{'restore' if active else 'end'}", target_type="TeamAssignment", target_id=assignment.pk, target_label=label, group=assignment.month.group, challenge=assignment.month, before_state={"is_active": assignment.ended_at is None, "team_id": assignment.team_id})
@@ -1089,7 +1117,7 @@ def recovery_team_assignment_reassign(request, pk):
     if denied:
         return denied
     assignment = get_object_or_404(TeamAssignment.objects.select_related("month__group", "participant", "team"), pk=pk)
-    label = f"{assignment.participant.display_name} → {assignment.team.name}"
+    label = f"{assignment.participant.user.username} → {assignment.team.name}"
     form = TeamReassignmentRecoveryForm(request.POST or None, month=assignment.month, current_team=assignment.team, expected_confirmation=label)
     if request.method == "POST" and form.is_valid():
         operation_request = _recovery_request_from_form(request, form, tier=2, action="team_assignment.reassign", target_type="TeamAssignment", target_id=assignment.pk, target_label=label, group=assignment.month.group, challenge=assignment.month, before_state={"team_id": assignment.team_id, "is_active": assignment.ended_at is None})
@@ -1100,7 +1128,7 @@ def recovery_team_assignment_reassign(request, pk):
         else:
             messages.success(request, "The original Team assignment was ended and a new assignment was created atomically.")
             return redirect("recovery-challenge-detail", pk=assignment.month_id)
-    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Reassign {assignment.participant.display_name}?", description="The current historical row will be ended and a new Team assignment created. Team Leader history tied to the old Team is ended consistently.", cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": assignment.month_id}), action_label="Reassign Reader")
+    return _recovery_confirmation_page(request, form=form, tier=2, title=f"Reassign {assignment.participant.user.username}?", description="The current historical row will be ended and a new Team assignment created. Team Leader history tied to the old Team is ended consistently.", cancel_url=reverse("recovery-challenge-detail", kwargs={"pk": assignment.month_id}), action_label="Reassign Reader")
 
 
 @login_required(login_url="config-login")
@@ -1110,7 +1138,7 @@ def recovery_submission_list(request):
         return denied
     submissions = BookSubmission.objects.select_related(
         "month__group", "participant__user",
-    ).order_by("month__group__name", "-month__starts_on", "participant__display_name", "title")
+    ).order_by("month__group__name", "-month__starts_on", "participant__user__username", "title")
     return render(request, "core/recovery_submission_list.html", {"submissions": submissions})
 
 
@@ -1147,7 +1175,16 @@ def recovery_submission_status(request, pk):
     )
     restore = submission.is_removed
     label = submission_recovery_label(submission)
+    from django import forms
+    from .recovery_scoring import preview_submission_restoration
+    try:
+        preview, preview_token = (preview_submission_restoration(submission=submission, actor=request.user)
+                                  if restore else (None, None))
+    except ValidationError:
+        return HttpResponse("Restoration preview is unavailable because its credit needs further review.", status=409)
     form = RecoveryConfirmationForm(request.POST or None, expected_confirmation=label)
+    if restore:
+        form.fields["score_preview"] = forms.CharField(widget=forms.HiddenInput(), initial=preview_token)
     if request.method == "POST" and form.is_valid():
         operation_request = _recovery_request_from_form(
             request, form, tier=2,
@@ -1159,6 +1196,7 @@ def recovery_submission_status(request, pk):
         try:
             set_submission_removed(
                 submission=submission, removed=not restore, recovery_request=operation_request,
+                preview_token=form.cleaned_data.get("score_preview"),
             )
         except ValidationError as error:
             _add_recovery_error(form, error)
@@ -1170,7 +1208,7 @@ def recovery_submission_status(request, pk):
         request, form=form, tier=2, title=f"{verb} {submission.title}?",
         description="Northbound will reconcile Theme, BOTM, Personal TBR, completion, and cached submission score state through canonical services.",
         cancel_url=reverse("recovery-submission-detail", kwargs={"pk": submission.pk}),
-        action_label=verb,
+        action_label=verb, score_preview=preview,
     )
 
 
@@ -1357,7 +1395,7 @@ def recovery_provenance_list(request):
         return denied
     provenance = ModifierProvenance.objects.select_related(
         "month__group", "participant", "submission",
-    ).order_by("month__group__name", "-month__starts_on", "participant__display_name", "effective_date", "pk")
+    ).order_by("month__group__name", "-month__starts_on", "participant__user__username", "effective_date", "pk")
     return render(request, "core/recovery_provenance_list.html", {"provenance": provenance})
 
 
@@ -1468,7 +1506,7 @@ def recovery_botm_list(request):
     ).order_by("month__group__name", "-month__starts_on", "position", "pk")
     matches = BotmMatch.objects.select_related(
         "month__group", "participant", "submission", "botm_book",
-    ).order_by("month__group__name", "-month__starts_on", "participant__display_name", "pk")
+    ).order_by("month__group__name", "-month__starts_on", "participant__user__username", "pk")
     return render(request, "core/recovery_botm_list.html", {"books": books, "matches": matches})
 
 
@@ -1480,7 +1518,7 @@ def recovery_botm_book_detail(request, pk):
     book = get_object_or_404(BotmBook.objects.select_related("month__group", "catalog_book", "catalog_edition"), pk=pk)
     return render(request, "core/recovery_botm_book_detail.html", {
         "book": book,
-        "matches": book.matches.select_related("participant", "submission").order_by("participant__display_name", "pk"),
+        "matches": book.matches.select_related("participant", "submission").order_by("participant__user__username", "pk"),
     })
 
 
@@ -1634,7 +1672,7 @@ def recovery_tbr_list(request):
         "enrollment__month__group", "enrollment__participant__user",
     ).filter(confirmed_at__isnull=False).annotate(
         recovery_book_count=Count("books"),
-    ).order_by("enrollment__month__group__name", "-enrollment__month__starts_on", "enrollment__participant__display_name")
+    ).order_by("enrollment__month__group__name", "-enrollment__month__starts_on", "enrollment__participant__user__username")
     return render(request, "core/recovery_tbr_list.html", {"tbrs": tbrs})
 
 
@@ -1654,13 +1692,58 @@ def recovery_tbr_detail(request, pk):
 
 @sensitive_post_parameters("current_password")
 @login_required(login_url="config-login")
+def recovery_tbr_title(request, pk):
+    from .recovery_forms import RecoveryConfirmationForm, TbrTitlePreviewForm
+    from .recovery_tbr_title import apply_tbr_title, confirmation_label, preview_tbr_title
+
+    denied = _recovery_owner_denied(request)
+    if denied:
+        return denied
+    book = get_object_or_404(
+        PersonalTBRBook.objects.select_related("personal_tbr__enrollment__month__group"),
+        pk=pk, personal_tbr__confirmed_at__isnull=False,
+    )
+    applying = request.method == "POST" and request.POST.get("action") == "apply"
+    preview_form = TbrTitlePreviewForm(request.POST if request.method == "POST" and not applying else None)
+    confirmation_form = RecoveryConfirmationForm(
+        request.POST if applying else None, expected_confirmation=confirmation_label(book), require_password=True,
+    )
+    token = proposed = error = None
+    if applying:
+        if confirmation_form.is_valid():
+            try:
+                apply_tbr_title(
+                    book=book, actor=request.user, token=request.POST.get("preview_token", ""),
+                    **confirmation_form.cleaned_data,
+                )
+            except ValidationError as exc:
+                error = " ".join(exc.messages)
+            else:
+                messages.success(request, "Personal TBR title corrected. Challenge credit was not changed.")
+                return redirect("recovery-tbr-detail", pk=book.personal_tbr_id)
+        else:
+            error = "A reason, exact confirmation, and current password are required. Generate a fresh preview."
+    elif request.method == "POST" and preview_form.is_valid():
+        proposed = preview_form.cleaned_data["title"]
+        try:
+            token = preview_tbr_title(book=book, actor=request.user, title=proposed)
+        except ValidationError as exc:
+            _add_recovery_error(preview_form, exc)
+    return render(request, "core/recovery_tbr_title.html", {
+        "book": book, "preview_form": preview_form, "confirmation_form": confirmation_form,
+        "preview_token": token, "proposed": proposed, "correction_error": error,
+    })
+
+
+@sensitive_post_parameters("current_password")
+@login_required(login_url="config-login")
 def recovery_tbr_entry(request, pk):
     denied = _recovery_owner_denied(request)
     if denied:
         return denied
     book = get_object_or_404(PersonalTBRBook.objects.select_related("personal_tbr__enrollment__month__group", "personal_tbr__enrollment__participant", "catalog_book", "catalog_edition"), pk=pk, personal_tbr__confirmed_at__isnull=False)
     tbr = book.personal_tbr
-    label = f"Locked TBR entry #{book.pk}: {tbr.enrollment.participant.display_name} — position {book.position}"
+    label = f"Locked TBR entry #{book.pk}: {tbr.enrollment.participant.user.username} — position {book.position}"
     form = RecoveryBookIdentityForm(
         request.POST or None, expected_confirmation=label, require_password=True,
         initial={
@@ -3107,8 +3190,14 @@ def group_create(request):
 @sensitive_variables("token")
 def group_edit(request, group_slug):
     group = get_object_or_404(ReadingGroup, slug=group_slug, is_active=True)
-    if not can_manage_group(request.user, group):
+    from .permissions import can_view_group_settings
+    editable = can_manage_group(request.user, group)
+    if not can_view_group_settings(request.user, group) or (request.method == "POST" and not editable):
         return HttpResponseForbidden("Group settings permission is required.")
+    if not editable:
+        from .permissions import can_view_discord_notifications
+        return render(request, "core/group_edit.html", {"group": group, "editable": False,
+            "can_view_discord_notifications": can_view_discord_notifications(request.user, group)})
     previous_name = group.name
     previous_timezone = group.timezone
     connection = HardcoverConnection.objects.filter(group=group).first()
@@ -3156,7 +3245,8 @@ def group_edit(request, group_slug):
             AuditEvent.objects.create(actor=request.user, group=group, action="hardcover.connected", object_type="HardcoverConnection", object_id=str(connection.pk), summary="Saved and tested a read-only Hardcover catalog connection.")
             messages.success(request, "Hardcover Catalog Connected. Northbound can search the Hardcover catalog for this group.")
             return redirect("group-edit", group_slug=group.slug)
-    return render(request, "core/group_edit.html", {"form": form, "hardcover_form": hardcover_form, "group": group, "connection": connection})
+    from .permissions import can_view_discord_notifications
+    return render(request, "core/group_edit.html", {"form": form, "hardcover_form": hardcover_form, "group": group, "connection": connection, "editable": True, "can_view_discord_notifications": can_view_discord_notifications(request.user, group)})
 
 
 @login_required
@@ -3167,7 +3257,7 @@ def group_join(request):
         membership, created = Membership.objects.get_or_create(
             group=group,
             user=request.user,
-            defaults={"role": Membership.Role.MEMBER, "display_name": request.user.get_full_name() or request.user.username, "is_active": True},
+            defaults={"role": Membership.Role.MEMBER, "display_name": Membership.compatibility_display_name(request.user), "is_active": True},
         )
         if not created and membership.is_active:
             messages.info(request, "You are already a member of that reading group.")
@@ -3176,7 +3266,7 @@ def group_join(request):
                 membership.is_active = True
                 membership.role = Membership.Role.MEMBER
                 membership.save(update_fields=["is_active", "role"])
-            AuditEvent.objects.create(actor=request.user, group=group, action="membership.joined", object_type="Membership", object_id=str(membership.pk), summary=f"{membership.display_name} joined using the group access code")
+            AuditEvent.objects.create(actor=request.user, group=group, action="membership.joined", object_type="Membership", object_id=str(membership.pk), summary=f"{membership.user.username} joined using the group access code")
             messages.success(request, f"You joined {group.name} as a member.")
         return redirect("group-detail", group_slug=group.slug)
     return render(request, "core/form_page.html", {"form": form, "title": "Join a Reading Group", "eyebrow": "Invitation Access"})
@@ -3246,6 +3336,7 @@ def group_hardcover_disconnect(request, group_slug):
 
 @login_required
 def group_detail(request, group_slug):
+    from .permissions import can_view_discord_notifications, can_view_group_settings
     group = get_object_or_404(ReadingGroup, slug=group_slug, is_active=True)
     membership = membership_for(request.user, group)
     if not request.user.is_superuser and not membership:
@@ -3260,6 +3351,8 @@ def group_detail(request, group_slug):
         "can_manage_participants": can_manage_participants(request.user, group),
         "can_manage_months": can_manage_months(request.user, group),
         "can_edit_group": can_manage_group(request.user, group),
+        "can_view_discord_notifications": can_view_discord_notifications(request.user, group),
+        "can_access_group_settings": can_view_group_settings(request.user, group),
         "can_manage_group_announcements": can_manage_group_announcements(request.user, group),
         "can_view_access_code": can_manage_group(request.user, group) or can_view_access_code(request.user, group),
         "participant_count": group.memberships.filter(is_active=True, user__is_superuser=False).count(),
@@ -3289,13 +3382,25 @@ def group_announcement_update(request, group_slug):
     return redirect("group-detail", group_slug=group.slug)
 
 
+def _group_discord_username(user, viewer_membership, participant, *, directory_access):
+    profile = getattr(participant.user, "northbound_profile", None)
+    if not profile:
+        return ""
+    if profile.discord_username_is_public or (directory_access and (
+        user.is_superuser or participant.user_id == user.pk
+        or (viewer_membership and viewer_membership.role in {Membership.Role.OWNER, Membership.Role.MODERATOR})
+    )):
+        return profile.discord_username
+    return ""
+
+
 @login_required
 def participant_list(request, group_slug):
     group = get_object_or_404(ReadingGroup, slug=group_slug, is_active=True)
     membership = membership_for(request.user, group)
     if not request.user.is_superuser and not membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
-    participants = list(group.memberships.filter(user__is_superuser=False).select_related("user"))
+    participants = list(group.memberships.filter(user__is_superuser=False).select_related("user__northbound_profile").order_by("user__username", "pk"))
     participant_ids = group_directory_visible_member_ids(request.user, group, participants)
     planning_by_participant = historical_reader_planning_data(
         group=group,
@@ -3303,6 +3408,9 @@ def participant_list(request, group_slug):
     )
     for participant in participants:
         participant.planning = planning_by_participant.get(participant.pk)
+        participant.visible_discord_username = _group_discord_username(
+            request.user, membership, participant, directory_access=participant.pk in participant_ids,
+        )
     return render(request, "core/participant_list.html", {"group": group, "participants": participants, "can_manage": can_manage_participants(request.user, group), "can_manage_permissions": can_manage_permissions(request.user, group), "can_remove": can_manage_participants(request.user, group)})
 
 
@@ -3313,12 +3421,15 @@ def participant_detail(request, group_slug, pk):
     if not request.user.is_superuser and not viewer_membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
     participant = get_object_or_404(Membership.objects.select_related("user"), pk=pk, group=group, user__is_superuser=False)
-    if participant.pk not in group_directory_visible_member_ids(request.user, group, [participant]):
-        profile = getattr(participant.user, "northbound_profile", None)
+    directory_access = participant.pk in group_directory_visible_member_ids(request.user, group, [participant])
+    can_view_discord_username = bool(_group_discord_username(
+        request.user, viewer_membership, participant, directory_access=directory_access,
+    ))
+    if not directory_access:
         return render(request, "core/participant_detail.html", {
             "group": group,
             "participant": participant,
-            "can_view_discord_username": bool(profile and profile.discord_username_is_public),
+            "can_view_discord_username": can_view_discord_username,
             "show_reading_totals": False,
         })
     approved_submissions = participant.submissions.filter(status=BookSubmission.Status.APPROVED, is_removed=False)
@@ -3343,12 +3454,6 @@ def participant_detail(request, group_slug, pk):
             participant_ids=[participant.pk],
         )[participant.pk]["total_pages"]
     detailed_access = request.user.is_superuser or participant.user_id == request.user.id
-    profile = getattr(participant.user, "northbound_profile", None)
-    can_view_discord_username = (
-        detailed_access
-        or viewer_membership.role in {Membership.Role.OWNER, Membership.Role.MODERATOR}
-        or bool(profile and profile.discord_username_is_public)
-    )
     return render(request, "core/participant_detail.html", {
         "group": group,
         "participant": participant,
@@ -3360,6 +3465,14 @@ def participant_detail(request, group_slug, pk):
         "detailed_access": detailed_access,
         "can_view_discord_username": can_view_discord_username,
     })
+
+
+def _can_view_challenge_participant(user, enrollment, scope, team_id=None):
+    return (
+        roster_read_scope_includes(scope, team_id)
+        or enrollment.participant.user_id == user.pk
+        or can_manage_challenge_tbr(user, enrollment)
+    )
 
 
 @login_required
@@ -3380,10 +3493,7 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
     team = current_assignment.team if current_assignment else None
     scope = challenge_review_scope(request.user, month)
     is_self = participant.user_id == request.user.id
-    in_review_scope = bool(scope and (
-        scope[0] == "challenge" or (team and team.pk in scope[1])
-    ))
-    if not (in_review_scope or is_self or can_manage_challenge_tbr(request.user, enrollment)):
+    if not _can_view_challenge_participant(request.user, enrollment, scope, team.pk if team else None):
         return HttpResponseForbidden("You may view only Readers in your Challenge review scope.")
 
     score_access = can_view_reader_scores(request.user, month, team=team, reader=participant)
@@ -3446,7 +3556,7 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
         for theme in themes
     )
     submissions = list(BookSubmission.objects.filter(
-        month=month, participant=participant, is_removed=False
+        month=month, participant=participant, participant__group=month.group
     ).select_related("catalog_book", "catalog_edition").order_by("-completed_on", "-pk"))
     provenance = list(ModifierProvenance.objects.filter(
         month=month, participant=participant, is_active=True
@@ -3485,10 +3595,10 @@ def participant_role_edit(request, group_slug, pk):
     if request.method == "POST" and form.is_valid():
         previous_role = participant.role
         updated = form.save()
-        AuditEvent.objects.create(actor=request.user, group=group, action="membership.role_changed", object_type="Membership", object_id=str(updated.pk), summary=f"Changed {updated.display_name} from {previous_role} to {updated.role}; active={updated.is_active}")
-        messages.success(request, f"Updated {updated.display_name}'s access.")
+        AuditEvent.objects.create(actor=request.user, group=group, action="membership.role_changed", object_type="Membership", object_id=str(updated.pk), summary=f"Changed {updated.user.username} from {previous_role} to {updated.role}; active={updated.is_active}")
+        messages.success(request, f"Updated {updated.user.username}'s access.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.display_name}", "eyebrow": "Platform Owner Control"})
+    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.user.username}", "eyebrow": "Platform Owner Control"})
 
 
 @login_required
@@ -3511,15 +3621,16 @@ def participant_permissions_edit(request, group_slug, pk):
             action="membership.permissions_changed",
             object_type="Membership",
             object_id=str(updated.pk),
-            summary=f"Changed {updated.display_name} permissions; role {previous_role} to {updated.role}; overrides {previous_overrides} to {updated.permission_overrides}.",
+            summary=f"Changed {updated.user.username} permissions; role {previous_role} to {updated.role}; overrides {previous_overrides} to {updated.permission_overrides}.",
         )
-        messages.success(request, f"Updated {updated.display_name}'s permissions.")
+        messages.success(request, f"Updated {updated.user.username}'s permissions.")
         return redirect("participant-list", group_slug=group.slug)
     return render(request, "core/permissions_edit.html", {"form": form, "group": group, "participant": participant})
 
 
 @login_required
 def month_list(request, group_slug):
+    from .recaps import can_view_final_wrapped
     group = get_object_or_404(ReadingGroup, slug=group_slug, is_active=True)
     membership = membership_for(request.user, group)
     if not request.user.is_superuser and not membership:
@@ -3533,6 +3644,7 @@ def month_list(request, group_slug):
     months = list(months)
     for month in months:
         month.can_view_card_statistics = can_view_challenge_card_statistics(request.user, month)
+        month.can_view_wrapped = can_view_final_wrapped(request.user, month)
         if month.can_view_card_statistics:
             month.approved_books = month.submissions.filter(
                 status=BookSubmission.Status.APPROVED, is_removed=False,
@@ -3571,18 +3683,16 @@ def team_list(request, group_slug, month_pk):
         )
     )
     _annotate_team_leader_rosters(teams)
-    participant_ids = {
-        assignment.participant_id
-        for team in teams
-        for assignment in team.assignments.all()
-    }
-    score_by_participant = challenge_score_totals(month=month, participant_ids=participant_ids)
+    from .branding import team_branding_many
+    for team in teams:
+        team.month = month
+    artwork = team_branding_many(request.user, teams)
+    for team in teams:
+        team.branding = artwork[team.pk]
+    team_totals = challenge_team_totals(month=month, team_ids=[team.pk for team in teams])
     for team in teams:
         team.can_view_standings = can_view_team_standings(request.user, month, team=team)
-        team.score_total = sum(
-            score_by_participant[assignment.participant_id]["total_pages"]
-            for assignment in team.assignments.all()
-        )
+        team.score_total = team_totals[team.pk]
     mutable = month_is_configurable(month)
     host_access = can_run_challenge_wide_operations(request.user, month)
     return render(request, "core/team_list.html", {"group": group, "month": month, "teams": teams, "can_manage": mutable and host_access, "can_remove": mutable and host_access, "can_manage_leaders": not viewing_archive and host_access, "viewing_archive": viewing_archive, "archived_count": month.teams.filter(is_archived=True).count()})
@@ -3605,7 +3715,7 @@ def team_detail(request, group_slug, month_pk, pk):
 
     current_leaders = list(team.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.TEAM_LEADER, ended_at__isnull=True,
-    ).select_related("membership").order_by("membership__display_name", "membership_id"))
+    ).select_related("membership").order_by("membership__user__username", "membership_id"))
     leader_ids = {assignment.membership_id for assignment in current_leaders}
     full_roster = list(team.assignments.filter(
         ended_at__isnull=True,
@@ -3619,6 +3729,8 @@ def team_detail(request, group_slug, month_pk, pk):
     planning_access = private_roster_access and (
         can_view_challenge_registration_answers(request.user, month) or roster_access
     )
+    from .reader_rumble import can_generate_reader_rumble
+    rumble_access = can_generate_reader_rumble(request.user, team)
     standings_access = can_view_team_standings(request.user, month, team=team)
     score_access = can_view_reader_scores(request.user, month, team=team)
     review_scope = challenge_review_scope(request.user, month)
@@ -3723,7 +3835,7 @@ def team_detail(request, group_slug, month_pk, pk):
         if not progress_matches(assignment.botm_completed, assignment.botm_total, botm_filter): continue
         roster.append(assignment)
 
-    allowed_sorts = {"reader"}
+    allowed_sorts = {"reader", "role"}
     if score_access:
         allowed_sorts.update({"base", "total"})
         if show_bonuses: allowed_sorts.add("modifier")
@@ -3737,25 +3849,30 @@ def team_detail(request, group_slug, month_pk, pk):
         if sort_key == "modifier": return assignment.modifier_pages
         if sort_key == "total": return assignment.total_pages
         if sort_key == "themes": return assignment.theme_completed
-        if sort_key == "tbr": return assignment.tbr_completed
-        if sort_key == "botm": return assignment.botm_completed
-        return assignment.participant.display_name.casefold()
+        if sort_key == "tbr": return assignment.tbr_completed / assignment.tbr_total if assignment.tbr_total else None
+        if sort_key == "botm": return assignment.botm_completed / assignment.botm_total if assignment.botm_total else None
+        return assignment.participant.user.username.casefold()
 
     def sorted_role_group(assignments):
         if sort_key == "reader":
-            return sorted(assignments, key=lambda item: (item.participant.display_name.casefold(), item.participant_id), reverse=direction == "desc")
+            return sorted(assignments, key=lambda item: (item.participant.user.username.casefold(), item.participant_id), reverse=direction == "desc")
         available = [item for item in assignments if sort_value(item) is not None]
         unavailable = [item for item in assignments if sort_value(item) is None]
-        available.sort(key=lambda item: (item.participant.display_name.casefold(), item.participant_id))
+        available.sort(key=lambda item: (item.participant.user.username.casefold(), item.participant_id))
         available.sort(key=sort_value, reverse=direction == "desc")
-        unavailable.sort(key=lambda item: (item.participant.display_name.casefold(), item.participant_id))
+        unavailable.sort(key=lambda item: (item.participant.user.username.casefold(), item.participant_id))
         return available + unavailable
 
-    roster = sorted_role_group([item for item in roster if item.is_team_leader]) + sorted_role_group([item for item in roster if not item.is_team_leader])
-    sort_labels = {"reader": "Reader", "base": "Base", "modifier": "Modifier", "total": "Total", "themes": "Themes", "tbr": "TBR", "botm": "BOTM"}
+    if sort_key in {"base", "modifier", "total", "themes", "tbr", "botm"}:
+        roster = sorted_role_group(roster)
+    else:
+        roster = sorted_role_group([item for item in roster if item.is_team_leader]) + sorted_role_group([item for item in roster if not item.is_team_leader])
+    if sort_key == "role" and direction == "desc":
+        roster = [item for item in roster if not item.is_team_leader] + [item for item in roster if item.is_team_leader]
+    sort_labels = {"reader": "Reader", "role": "Role", "base": "Base", "modifier": "Modifier", "total": "Total", "themes": "Themes", "tbr": "TBR", "botm": "BOTM"}
     sort_options = [{"value": key, "label": label} for key, label in sort_labels.items() if key in allowed_sorts]
     active_filters = any((
-        effective_from != default_from, effective_to != default_to, not show_bonuses,
+        effective_from != default_from, effective_to != default_to, score_access and not show_bonuses,
         theme_filter != "any", tbr_filter != "any", botm_filter != "any",
         show_discord, show_average, show_last, show_completed,
     ))
@@ -3763,19 +3880,36 @@ def team_detail(request, group_slug, month_pk, pk):
 
     host_access = can_operate_challenge(request.user, month)
     mutable = month_is_configurable(month)
+    books_access = can_view_team_books(request.user, team)
+    manage_assignments = can_manage_team_assignments(request.user, month)
+    enrollment_ids = dict(month.enrollments.filter(is_active=True, participant_id__in=participant_ids)
+                          .values_list("participant_id", "pk")) if manage_assignments else {}
+    for assignment in roster:
+        assignment.enrollment_id = enrollment_ids.get(assignment.participant_id)
+        assignment.can_edit_team = bool(assignment.enrollment_id) and (
+            host_teams is None or assignment.participant.user_id != request.user.pk
+        )
+    from .branding import can_view_branding_settings, can_manage_team_branding, team_branding
     return render(request, "core/team_detail.html", {
+        "team_art": team_branding(request.user, team),
+        "team_branding_editable": can_manage_team_branding(request.user, team),
+        "can_access_team_branding": can_view_branding_settings(request.user, team),
         "group": month.group,
         "month": month,
         "team": team,
         "current_leaders": current_leaders,
         "roster": roster,
-        "team_total": (sum(item.total_pages for item in roster) if score_access else sum(score["total_pages"] for score in score_by_participant.values())) if standings_access else None,
+        "roster_total": sum(item.total_pages for item in roster) if score_access and standings_access else None,
+        "team_total": challenge_team_totals(
+            month=month, team_ids=[team.pk], effective_from=effective_from, effective_to=effective_to,
+        )[team.pk] if standings_access else None,
         "team_base_total": sum(assignment.base_pages for assignment in roster) if score_access else None,
         "can_view_team_standings": standings_access,
         "can_view_reader_scores": score_access,
         "can_view_planning_data": planning_access,
         "can_filter_progress": progress_access,
         "can_filter_discord": discord_access,
+        "can_generate_reader_rumble": rumble_access,
         "full_roster_count": len(full_roster),
         "show_bonuses": show_bonuses,
         "effective_from": effective_from,
@@ -3795,8 +3929,49 @@ def team_detail(request, group_slug, month_pk, pk):
         "sort_options": sort_options,
         "can_edit_team": mutable and host_access and host_teams is None,
         "can_manage_leaders": not team.is_archived and host_access and host_teams is None,
-        "can_remove_roster": mutable and host_access and private_roster_access,
+        "can_remove_roster": manage_assignments,
+        "team_books": _team_books_page(request, team) if books_access else None,
+        "sort_params": [(key, value) for key, values in request.GET.lists() if key in {"from", "to", "bonuses", "show_discord", "show_average", "show_last", "show_completed", "themes", "tbr", "botm", "books_page"} for value in values],
     })
+
+
+def _team_book_values(team):
+    roster = TeamAssignment.objects.filter(
+        month=team.month, team=team, ended_at__isnull=True, participant__is_active=True,
+        participant__month_enrollments__month=team.month, participant__month_enrollments__is_active=True,
+    ).values("participant_id")
+    return BookSubmission.objects.filter(
+        month=team.month, participant_id__in=roster, is_removed=False,
+        status__in=[BookSubmission.Status.PENDING, BookSubmission.Status.APPROVED],
+    ).order_by("-submitted_at", "-pk").values(
+        "pk", "title", "author", "participant__user__username", "catalog_book__cover_url", "submitted_at", "status",
+    )
+
+
+def _team_books_page(request, team):
+    page = Paginator(_team_book_values(team), 12).get_page(request.GET.get("books_page"))
+    params = request.GET.copy()
+    def page_url(number):
+        params["view"] = "books"
+        params["books_page"] = number
+        return "?" + params.urlencode() + "#team-books"
+    return {
+        "items": page.object_list,
+        "previous": page_url(page.previous_page_number()) if page.has_previous() else "",
+        "next": page_url(page.next_page_number()) if page.has_next() else "",
+    }
+
+
+@login_required
+def team_book_detail(request, group_slug, month_pk, pk, book_pk):
+    team = get_object_or_404(Team.objects.select_related("month__group"),
+        pk=pk, month_id=month_pk, month__group__slug=group_slug)
+    if not can_view_team_books(request.user, team):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponse("Use GET.", status=405)
+    book = get_object_or_404(_team_book_values(team), pk=book_pk)
+    return render(request, "core/team_book_detail.html", {"team": team, "month": team.month, "book": book})
 
 
 def _annotate_team_leader_rosters(teams):
@@ -3852,10 +4027,10 @@ def participant_deactivate(request, group_slug, pk):
         reason = request.POST.get("reason", "").strip()
         participant.is_active = False
         participant.save(update_fields=["is_active"])
-        AuditEvent.objects.create(actor=request.user, group=group, action="membership.deactivated", object_type="Membership", object_id=str(participant.pk), summary=f"Deactivated {participant.display_name}. Reason: {reason or 'Not provided'}")
-        messages.success(request, f"{participant.display_name} was removed from active participation. Historical records were preserved.")
+        AuditEvent.objects.create(actor=request.user, group=group, action="membership.deactivated", object_type="Membership", object_id=str(participant.pk), summary=f"Deactivated {participant.user.username}. Reason: {reason or 'Not provided'}")
+        messages.success(request, f"{participant.user.username} was removed from active participation. Historical records were preserved.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {participant.display_name}?", "description": "This deactivates the participant while preserving historical teams, books, and statistics.", "cancel_url": reverse("participant-list", kwargs={"group_slug": group.slug})})
+    return render(request, "core/confirm_remove.html", {"title": f"Remove {participant.user.username}?", "description": "This deactivates the participant while preserving historical teams, books, and statistics.", "cancel_url": reverse("participant-list", kwargs={"group_slug": group.slug})})
 
 
 @login_required
@@ -3867,9 +4042,8 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
         month__group__slug=group_slug,
         ended_at__isnull=True,
     )
-    if not (can_operate_challenge(request.user, assignment.month)
-            and host_scope_allows_reader(request.user, assignment.month, assignment.participant_id)):
-        return HttpResponseForbidden("A current Host assignment is required.")
+    if not can_manage_team_assignments(request.user, assignment.month, assignment.participant):
+        return HttpResponseForbidden("Team assignment authority is required.")
     if reject_locked_month(request, assignment.month, "change its team roster"):
         return redirect(assignment.month)
     if request.method == "POST":
@@ -3884,7 +4058,7 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
         )
         messages.success(request, "Participant removed from the team. Their reading history was not deleted.")
         return redirect("team-list", group_slug=group.slug, month_pk=month.pk)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {assignment.participant.display_name} from {assignment.team.name}?", "description": "The reader remains in the participant database and can be assigned to another team.", "cancel_url": reverse("team-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
+    return render(request, "core/confirm_remove.html", {"title": f"Remove {assignment.participant.user.username} from {assignment.team.name}?", "description": "The reader remains in the participant database and can be assigned to another team.", "cancel_url": reverse("team-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
 
 
 @login_required
@@ -3892,7 +4066,15 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
 def submission_remove(request, group_slug, month_pk, pk):
     submission = get_object_or_404(BookSubmission.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_removed=False)
     if request.method == "POST":
-        submission.month = _lock_challenge_for_edit(submission.month)
+        month = _lock_challenge_for_edit(submission.month)
+        submission = BookSubmission.objects.select_for_update().select_related(
+            "participant__user",
+        ).get(pk=submission.pk)
+        if submission.is_removed:
+            return HttpResponse("This submission is already voided.", status=409)
+        submission.month = month
+        from .historical_restoration import lock_restoration_state
+        lock_restoration_state(submission)
     if not can_void_submission(request.user, submission):
         return HttpResponseForbidden("Submission void permission is required.")
     if reject_locked_month(request, submission.month, "void a submission"):
@@ -3902,15 +4084,66 @@ def submission_remove(request, group_slug, month_pk, pk):
         submission.removed_at = timezone.now()
         submission.removed_by = request.user
         submission.removal_reason = request.POST.get("reason", "").strip()
-        submission.save(update_fields=["is_removed", "removed_at", "removed_by", "removal_reason"])
-        synchronize_submission(submission)
-        synchronize_personal_tbr_submission(submission)
-        from .scoring import refresh_submission_score
-        refresh_submission_score(submission)
-        AuditEvent.objects.create(actor=request.user, group=submission.month.group, action="submission.removed", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Removed {submission.title} by {submission.participant.display_name}. Reason: {submission.removal_reason or 'Not provided'}")
+        try:
+            submission.save(update_fields=["is_removed", "removed_at", "removed_by", "removal_reason"])
+        except ValidationError as exc:
+            messages.error(request, "Nothing was saved. " + " ".join(exc.messages))
+            return redirect(submission.month)
+        if submission.participation_period_id:
+            from .historical_restoration import suspend_earned_credit
+            suspend_earned_credit(submission)
+        else:
+            synchronize_submission(submission)
+            synchronize_personal_tbr_submission(submission)
+            from .scoring import refresh_submission_score
+            refresh_submission_score(submission)
+        AuditEvent.objects.create(actor=request.user, group=submission.month.group, action="submission.removed", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Removed {submission.title} by {submission.participant.user.username}. Reason: {submission.removal_reason or 'Not provided'}")
         messages.success(request, "Submission voided and removed from active totals. Its audit record was preserved.")
         return redirect(submission.month)
     return render(request, "core/confirm_remove.html", {"title": f"Void Submission: {submission.title}?", "action_label": "Void Submission", "eyebrow": "Submission management", "description": "The entry will disappear from active totals but remain recoverable in the database audit history.", "cancel_url": submission.month.get_absolute_url()})
+
+
+@login_required
+def submission_restore(request, group_slug, month_pk, pk):
+    from .recovery_scoring import (
+        ordinary_restore_preserves_attribution, restore_submission_as_staff, staff_restore_confirmation,
+    )
+    if request.method not in {"GET", "POST"}:
+        return HttpResponse("Use GET or POST.", status=405)
+    submission = get_object_or_404(
+        BookSubmission.objects.select_related("month__group", "participant__user"),
+        pk=pk, month_id=month_pk, month__group__slug=group_slug,
+    )
+    if not submission.is_removed:
+        return HttpResponse("This submission is already restored.", status=409)
+    if not can_restore_submission(request.user, submission):
+        raise PermissionDenied("Submission restoration permission is required.")
+    month = submission.month
+    fallback = month.get_absolute_url() if can_view_challenge(request.user, month) else reverse(
+        "month-list", args=[group_slug],
+    )
+    error = ""
+    reason = request.POST.get("reason", "")
+    if request.method == "POST":
+        try:
+            restore_submission_as_staff(
+                submission=submission, actor=request.user,
+                confirmation=request.POST.get("confirmation", ""), reason=reason,
+            )
+        except ValidationError as exc:
+            error = " ".join(exc.messages)
+        else:
+            submission.refresh_from_db()
+            messages.success(request, "Submission restored.")
+            if submission_timeline(request.user, submission) is not None:
+                return redirect("submission-history", group_slug=group_slug, month_pk=month_pk, pk=pk)
+            return redirect(fallback)
+    eligible = ordinary_restore_preserves_attribution(submission)
+    return render(request, "core/submission_restore.html", {
+        "submission": submission, "cancel_url": fallback, "eligible": eligible,
+        "confirmation": staff_restore_confirmation(submission, request.user),
+        "reason": reason, "error": error,
+    }, status=400 if error else 200)
 
 
 @login_required
@@ -3936,7 +4169,7 @@ def month_create(request, group_slug):
                 action="challenge.host_assigned",
                 object_type="ChallengeStaffAssignment",
                 object_id=str(assignment.pk),
-                summary=f"Assigned {assignment.membership.display_name} as a Host for {month.name}.",
+                summary=f"Assigned {assignment.membership.user.username} as a Host for {month.name}.",
             )
         messages.success(request, f"{month.name} was created in Draft and handed off to its selected Host(s).")
         return redirect("challenge-settings", group_slug=group.slug, month_pk=month.pk)
@@ -3964,6 +4197,84 @@ def _lock_challenge_for_edit(month):
     return ChallengeMonth.objects.select_for_update().get(pk=month.pk)
 
 
+def _save_challenge_schedule(request, form, month):
+    from .scheduling import prepare_schedule_save, reconcile_saved_registration
+
+    now = timezone.now()
+    changed = set(form.changed_data)
+    previous_status = month.status
+    previous_registration = month.registration_is_open
+    previous_holds = month.held_schedule_milestones
+    registration_changed, target = prepare_schedule_save(month, changed, now)
+    if target == month.Status.COMPLETED:
+        salt = "challenge-schedule-finalization"
+        payload = {
+            "challenge": month.pk, "actor": request.user.pk, "status": previous_status,
+            "values": {key: str(value) for key, value in form.cleaned_data.items()},
+            "initial": {key: str(value) for key, value in form.initial.items()},
+            "changed": sorted(changed), "holds": previous_holds,
+        }
+        try:
+            confirmed = signing.loads(request.POST.get("confirm_schedule", ""), salt=salt, max_age=900)
+        except signing.BadSignature:
+            confirmed = None
+        if confirmed != payload:
+            return signing.dumps(payload, salt=salt)
+
+    elif request.POST.get("confirm_schedule"):
+        form.add_error(None, "This schedule changed since confirmation. Review the dates and save again.")
+        return ""
+    form.save()
+    if registration_changed:
+        reconcile_saved_registration(month, changed, now)
+    if target:
+        month.transition_to(target)
+    if previous_status != month.status:
+        AuditEvent.objects.create(
+            actor=request.user, group=month.group, action="challenge.lifecycle_changed",
+            object_type="ChallengeMonth", object_id=str(month.pk),
+            summary=f"Schedule save changed {month.name} from {previous_status} to {month.status}.",
+        )
+        messages.success(request, f"Challenge status: {LIFECYCLE_STATUS_LABELS[month.status]}.")
+    if previous_registration != month.registration_is_open:
+        action = "opened" if month.registration_is_open else "closed"
+        AuditEvent.objects.create(
+            actor=request.user, group=month.group, action=f"challenge.registration_{action}",
+            object_type="ChallengeMonth", object_id=str(month.pk),
+            summary=f"Schedule save {action} registration for {month.name}.",
+        )
+        messages.success(request, f"Registration {action}.")
+    if month.held_schedule_milestones:
+        labels = ", ".join(LIFECYCLE_FORWARD_ACTIONS[value][0] for value in month.held_schedule_milestones)
+        messages.warning(request, f"Automatic actions paused: {labels}. Use Challenge Lifecycle to confirm each action or edit its schedule.")
+    return None
+
+
+def _schedule_context(month, form, confirmation=None):
+    from .scheduling import REGISTRATION_STAGES
+
+    return {
+        "month": month, "form": form, "schedule_confirmation": confirmation,
+        "schedule_status": LIFECYCLE_STATUS_LABELS[month.status],
+        "registration_available": month.registration_is_open and month.status in REGISTRATION_STAGES,
+        "held_schedule_actions": [LIFECYCLE_FORWARD_ACTIONS[value][0] for value in month.held_schedule_milestones],
+    }
+
+
+@login_required
+@require_POST
+def challenge_registration_action(request, group_slug, month_pk, action):
+    from .scheduling import set_manual_registration
+
+    month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug)
+    try:
+        if set_manual_registration(month_id=month.pk, actor=request.user, action=action):
+            messages.success(request, "Registration opened." if action == "open" else "Registration closed.")
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+    return redirect("challenge-schedule-settings", group_slug=group_slug, month_pk=month.pk)
+
+
 @login_required
 @_atomic_challenge_edit
 def month_edit(request, group_slug, pk):
@@ -3977,11 +4288,19 @@ def month_edit(request, group_slug, pk):
     with timezone.override(ZoneInfo(month.group.timezone)):
         form = ChallengeMonthForm(request.POST or None, instance=month)
         if request.method == "POST" and form.is_valid():
-            updated = form.save()
-            AuditEvent.objects.create(actor=request.user, group=month.group, action="month.updated", object_type="ChallengeMonth", object_id=str(month.pk), summary=f"Updated Challenge identity and schedule for {month.name}.")
-            messages.success(request, "Challenge updated.")
-            return redirect(updated)
-        return render(request, "core/month_edit.html", {"form": form, "month": month, "can_delete_draft": can_manage_months(request.user, month.group) and month.status == ChallengeMonth.Status.DRAFT})
+            confirmation = _save_challenge_schedule(request, form, month)
+            if confirmation is None:
+                AuditEvent.objects.create(actor=request.user, group=month.group, action="month.updated", object_type="ChallengeMonth", object_id=str(month.pk), summary=f"Updated Challenge identity and schedule for {month.name}.")
+                messages.success(request, "Challenge updated.")
+                return redirect(month)
+        else:
+            confirmation = None
+        if request.method == "POST":
+            month.refresh_from_db()
+        return render(request, "core/month_edit.html", {
+            **_schedule_context(month, form, confirmation),
+            "can_delete_draft": month.status == ChallengeMonth.Status.DRAFT,
+        })
 
 
 @login_required
@@ -4022,19 +4341,41 @@ def challenge_schedule_settings(request, group_slug, month_pk):
         return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
     with timezone.override(ZoneInfo(month.group.timezone)):
         form = ChallengeScheduleForm(request.POST or None, instance=month)
+        confirmation = None
         if request.method == "POST" and form.is_valid():
-            form.save()
-            AuditEvent.objects.create(
-                actor=request.user,
-                group=month.group,
-                action="month.updated",
-                object_type="ChallengeMonth",
-                object_id=str(month.pk),
-                summary=f"Updated Challenge schedule for {month.name}.",
-            )
-            messages.success(request, "Challenge schedule updated.")
-            return redirect("challenge-settings", group_slug=group_slug, month_pk=month.pk)
-        return render(request, "core/challenge_schedule_settings.html", {"month": month, "form": form})
+            confirmation = _save_challenge_schedule(request, form, month)
+            if confirmation is None:
+                AuditEvent.objects.create(
+                    actor=request.user, group=month.group, action="month.updated",
+                    object_type="ChallengeMonth", object_id=str(month.pk),
+                    summary=f"Updated Challenge schedule for {month.name}.",
+                )
+                messages.success(request, "Schedule changes saved.")
+                return redirect("challenge-settings", group_slug=group_slug, month_pk=month.pk)
+        if request.method == "POST":
+            month.refresh_from_db()
+        return render(request, "core/challenge_schedule_settings.html", _schedule_context(month, form, confirmation))
+
+
+def _lifecycle_action_description(month, target):
+    if not target["backward"]:
+        return LIFECYCLE_FORWARD_ACTIONS[target["value"]][1]
+    if month.status == month.Status.COMPLETED:
+        return (
+            "This reopens a Challenge whose results were declared final. Final-result visibility may change, "
+            "but registrations, staffing, teams, submissions, reviews, themes, scores, and history will be preserved."
+        )
+    return "This returns the Challenge to an earlier stage. Existing records are preserved."
+
+
+def _lifecycle_confirmation(month, actor, target):
+    from .scheduling import LIFECYCLE_MILESTONES
+
+    payload = [month.pk, actor.pk, month.status, target, month.held_schedule_milestones]
+    if target in month.held_schedule_milestones:
+        toggle, timestamp, _ = LIFECYCLE_MILESTONES[target]
+        payload.extend([getattr(month, toggle), str(getattr(month, timestamp))])
+    return payload
 
 
 @login_required
@@ -4053,7 +4394,24 @@ def challenge_settings(request, group_slug, month_pk):
     can_manage_operations = month_is_configurable(month) and can_operate_challenge(request.user, month)
     if not (can_edit_general or can_configure_registration or can_configure_visibility or can_configure_announcement or can_transition_lifecycle):
         return HttpResponseForbidden("Challenge settings authority is required.")
+    from .scheduling import REGISTRATION_STAGES, backward_schedule_conflict, manual_registration_action
+
+    targets = lifecycle_transition_targets(month) if can_transition_lifecycle else []
+    forward = next((target for target in targets if not target["backward"]), None)
+    backward = next((target for target in targets if target["backward"]), None)
+    for target in targets:
+        target["description"] = _lifecycle_action_description(month, target)
+        target["confirmation"] = signing.dumps(
+            _lifecycle_confirmation(month, request.user, target["value"]), salt="held-challenge-transition",
+        )
+    registration_available = month.registration_is_open and month.status in REGISTRATION_STAGES
     return render(request, "core/challenge_settings.html", {
+        "forward_action": forward,
+        "backward_action": backward,
+        "backward_conflict": backward_schedule_conflict(month, backward["value"], timezone.now()) if backward else "",
+        "registration_available": registration_available,
+        "registration_stage": month.status in REGISTRATION_STAGES,
+        "registration_action": manual_registration_action(month) if can_edit_general else None,
         "month": month,
         "can_edit_general": can_edit_general,
         "can_configure_registration": can_configure_registration,
@@ -4065,7 +4423,7 @@ def challenge_settings(request, group_slug, month_pk):
         "can_configure_botm": can_configure_botm,
         "can_manage_hosts": can_manage_hosts,
         "can_manage_operations": can_manage_operations,
-        "lifecycle_targets": lifecycle_transition_targets(month),
+        "schedule_status": LIFECYCLE_STATUS_LABELS[month.status],
         "signup_question_count": month.signup_questions.count(),
         "checkpoint_count": month.progress_checkpoints.count(),
     })
@@ -4341,17 +4699,39 @@ def challenge_progress_checkpoints(request, group_slug, month_pk):
 
 
 @login_required
+@_atomic_challenge_edit
 def challenge_lifecycle_transition(request, group_slug, pk, target_status):
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=pk, group__slug=group_slug)
     if not can_transition_challenge(request.user, month):
         return HttpResponseForbidden("Challenge lifecycle authority is required.")
+    from .scheduling import backward_schedule_conflict
+
+    if request.method == "POST":
+        month = _lock_challenge_for_edit(month)
+        if not can_transition_challenge(request.user, month):
+            return HttpResponseForbidden("Challenge lifecycle authority is required.")
     allowed_targets = {target["value"]: target for target in lifecycle_transition_targets(month)}
     target = allowed_targets.get(target_status)
     if not target:
-        messages.error(request, "That lifecycle transition is not available.")
+        messages.error(request, "That lifecycle action is not available.")
         return redirect(month)
     completed_recovery = month.status == ChallengeMonth.Status.COMPLETED and target_status == ChallengeMonth.Status.FINALIZING
+    if target["backward"]:
+        conflict = backward_schedule_conflict(month, target_status, timezone.now())
+        if conflict:
+            messages.error(request, conflict)
+            return redirect("challenge-settings", group_slug=group_slug, month_pk=pk)
+    held = target_status in month.held_schedule_milestones
+    salt = "held-challenge-transition"
+    confirmation = _lifecycle_confirmation(month, request.user, target_status)
     if request.method == "POST":
+        if held or "transition_confirmation" in request.POST:
+            try:
+                confirmed = signing.loads(request.POST.get("transition_confirmation", ""), salt=salt, max_age=900)
+            except signing.BadSignature:
+                confirmed = None
+            if confirmed != confirmation:
+                return redirect("challenge-lifecycle-transition", group_slug=group_slug, pk=pk, target_status=target_status)
         previous_status = month.status
         try:
             month.transition_to(
@@ -4362,37 +4742,24 @@ def challenge_lifecycle_transition(request, group_slug, pk, target_status):
         except ValidationError as exc:
             messages.error(request, "; ".join(exc.messages))
             return redirect(month)
+        if held:
+            month.held_schedule_milestones.remove(target_status)
+            month.save(update_fields=["held_schedule_milestones"])
         AuditEvent.objects.create(
-            actor=request.user,
-            group=month.group,
-            action="challenge.lifecycle_changed",
-            object_type="ChallengeMonth",
-            object_id=str(month.pk),
+            actor=request.user, group=month.group, action="challenge.lifecycle_changed",
+            object_type="ChallengeMonth", object_id=str(month.pk),
             summary=f"Changed {month.name} lifecycle from {previous_status} to {target_status}.",
         )
-        messages.success(request, f"Challenge moved to {month.get_status_display()}.")
+        messages.success(request, f"Challenge status: {LIFECYCLE_STATUS_LABELS[month.status]}.")
         return redirect(month)
-    if completed_recovery:
-        description = (
-            "This reopens a Challenge whose results were declared final. Final-result visibility may change, "
-            "but registrations, staffing, teams, submissions, reviews, themes, scores, and history will be preserved."
-        )
-        action_label = "Confirm Recovery to Finalizing"
-    elif target["backward"]:
-        description = (
-            "This moves the Challenge backward one operational stage without deleting or rewinding any existing records."
-        )
-        action_label = f"Confirm Move to {target['label']}"
-    else:
-        description = "This moves the Challenge forward one lifecycle stage. Existing records will be preserved."
-        action_label = f"Move to {target['label']}"
     return render(request, "core/confirm_remove.html", {
         "eyebrow": "Challenge Lifecycle",
-        "title": f"Move {month.name} to {target['label']}?",
-        "description": description,
+        "title": f"{target['label']}?",
+        "description": _lifecycle_action_description(month, target),
         "cancel_url": month.get_absolute_url(),
-        "action_label": action_label,
+        "action_label": target["label"],
         "hide_reason": True,
+        "transition_confirmation": signing.dumps(confirmation, salt=salt) if held else None,
     })
 
 
@@ -4424,8 +4791,8 @@ def member_create(request, group_slug):
     )
     if request.method == "POST" and form.is_valid():
         membership = form.save(group)
-        AuditEvent.objects.create(actor=request.user, group=group, action="membership.created", object_type="Membership", object_id=str(membership.pk), summary=f"Added {membership.display_name} as {membership.get_role_display()}")
-        messages.success(request, f"{membership.display_name} can now sign in with the temporary password.")
+        AuditEvent.objects.create(actor=request.user, group=group, action="membership.created", object_type="Membership", object_id=str(membership.pk), summary=f"Added {membership.user.username} as {membership.get_role_display()}")
+        messages.success(request, f"{membership.user.username} can now sign in with the temporary password.")
         return redirect("group-detail", group_slug=group.slug)
     return render(request, "core/form_page.html", {"form": form, "title": "Add Member", "eyebrow": group.name})
 
@@ -4434,7 +4801,7 @@ def _challenge_submission_page(request, month):
     """Platform overview only; filter the authorized queryset before pagination."""
     query = request.GET.get("submission_q", "").strip()[:300]
     status = request.GET.get("submission_status", "all")
-    if status not in {"all", "pending", "approved", "rejected", "voided"}:
+    if status not in {"all", "pending", "approved", "rejected", "voided", "withdrawn"}:
         status = "all"
     size = request.GET.get("submission_size", "25")
     size = int(size) if size in {"25", "50", "100"} else 25
@@ -4442,21 +4809,27 @@ def _challenge_submission_page(request, month):
         number = max(1, int(request.GET.get("submission_page", "1")))
     except ValueError:
         number = 1
-    submissions = month.submissions.select_related(
-        "month__group", "participant__user__northbound_profile", "catalog_book", "catalog_edition"
-    )
-    if status == "voided":
-        submissions = submissions.filter(is_removed=True)
-    elif status != "all":
-        submissions = submissions.filter(is_removed=False, status=status)
-    if query:
-        submissions = submissions.filter(
-            Q(participant__user__username__icontains=query)
-            | Q(participant__display_name__icontains=query) | Q(title__icontains=query)
-        )
-    page = Paginator(submissions.order_by("-submitted_at", "-pk"), size).get_page(number)
-    page.object_list = list(page.object_list)
-    _annotate_submission_edit(request.user, page.object_list)
+    from .photo_submission_table import submission_page
+    page=submission_page(month,request.user,query=query,status=status,size=size,number=number)
+    _annotate_submission_edit(request.user,[row for row in page.object_list if not getattr(row,'is_photo',False)])
+    # This table is Platform Owner-only. Match the profile's enrollment lookup
+    # for the current page, including inactive and historical enrollments.
+    enrollments = {
+        enrollment.participant_id: enrollment
+        for enrollment in month.enrollments.filter(
+            participant_id__in={submission.participant_id for submission in page.object_list},
+            participant__group_id=month.group_id,
+        ).select_related("participant")
+    }
+    scope = challenge_review_scope(request.user, month)
+    for submission in page.object_list:
+        enrollment = enrollments.get(submission.participant_id)
+        if enrollment and can_view_challenge(request.user, month) and _can_view_challenge_participant(
+            request.user, enrollment, scope,
+        ):
+            submission.reader_profile_url = reverse(
+                "challenge-participant-detail", args=[month.group.slug, month.pk, enrollment.participant_id],
+            )
     def page_url(number):
         params = request.GET.copy()
         params.pop("submissions_fragment", None)
@@ -4504,21 +4877,12 @@ def month_detail(request, group_slug, pk):
         )
     )
     _annotate_team_leader_rosters(teams)
-    participant_ids = {
-        assignment.participant_id
-        for team in teams
-        for assignment in team.assignments.all()
-    }
-    score_by_participant = challenge_score_totals(month=month, participant_ids=participant_ids)
-    comparison_teams = []
+    comparison_teams = [team for team in teams if can_view_team_standings(request.user, month, team=team)]
+    team_totals = challenge_team_totals(month=month, team_ids=[team.pk for team in comparison_teams])
     for team in teams:
-        team.can_view_standings = can_view_team_standings(request.user, month, team=team)
+        team.can_view_standings = team.pk in team_totals
         if team.can_view_standings:
-            team.visible_approved_pages = sum(
-                score_by_participant[assignment.participant_id]["total_pages"]
-                for assignment in team.assignments.all()
-            )
-            comparison_teams.append(team)
+            team.visible_approved_pages = team_totals[team.pk]
     max_team_pages = max((team.visible_approved_pages for team in comparison_teams), default=0)
     for team in comparison_teams:
         team.chart_percent = round((team.visible_approved_pages / max_team_pages) * 100, 1) if max_team_pages else 0
@@ -4558,7 +4922,7 @@ def month_detail(request, group_slug, pk):
         request.user,
         month,
         month.submissions.filter(
-            Q(status=BookSubmission.Status.PENDING) | Q(theme_claims__status=ThemeClaim.Status.PENDING),
+            Q(status=BookSubmission.Status.PENDING) | Q(theme_claims__status=ThemeClaim.Status.PENDING) | Q(pk__in=pending_prompt_submissions(month)),
             is_removed=False,
         ),
     ).distinct()
@@ -4579,6 +4943,7 @@ def month_detail(request, group_slug, pk):
         ),
         "can_transition_lifecycle": can_transition_challenge(request.user, month),
         "lifecycle_targets": lifecycle_transition_targets(month),
+        "schedule_status": LIFECYCLE_STATUS_LABELS[month.status],
         "can_manage_challenge_announcements": month_is_configurable(month) and can_manage_challenge_announcements(request.user, month),
         "can_manage_teams": month_is_configurable(month) and can_operate_challenge(request.user, month),
         "can_review": month.status in REVIEWABLE_MONTH_STATUSES and can_review_challenge(request.user, month),
@@ -4621,6 +4986,8 @@ def month_detail(request, group_slug, pk):
         "active_team_count": month.teams.filter(is_archived=False).count(),
         "visible_submissions": visible_submissions,
         "submission_heading": submission_heading,
+        "can_submit_photo": can_submit_photo(request.user, month),
+        **reader_photo_history(request, month=month),
         "current_hosts": month.staff_assignments.filter(
             role=ChallengeStaffAssignment.Role.HOST,
             ended_at__isnull=True,
@@ -4633,7 +5000,10 @@ def month_detail(request, group_slug, pk):
         "can_manage_floaters": can_operate_challenge(request.user, month),
     }
     context.update(submission_context)
-    return render(request, "core/month_detail.html", context)
+    from .prompt_progress import categories as progress_categories,reporting_scope as progress_scope
+    context['prompt_progress_available']=progress_categories(month).exists()
+    context['prompt_report_available']=context['prompt_progress_available'] and progress_scope(request.user,month) is not None
+    return render(request, "core/month_detail.html", {**context, "can_view_staff_activity": can_view_staff_activity(request.user, month)})
 
 
 @login_required
@@ -4663,9 +5033,9 @@ def challenge_host_list(request, group_slug, month_pk):
             action="challenge.host_assigned",
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
-            summary=f"Assigned {assignment.membership.display_name} as a Host for {month.name}.",
+            summary=f"Assigned {assignment.membership.user.username} as a Host for {month.name}.",
         )
-        messages.success(request, f"{assignment.membership.display_name} is now a Host for {month.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is now a Host for {month.name}.")
         return redirect("challenge-host-list", group_slug=group_slug, month_pk=month_pk)
     assignments = month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.HOST,
@@ -4712,16 +5082,16 @@ def challenge_host_end(request, group_slug, month_pk, pk):
             action="challenge.host_ended",
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
-            summary=f"Ended {assignment.membership.display_name}'s Host assignment for {assignment.month.name}.",
+            summary=f"Ended {assignment.membership.user.username}'s Host assignment for {assignment.month.name}.",
         )
-        messages.success(request, f"{assignment.membership.display_name} is no longer a current Host for {assignment.month.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is no longer a current Host for {assignment.month.name}.")
         return redirect("challenge-host-list", group_slug=group_slug, month_pk=month_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Challenge Host",
-            "title": f"Remove {assignment.membership.display_name} as Host?",
+            "title": f"Remove {assignment.membership.user.username} as Host?",
             "description": "Their Host assignment will end, but its dates and attribution will remain in staffing history.",
             "cancel_url": reverse("challenge-host-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
             "action_label": "Remove Host",
@@ -4774,9 +5144,9 @@ def challenge_floater_list(request, group_slug, month_pk):
             action="challenge.floater_assigned",
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
-            summary=f"Assigned {assignment.membership.display_name} as a Floater for {month.name}.",
+            summary=f"Assigned {assignment.membership.user.username} as a Floater for {month.name}.",
         )
-        messages.success(request, f"{assignment.membership.display_name} is now a non-competing Floater for {month.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is now a non-competing Floater for {month.name}.")
         return redirect("challenge-floater-list", group_slug=group_slug, month_pk=month_pk)
     assignments = month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.FLOATER,
@@ -4821,16 +5191,16 @@ def challenge_floater_end(request, group_slug, month_pk, pk):
             action="challenge.floater_ended",
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
-            summary=f"Ended {assignment.membership.display_name}'s Floater assignment for {assignment.month.name}.",
+            summary=f"Ended {assignment.membership.user.username}'s Floater assignment for {assignment.month.name}.",
         )
-        messages.success(request, f"{assignment.membership.display_name} is no longer a current Floater for {assignment.month.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is no longer a current Floater for {assignment.month.name}.")
         return redirect("challenge-floater-list", group_slug=group_slug, month_pk=month_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Challenge Floater",
-            "title": f"Remove {assignment.membership.display_name} as Floater?",
+            "title": f"Remove {assignment.membership.user.username} as Floater?",
             "description": "Their non-competing staffing assignment will end, but its dates and attribution will remain in staffing history.",
             "cancel_url": reverse("challenge-floater-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
             "action_label": "Remove Floater",
@@ -4869,11 +5239,11 @@ def team_leader_list(request, group_slug, month_pk, team_pk):
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
             summary=(
-                f"Assigned {assignment.membership.display_name} as a Team Leader for {team.name} "
+                f"Assigned {assignment.membership.user.username} as a Team Leader for {team.name} "
                 f"in {team.month.name}."
             ),
         )
-        messages.success(request, f"{assignment.membership.display_name} is now a Team Leader for {team.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is now a Team Leader for {team.name}.")
         return redirect("team-leader-list", group_slug=group_slug, month_pk=month_pk, team_pk=team_pk)
     assignments = team.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.TEAM_LEADER,
@@ -4921,18 +5291,18 @@ def team_leader_end(request, group_slug, month_pk, team_pk, pk):
             object_type="ChallengeStaffAssignment",
             object_id=str(assignment.pk),
             summary=(
-                f"Ended {assignment.membership.display_name}'s Team Leader assignment for "
+                f"Ended {assignment.membership.user.username}'s Team Leader assignment for "
                 f"{assignment.team.name} in {assignment.month.name}."
             ),
         )
-        messages.success(request, f"{assignment.membership.display_name} is no longer a Team Leader for {assignment.team.name}.")
+        messages.success(request, f"{assignment.membership.user.username} is no longer a Team Leader for {assignment.team.name}.")
         return redirect("team-leader-list", group_slug=group_slug, month_pk=month_pk, team_pk=team_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Team Leader",
-            "title": f"Remove {assignment.membership.display_name} as Team Leader?",
+            "title": f"Remove {assignment.membership.user.username} as Team Leader?",
             "description": "Their staffing assignment will end, but they will remain enrolled and assigned to the team.",
             "cancel_url": reverse(
                 "team-leader-list",
@@ -4996,8 +5366,9 @@ def team_edit(request, group_slug, month_pk, pk):
         AuditEvent.objects.create(actor=request.user, group=team.month.group, action="team.updated", object_type="Team", object_id=str(team.pk), summary=f"Updated team {previous_name} to {updated.name} for {team.month.name}.")
         messages.success(request, "Team updated.")
         return redirect("team-list", group_slug=group_slug, month_pk=month_pk)
-    can_delete_team = can_operate_challenge(request.user, team.month) and team.month.status == ChallengeMonth.Status.DRAFT and not team.assignments.exists()
-    return render(request, "core/team_edit.html", {"form": form, "team": team, "can_delete_team": can_delete_team})
+    can_delete_team = can_operate_challenge(request.user, team.month) and team.month.status == ChallengeMonth.Status.DRAFT and not team.assignments.exists() and not team.credited_enrollments.exists()
+    from .branding import can_manage_team_branding
+    return render(request, "core/team_edit.html", {"form": form, "team": team, "can_delete_team": can_delete_team, "can_edit_team_branding": can_manage_team_branding(request.user, team)})
 
 
 @login_required
@@ -5039,7 +5410,7 @@ def team_delete(request, group_slug, month_pk, pk):
         team.month = _lock_challenge_for_edit(team.month)
     if not can_run_challenge_wide_operations(request.user, team.month):
         return HttpResponseForbidden("A current Host assignment is required.")
-    if team.month.status != ChallengeMonth.Status.DRAFT or team.assignments.exists():
+    if team.month.status != ChallengeMonth.Status.DRAFT or team.assignments.exists() or team.credited_enrollments.exists():
         messages.error(request, "Only unused teams in a Draft month can be deleted. Archive this team instead.")
         return redirect("team-edit", group_slug=group_slug, month_pk=month_pk, pk=pk)
     if request.method == "POST":
@@ -5056,11 +5427,11 @@ def team_delete(request, group_slug, month_pk, pk):
 @login_required
 def team_assignment_create(request, group_slug, month_pk):
     month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug)
-    if not can_run_challenge_wide_operations(request.user, month):
-        return HttpResponseForbidden("A current Host assignment is required.")
+    if not can_manage_team_assignments(request.user, month):
+        return HttpResponseForbidden("Team assignment authority is required.")
     if reject_locked_month(request, month, "change its team roster"):
         return redirect(month)
-    form = TeamAssignmentForm(request.POST or None, month=month)
+    form = TeamAssignmentForm(request.POST or None, month=month, actor=request.user)
     if request.method == "POST" and form.is_valid():
         try:
             assignment = form.save(actor=request.user)
@@ -5091,13 +5462,16 @@ def month_participant_list(request, group_slug, month_pk):
         ),
         "signup_answers__question",
     ))
+    from .permissions import can_correct_registration_answers
     mutable = month_is_configurable(month)
     host_access = can_operate_challenge(request.user, month)
     registration_access = can_view_challenge_registration_answers(request.user, month)
     host_teams = restricted_host_team_ids(request.user, month)
     roster_scope = challenge_roster_read_scope(request.user, month)
+    manage_assignments = can_manage_team_assignments(request.user, month)
     planning_ids = set()
     for enrollment in enrollments:
+        enrollment.can_correct_registration = can_correct_registration_answers(request.user, enrollment)
         assignments = enrollment.participant.current_month_team_assignments
         team_id = assignments[0].team_id if assignments and enrollment.is_active else None
         enrollment.can_view_registration = registration_access and (host_teams is None or team_id in host_teams)
@@ -5105,6 +5479,9 @@ def month_participant_list(request, group_slug, month_pk):
             mutable and host_access and (host_teams is None or (
                 team_id in host_teams and enrollment.participant.user_id != request.user.pk
             ))
+        )
+        enrollment.can_edit_team = enrollment.is_active and manage_assignments and (
+            host_teams is None or enrollment.participant.user_id != request.user.pk
         )
         enrollment.can_view_roster_details = enrollment.can_view_registration or roster_read_scope_includes(roster_scope, team_id)
         if enrollment.can_view_roster_details:
@@ -5160,12 +5537,12 @@ def month_participant_list(request, group_slug, month_pk):
             return enrollment.planning.last_challenge_pages if enrollment.planning else None
         if sort_key == "completed":
             return enrollment.planning.completed_challenges if enrollment.planning else None
-        return enrollment.participant.display_name.casefold()
+        return enrollment.participant.user.username.casefold()
 
     available = [enrollment for enrollment in enrollments if value_for(enrollment) is not None]
     unavailable = [enrollment for enrollment in enrollments if value_for(enrollment) is None]
     available.sort(
-        key=lambda enrollment: (value_for(enrollment), enrollment.participant.display_name.casefold(), enrollment.pk),
+        key=lambda enrollment: (value_for(enrollment), enrollment.participant.user.username.casefold(), enrollment.pk),
         reverse=direction == "desc",
     )
     enrollments = available + unavailable
@@ -5182,10 +5559,11 @@ def month_participant_list(request, group_slug, month_pk):
         "month": month,
         "enrollments": enrollments,
         "can_view_planning_data": planning_access,
+        "can_correct_registration": any(row.can_correct_registration for row in enrollments),
         "can_view_registration_answers": registration_access,
         "can_view_discord_usernames": planning_access,
         "can_manage_participants": mutable and host_access and host_teams is None,
-        "can_manage_teams": mutable and host_access,
+        "can_manage_teams": manage_assignments,
         "can_remove": mutable and host_access,
         "sort_headers": sort_headers,
     })
@@ -5207,7 +5585,7 @@ def month_participant_add(request, group_slug, month_pk):
         else:
             team = form.cleaned_data.get("team")
             team_message = f" and was assigned to {team.name}" if team else " without a team assignment"
-            messages.success(request, f"{enrollment.participant.display_name} was added to {month.name}{team_message}.")
+            messages.success(request, f"{enrollment.participant.user.username} was added to {month.name}{team_message}.")
             return redirect("month-participant-list", group_slug=month.group.slug, month_pk=month.pk)
     return render(request, "core/form_page.html", {"form": form, "title": "Add Participant to Month", "eyebrow": month.name})
 
@@ -5215,17 +5593,20 @@ def month_participant_add(request, group_slug, month_pk):
 @login_required
 def month_participant_edit(request, group_slug, month_pk, pk):
     enrollment = get_object_or_404(MonthEnrollment.objects.select_related("month__group", "participant"), pk=pk, month_id=month_pk, month__group__slug=group_slug, is_active=True)
-    if not (can_operate_challenge(request.user, enrollment.month)
-            and host_scope_allows_reader(request.user, enrollment.month, enrollment.participant_id)):
-        return HttpResponseForbidden("A current Host assignment is required.")
+    if not can_manage_team_assignments(request.user, enrollment.month, enrollment.participant):
+        return HttpResponseForbidden("Team assignment authority is required.")
     if reject_locked_month(request, enrollment.month, "change its team roster"):
         return redirect(enrollment.month)
     form = MonthParticipantEditForm(request.POST or None, enrollment=enrollment)
     if request.method == "POST" and form.is_valid():
-        previous_team, new_team = form.save(actor=request.user)
-        messages.success(request, f"Updated {enrollment.participant.display_name}'s team assignment.")
-        return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Edit {enrollment.participant.display_name}", "eyebrow": enrollment.month.name})
+        try:
+            form.save(actor=request.user)
+        except ValidationError as exc:
+            _add_validation_error(form, exc)
+        else:
+            messages.success(request, f"Updated {enrollment.participant.user.username}'s team assignment.")
+            return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
+    return render(request, "core/form_page.html", {"form": form, "title": f"Edit {enrollment.participant.user.username}", "eyebrow": enrollment.month.name})
 
 
 @login_required
@@ -5245,7 +5626,7 @@ def month_participant_remove(request, group_slug, month_pk, pk):
             note=request.POST.get("reason", "").strip(),
             ordinary_staff_removal=True,
         )
-        messages.success(request, f"{participant.display_name} was removed from active participation in {enrollment.month.name}.")
+        messages.success(request, f"{participant.user.username} was removed from active participation in {enrollment.month.name}.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
     description = "They will leave the current roster and can no longer submit. Existing submissions, approved pages, and team history will be preserved."
     if enrollment.month.staff_assignments.filter(
@@ -5253,7 +5634,7 @@ def month_participant_remove(request, group_slug, month_pk, pk):
     ).exists():
         description += " Removing this Host from Reader participation restores their challenge-wide Host authority."
     return render(request, "core/confirm_remove.html", {
-        "title": f"Remove {enrollment.participant.display_name} from {enrollment.month.name}?",
+        "title": f"Remove {enrollment.participant.user.username} from {enrollment.month.name}?",
         "description": description,
         "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
     })
@@ -5280,11 +5661,11 @@ def month_participant_reactivate(request, group_slug, month_pk, pk):
             actor=request.user,
             origin=MonthEnrollment.Origin.STAFF,
         )
-        messages.success(request, f"{enrollment.participant.display_name} was reactivated without a team assignment.")
+        messages.success(request, f"{enrollment.participant.user.username} was reactivated without a team assignment.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
     return render(request, "core/confirm_remove.html", {
         "eyebrow": "Challenge Participation",
-        "title": f"Reactivate {enrollment.participant.display_name}?",
+        "title": f"Reactivate {enrollment.participant.user.username}?",
         "description": "They will return to active participation without restoring a previous team or Team Leader assignment.",
         "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
         "action_label": "Reactivate Reader",
@@ -5618,6 +5999,10 @@ def challenge_registration_edit(request, group_slug, month_pk):
 
 @login_required
 def challenge_registration_detail(request, group_slug, month_pk, enrollment_pk):
+    from .permissions import can_correct_registration_answers
+    from .registration_answers import RegistrationAnswerCorrectionForm, correct_registration_answers
+    if request.method not in {"GET", "POST"}:
+        return HttpResponse("Use GET or POST.", status=405)
     enrollment = get_object_or_404(
         MonthEnrollment.objects.select_related("month__group", "participant__user", "participant__user__northbound_profile"),
         pk=enrollment_pk,
@@ -5625,8 +6010,11 @@ def challenge_registration_detail(request, group_slug, month_pk, enrollment_pk):
         month__group__slug=group_slug,
     )
     month = enrollment.month
-    if not (can_view_challenge_registration_answers(request.user, month)
-            and host_scope_allows_reader(request.user, month, enrollment.participant_id)):
+    can_correct = can_correct_registration_answers(request.user, enrollment)
+    if request.method == "POST" and not can_correct:
+        return HttpResponseForbidden("Registration correction permission is required in an editable Challenge.")
+    if not (can_correct or (can_view_challenge_registration_answers(request.user, month)
+            and host_scope_allows_reader(request.user, month, enrollment.participant_id))):
         return HttpResponseForbidden("Challenge registration-planning visibility is required.")
     questions = list(month.signup_questions.all())
     answer_map = {answer.question_id: answer.value for answer in enrollment.signup_answers.all()}
@@ -5636,27 +6024,18 @@ def challenge_registration_detail(request, group_slug, month_pk, enrollment_pk):
         display_value = ", ".join(value) if isinstance(value, list) else value
         rows.append({"question": question, "value": display_value})
     correction_form = None
-    if request.user.is_superuser:
-        correction_form = ChallengeRegistrationForm(
-            request.POST if request.method == "POST" else None,
-            month=month,
-            profile=enrollment.participant.user.northbound_profile,
-            enrollment=enrollment,
-            include_discord=False,
-        )
-        if request.method == "POST" and correction_form.is_valid():
-            with transaction.atomic():
-                correction_form.save_answers(enrollment)
-                AuditEvent.objects.create(
-                    actor=request.user,
-                    group=month.group,
-                    action="registration.answers_admin_corrected",
-                    object_type="MonthEnrollment",
-                    object_id=str(enrollment.pk),
-                    summary=f"Administratively corrected registration answers for {enrollment.participant.display_name} in {month.name}; answer values were not recorded in audit activity.",
-                )
-            messages.success(request, "Registration answers were administratively corrected.")
-            return redirect("challenge-registration-detail", group_slug=group_slug, month_pk=month.pk, enrollment_pk=enrollment.pk)
+    if can_correct:
+        correction_form = RegistrationAnswerCorrectionForm(enrollment=enrollment, actor=request.user)
+        if request.method == "POST":
+            correction_form, changed = correct_registration_answers(
+                enrollment=enrollment, actor=request.user, data=request.POST,
+            )
+            if not correction_form.errors:
+                if changed:
+                    messages.success(request, "Registration answers corrected.")
+                else:
+                    messages.info(request, "No registration answers changed.")
+                return redirect("challenge-registration-detail", group_slug=group_slug, month_pk=month.pk, enrollment_pk=enrollment.pk)
     return render(request, "core/challenge_registration_detail.html", {
         "month": month,
         "enrollment": enrollment,
@@ -5707,8 +6086,8 @@ def submission_create(request, group_slug, month_pk):
         raise Http404("A Platform Owner must also have a group membership to submit books.")
     if is_active_floater(month, participant.pk):
         return HttpResponseForbidden("Active Floaters cannot submit books.")
-    if not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists():
-        messages.error(request, "You are not enrolled in this Challenge. Ask a Host to add you to the Challenge or one of its teams.")
+    if not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True, awaiting_scoring_team=False).exists():
+        messages.error(request, "You need an eligible enrollment to submit. If you recently rejoined, ask a Host to assign you to a team.")
         return redirect(month)
     from .forms import ImmersiveSubmissionForm
     from .matching_intent import ReaderIntentForm
@@ -5722,8 +6101,10 @@ def submission_create(request, group_slug, month_pk):
     if request.method == "POST" and book_valid and intent_valid:
         with transaction.atomic():
             month = _lock_challenge_for_edit(month)
-            if (month.status != ChallengeMonth.Status.ACTIVE
-                    or not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True).exists()
+            enrollment = MonthEnrollment.objects.select_for_update().filter(
+                month=month, participant=participant, is_active=True, awaiting_scoring_team=False,
+            ).first()
+            if (month.status != ChallengeMonth.Status.ACTIVE or enrollment is None
                     or is_active_floater(month, participant.pk)):
                 return HttpResponseForbidden("Current Reader eligibility is required to submit.")
             submission = form.save(commit=False)
@@ -5739,12 +6120,22 @@ def submission_create(request, group_slug, month_pk):
                 _add_validation_error(form, exc)
             else:
                 def create_book():
-                    submission.save()
+                    from .submission_acceptance import record_acceptance
+                    record_acceptance(
+                        submission, enrollment=enrollment, themes=form.cleaned_data["themes"],
+                        immersive_requested=form.cleaned_data["immersive_request"],
+                    )
+                    from .prompt_reservations import save_new_submission, form_selections
+                    save_new_submission(submission=submission, actor=request.user, selections=form_selections(form))
                     form.save_theme_claims(submission)
                     submission.recalculate_score()
                     synchronize_submission(submission)
                     synchronize_personal_tbr_submission(submission)
-                    AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Submitted {submission.title}")
+                    AuditEvent.objects.create(actor=request.user, group=month.group, action="submission.created", object_type="BookSubmission", object_id=str(submission.pk), summary=json.dumps({"challenge_id": month.pk, "reader_id": participant.pk, "status": submission.status}))
+                    if submission.status == BookSubmission.Status.APPROVED:
+                        AuditEvent.objects.create(group=month.group, action="submission.approved",
+                            object_type="BookSubmission", object_id=str(submission.pk),
+                            summary=json.dumps({"challenge_id": month.pk, "status": submission.status, "automatic": True}))
                     return submission
                 try:
                     with transaction.atomic():
@@ -5765,7 +6156,7 @@ def submission_create(request, group_slug, month_pk):
             return redirect(month)
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).exists()
     return render(request, "core/submission_create.html", {
-        "form": form, "month": month, "hardcover_available": connection, "intent_form": intent_form,
+        "form": form, "month": month, "can_submit_photo": can_submit_photo(request.user, month), "hardcover_available": connection, "intent_form": intent_form,
         "challenge_book_groups": picker_groups(month=month, participant=participant, actor=request.user),
     })
 
@@ -6094,7 +6485,7 @@ def botm_match_list(request, group_slug, month_pk):
         return HttpResponseForbidden("Only a current Host or Platform Owner may view BOTM match history.")
     matches = month.botm_matches.select_related(
         "botm_book", "participant", "submission", "reviewer"
-    ).order_by("status", "botm_book__position", "participant__display_name", "pk")
+    ).order_by("status", "botm_book__position", "participant__user__username", "pk")
     submissions = scope_reviewable_submissions(request.user, month, month.submissions.all())
     matches = matches.filter(submission__in=submissions)
     host_teams = restricted_host_team_ids(request.user, month)
@@ -6102,7 +6493,7 @@ def botm_match_list(request, group_slug, month_pk):
         "participant"
     ).filter(
         **({"participant_id__in": submissions.values("participant_id")} if host_teams is not None else {})
-    ).prefetch_related("configured_books").order_by("participant__display_name", "-qualified_at", "pk"))
+    ).prefetch_related("configured_books").order_by("participant__user__username", "-qualified_at", "pk"))
     for award in completion_awards:
         frozen_book_ids = [snapshot.botm_book_id for snapshot in award.configured_books.all()]
         award.current_completed_count = BotmMatch.objects.filter(
@@ -6175,7 +6566,7 @@ def personal_tbr_match_list(request, group_slug, month_pk):
     visible_submissions = scope_reviewable_submissions(request.user, month, month.submissions.all())
     matches = month.personal_tbr_matches.filter(submission__in=visible_submissions).select_related(
         "personal_tbr_book", "participant", "submission", "reviewer",
-    ).order_by("status", "participant__display_name", "personal_tbr_book__position", "pk")
+    ).order_by("status", "participant__user__username", "personal_tbr_book__position", "pk")
     return render(request, "core/personal_tbr_match_list.html", {"month": month, "matches": matches})
 
 
@@ -6508,7 +6899,7 @@ def review_queue(request, group_slug, month_pk):
         request.user,
         month,
         month.submissions.filter(
-            Q(status=BookSubmission.Status.PENDING) | Q(theme_claims__status=ThemeClaim.Status.PENDING),
+            Q(status=BookSubmission.Status.PENDING) | Q(theme_claims__status=ThemeClaim.Status.PENDING) | Q(pk__in=pending_prompt_submissions(month)),
             is_removed=False,
         ),
     ).select_related(
@@ -6520,22 +6911,34 @@ def review_queue(request, group_slug, month_pk):
     from .submission_review_matching import matching_cards
     for submission in submissions:
         submission.review_matching = matching_cards(submission)
+        submission.review_prompt_claims = submission.prompt_claims.filter(is_current=True,state="reserved",category__enabled=True) if pending_prompt_submissions(month).filter(submission_id=submission.pk).exists() else []
     scope_name, team_ids = review_scope or ('challenge', frozenset())
     scope_label = "Entire Challenge" if scope_name == "challenge" else ", ".join(month.teams.filter(pk__in=team_ids).values_list("name", flat=True))
     from .immersive import review_queue_requests
-    return render(request, "core/review_queue.html", {"month": month, "submissions": submissions, "review_scope_label": scope_label,
+    from .prompt_progress import categories as progress_categories,reporting_scope as progress_scope
+    prompt_report_available=progress_categories(month).exists() and progress_scope(request.user,month) is not None
+    from .photo_review import pending_review_photos
+    photo_submissions = pending_review_photos(request.user,month).select_related('participant__user','month','accepted_team_assignment__team','prompt_claim__prompt')
+    return render(request, "core/review_queue.html", {"month": month, "photo_submissions": photo_submissions, "can_view_staff_activity": can_view_staff_activity(request.user, month), "submissions": submissions, "review_scope_label": scope_label,
         "immersive_requests": review_queue_requests(actor=request.user, month=month),
-        "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
+        "prompt_report_available": prompt_report_available, "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
 
 
 def _annotate_submission_edit(user, submissions):
     from .permissions import can_edit_submission
     from .immersive_ui import _readable
+    from .submission_activity import activity_scope
+    from .recovery_scoring import ordinary_restore_preserves_attribution
+    scopes = {}
     for submission in submissions:
+        if submission.month_id not in scopes:
+            scopes[submission.month_id] = activity_scope(user, submission.month, include_own_voided=True)
+        submission.can_view_activity = any(scope.filter(pk=submission.pk).exists() for scope in scopes[submission.month_id])
         submission.can_edit = can_edit_submission(user, submission)
         from .administrative_matching import can_manage_credit
         submission.can_manage_submission = submission.can_edit or can_manage_credit(user, submission)
         submission.can_void = month_is_configurable(submission.month) and can_void_submission(user, submission)
+        submission.can_restore = can_restore_submission(user, submission) and ordinary_restore_preserves_attribution(submission)
         submission.can_purge = bool(user.is_authenticated and user.is_active and user.is_superuser)
         submission.can_view_immersive = _readable(user, submission)
 
@@ -6602,10 +7005,11 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
     initial = {'version': correction_version(submission, request.user)} if request.method == 'GET' else None
     # Retain a separate display object: ModelForm validation mutates its instance.
     from copy import copy
-    form_class = SubmissionCorrectionForm if workflow == 'advanced' else FocusedSubmissionCorrectionForm
+    focused = workflow in {'book', 'pages'}
+    form_class = FocusedSubmissionCorrectionForm if focused else SubmissionCorrectionForm
     form = form_class(request.POST if request.method == 'POST' else None,
         instance=copy(submission), month=submission.month, initial=initial,
-        **({'workflow': workflow} if workflow != 'advanced' else {}))
+        **({'workflow': workflow} if focused else {}))
     reload_required = False
     preview = None
     operation = {'book': 'Fix Book Information', 'pages': 'Fix Pages / Themes'}.get(workflow, 'Advanced Corrections')
@@ -6616,7 +7020,10 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
             token = None
             if 'catalog_edition_id' in changes:
                 token = _staff_tbr_search_token(request.user, submission.month.group)
-            needs_preview = (workflow != 'advanced' or 'catalog_edition_id' in changes
+            needs_preview = (focused or (workflow == 'editor' and submission.status == 'approved')
+                             or bool(changes.get('prompt_decisions'))
+                             or (bool({'bingo_prompt_id','scavenger_prompt_id'} & changes.keys()) and submission.prompt_claims.filter(is_current=True).exclude(earning_evidence={}).exists())
+                             or 'catalog_edition_id' in changes
                              or (submission.status == 'approved' and 'page_count' in changes))
             if form.cleaned_data.get('preview_token'):
                 corrected = apply_previewed_correction(submission=submission, actor=request.user, changes=changes,
@@ -6670,6 +7077,28 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
         form.errors.pop('version')
         form.add_error(None, 'The edit session is unavailable. Reload the submission before editing again.')
         reload_required = True
+    if workflow == 'editor':
+        # Keep confirmation controls tied to the currently rendered preview.
+        if form.is_bound and preview is None:
+            form.data = form.data.copy()
+            form.data['preview_token'] = ''
+        association_changed = bool(form['edition'].value() and str(form['edition'].value()) != str(submission.catalog_edition_id))
+        form.fields['themes'].widget.preserve_checked = True
+        responses = [(field.name.removeprefix('theme_response_'), field) for field in form.visible_fields()
+                     if field.name.startswith('theme_response_') and not field.field.disabled]
+        errors = set(form.errors)
+        return render(request, 'core/submission_editor.html', {
+            'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
+            'operation': operation, 'preview_effects': preview_effects(preview) if preview else [],
+            'preview_editions': preview_editions(preview) if preview else [],
+            'cancel_url': reverse('submission-manage', args=[group_slug, month_pk, pk]),
+            'edit_url': request.path, 'reload_required': reload_required,
+            'association_changed': association_changed,
+            'book_open': association_changed or bool(errors & {'title', 'author', 'edition', 'association_mode'}),
+            'pages_open': bool(errors & {'submitted_pages', 'completed_on', 'manual_page_override'}),
+            'themes_open': bool(errors & {'themes', 'confirm_theme_removal'}) or any(key.startswith('theme_response_') for key in errors),
+            'theme_responses': responses, 'original_themes': sorted(form.original_theme_ids),
+        })
     return render(request, 'core/submission_edit.html', {
         'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
         'operation': operation, 'workflow': workflow, 'show_association': workflow != 'pages',
@@ -6693,31 +7122,46 @@ def submission_manage(request, group_slug, month_pk, pk):
         return HttpResponseForbidden('Submission correction permission is required.')
     if request.method != 'GET':
         return HttpResponse('Use GET.', status=405)
+    _annotate_submission_edit(request.user, [submission])
     return render(request, 'core/submission_manage.html', {
         'submission': submission, 'month': submission.month, 'editable': editable, 'administrative_credit': administrative_credit,
+        'timeline': submission_timeline(request.user, submission),
         'can_adjudicate': editable and can_review_submission(request.user, submission),
+        'botm_qualified': submission.botm_matches.filter(status='confirmed', is_qualifying=True).exists(),
+        'tbr_qualified': submission.personal_tbr_matches.filter(status='confirmed', is_qualifying=True).exists(),
         'matches': submission.personal_tbr_matches.select_related('personal_tbr_book'),
     })
 
 
 @login_required
+def submission_activity(request, group_slug=None, month_pk=None):
+    from .submission_activity import activity_cards, activity_events
+
+    month = get_object_or_404(ChallengeMonth, pk=month_pk, group__slug=group_slug) if month_pk is not None else None
+    if not can_view_staff_activity(request.user, month):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponse("Use GET.", status=405)
+    staff = BookSubmission.objects.all()
+    if month is not None:
+        staff = scope_reviewable_submissions(request.user, month, staff.filter(month=month))
+    page = Paginator(activity_events(staff, BookSubmission.objects.none()), 25).get_page(request.GET.get("page"))
+    return render(request, "core/submission_activity.html", {
+        "month": month, "activity_page": page, "cards": activity_cards(page.object_list, staff),
+    })
+
+
+@login_required
 def submission_history(request, group_slug, month_pk, pk):
-    from .submission_management import history_entry
-    if not (request.user.is_active and request.user.is_superuser):
-        return HttpResponseForbidden('Platform Administrator access is required for detailed history.')
-    submission = get_object_or_404(BookSubmission.objects.select_related('month__group'),
+    submission = get_object_or_404(BookSubmission.objects.select_related("month__group", "participant"),
         pk=pk, month_id=month_pk, month__group__slug=group_slug)
-    if request.method != 'GET':
-        return HttpResponse('Use GET.', status=405)
-    events = AuditEvent.objects.filter(group=submission.month.group,
-        object_type='BookSubmission', object_id=str(submission.pk)).select_related('actor').order_by('-created_at', '-pk')
-    page = Paginator(events, 25).get_page(request.GET.get('page'))
-    return render(request, 'core/submission_history.html', {
-        'submission': submission, 'month': submission.month,
-        'pagination': {'number': page.number, 'total': page.paginator.num_pages,
-            'previous': page.previous_page_number() if page.has_previous() else None,
-            'next': page.next_page_number() if page.has_next() else None},
-        'entries': [history_entry(event) for event in page],
+    timeline = submission_timeline(request.user, submission, request.GET.get("page"))
+    if timeline is None:
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponse("Use GET.", status=405)
+    return render(request, "core/submission_activity.html", {
+        "submission": submission, "month": submission.month, "timeline": timeline,
     })
 
 
@@ -6731,6 +7175,15 @@ def submission_review(request, group_slug, month_pk, pk):
     if submission.month.status not in REVIEWABLE_MONTH_STATUSES:
         messages.error(request, f"{submission.month.get_status_display()} Challenges cannot be reviewed.")
         return redirect(submission.month)
+    if submission.is_removed:
+        if request.method == "POST":
+            return HttpResponseForbidden("This submission has been voided. Nothing was saved.")
+        return render(request, "core/submission_activity.html", {
+            "submission": submission,
+            "month": submission.month,
+            "timeline": submission_timeline(request.user, submission),
+            "voided_review": True,
+        })
     from .submission_review_matching import matching_cards, MatchingReviewForm, apply_unified_review
     cards = matching_cards(submission)
     matching_form = MatchingReviewForm(request.POST or None, submission=submission, actor=request.user, cards=cards)
@@ -6739,13 +7192,22 @@ def submission_review(request, group_slug, month_pk, pk):
         'approved_pages': submission.approved_pages or submission.submitted_pages,
     })
     ClaimFormSet = inlineformset_factory(BookSubmission, ThemeClaim, form=ThemeClaimReviewForm, extra=0, can_delete=False)
-    claim_formset = ClaimFormSet(request.POST or None, instance=submission, prefix="claims")
-    claims_are_valid = claim_formset.is_valid() if submission.theme_claims.exists() else True
+    claims = submission.theme_claims.all()
+    if submission.status == BookSubmission.Status.PENDING:
+        from .late_approval import enrollment_for
+        enrollment = enrollment_for(submission)
+        if enrollment is not None and not enrollment.is_active:
+            # The locked approval service records these out-of-window claims
+            # as held. Their form validation must not prevent base approval.
+            claims = claims.filter(theme__starts_on__lte=submission.completed_on, theme__ends_on__gte=submission.completed_on)
+    claim_formset = ClaimFormSet(request.POST or None, instance=submission, queryset=claims, prefix="claims")
+    claims_are_valid = claim_formset.is_valid() if claims.exists() else True
     if request.method == "POST":
         form_valid = form.is_valid()
         matching_valid = matching_form.is_valid()
         forbidden = [domain for domain in ('botm','tbr') if request.POST.get('confirm_'+domain)
                      and 'confirm_'+domain not in matching_form.fields]
+        forbidden += [name for name in ('prompt_bingo','prompt_scavenger') if request.POST.get(name) and name not in matching_form.fields]
         if forbidden:
             matching_form.add_error(None, 'This relationship cannot be confirmed here. Nothing was saved. You can approve the book without this credit.')
             matching_valid = False
@@ -6756,15 +7218,19 @@ def submission_review(request, group_slug, month_pk, pk):
                     claims = claim_formset.save(commit=False)
                     reviewed = apply_unified_review(reviewed, claims, request.user, timezone.now(),
                         version=matching_form.cleaned_data['matching_version'],
-                        confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)])
+                        confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)],
+                        prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)})
                     AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
             except (ValidationError, PermissionDenied, DatabaseError):
                 form.add_error(None, 'This review could not be saved because the submission, matching or eligibility changed. Nothing was saved. Reload to check the current details, or approve without confirming uncertain credit.')
             else:
                 messages.success(request, "Review saved.")
+                for hold in getattr(reviewed, "late_approval_holds", ()):
+                    messages.warning(request, hold)
                 return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
-    return render(request, "core/submission_review.html", {"form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards})
+    _annotate_submission_edit(request.user, [submission])
+    return render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []})
 
 
 @login_required
@@ -6852,7 +7318,48 @@ def staff_challenge_tbr_catalog(request, group_slug, month_pk, pk):
 
 
 @login_required
+def staff_challenge_tbr_book_edit(request, group_slug, month_pk, pk, book_pk):
+    from .forms import StaffTbrBookEditForm
+    from .models import PersonalTBRBook
+    from .personal_tbr import edit_staff_tbr_book, staff_tbr_book_lock_reason, staff_tbr_book_version
+
+    enrollment = _staff_tbr_enrollment(group_slug, month_pk, pk)
+    month = enrollment.month
+    if not request.user.is_active or not can_manage_challenge_tbr(request.user, enrollment):
+        raise PermissionDenied("Challenge TBR staff authority is required.")
+    if not month.tbr_enabled or challenge_history_locked(month):
+        return HttpResponseForbidden("This Challenge TBR cannot be edited.")
+    if request.method not in {"GET", "POST"}:
+        return HttpResponse("Use GET or POST.", status=405)
+    book = get_object_or_404(
+        PersonalTBRBook.objects.select_related("personal_tbr"),
+        pk=book_pk, personal_tbr__enrollment=enrollment,
+    )
+    cancel_url = reverse("staff-challenge-tbr", args=[group_slug, month_pk, pk])
+    locked_reason = staff_tbr_book_lock_reason(book)
+    form = StaffTbrBookEditForm(
+        request.POST if request.method == "POST" else None,
+        initial={"title": book.title_snapshot, "author": book.author_snapshot, "version": staff_tbr_book_version(book)},
+    )
+    if request.method == "POST" and form.is_valid() and not locked_reason:
+        try:
+            changed = edit_staff_tbr_book(
+                enrollment=enrollment, book_id=book.pk, actor=request.user, **form.cleaned_data,
+            )
+        except ValidationError as exc:
+            _add_recovery_error(form, exc)
+        else:
+            messages.success(request, "Book updated." if changed else "No changes to save.")
+            return redirect(cancel_url)
+    return render(request, "core/staff_tbr_book_edit.html", {
+        "book": book, "form": form, "locked_reason": locked_reason, "cancel_url": cancel_url,
+    })
+
+
+@login_required
 def staff_challenge_tbr(request, group_slug, month_pk, pk):
+    from .personal_tbr import staff_tbr_book_lock_reason
+
     enrollment = _staff_tbr_enrollment(group_slug, month_pk, pk)
     if not can_manage_challenge_tbr(request.user, enrollment):
         return HttpResponseForbidden("Challenge TBR staff authority is required.")
@@ -6862,8 +7369,10 @@ def staff_challenge_tbr(request, group_slug, month_pk, pk):
         return HttpResponseForbidden("Completed and Archived Challenges are read-only.")
     tbr = PersonalTBR.objects.filter(enrollment=enrollment).first()
     initial = []
+    entry_actions = []
     if tbr:
         for book in tbr.books.all():
+            entry_actions.append((book, staff_tbr_book_lock_reason(book)))
             initial.append({
                 "title_snapshot": book.title_snapshot, "author_snapshot": book.author_snapshot,
                 "page_count_snapshot": book.page_count_snapshot, "ORDER": book.position,
@@ -6900,6 +7409,7 @@ def staff_challenge_tbr(request, group_slug, month_pk, pk):
         action__in=["challenge_tbr.staff_updated", "challenge_tbr.reader_updated"],
     ).select_related("actor").first()
     return render(request, "core/staff_challenge_tbr.html", {
+        "entry_actions": entry_actions,
         "month": enrollment.month, "participant": enrollment.participant, "tbr_formset": formset,
         "staff_tbr": True, "tbr_enabled": True, "tbr_feature_enabled": True,
         "reader_hardcover_available": available, "personal_tbr": tbr, "latest_change": latest,

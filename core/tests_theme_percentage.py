@@ -16,7 +16,18 @@ from .models import (BookSubmission, ChallengeMonth, ChallengeStaffAssignment, M
                      ModifierProvenance, MonthEnrollment, MonthTheme, ProgressCheckpoint,
                      ProgressCheckpointResult, ReadingGroup, Team, TeamAssignment, ThemeClaim)
 from .recovery import RecoveryRequest
-from .recovery_scoring import correct_unused_theme, recover_theme_claim, set_submission_removed
+from .recovery_scoring import (
+    correct_unused_theme, recover_theme_claim, set_submission_removed as apply_removed_state,
+    preview_submission_restoration, submission_recovery_label,
+)
+
+
+def set_submission_removed(**kwargs):
+    if not kwargs["removed"]:
+        kwargs["preview_token"] = preview_submission_restoration(
+            submission=kwargs["submission"], actor=kwargs["recovery_request"].actor,
+        )[1]
+    return apply_removed_state(**kwargs)
 from .score_aggregation import challenge_score_totals
 from .scoring import apply_submission_review, percentage_bonus_pages, refresh_submission_score
 
@@ -56,7 +67,9 @@ class PercentageThemeTests(TestCase):
     def request(self, target, action):
         return RecoveryRequest(actor=self.root, tier=2, action=action,
             target_type=type(target).__name__, target_id=str(target.pk), target_label=str(target),
-            reason='Correct the authorized training record', group=self.group, challenge=self.month)
+            reason='Correct the authorized training record', group=self.group, challenge=self.month,
+            required_confirmation=submission_recovery_label(target) if isinstance(target, BookSubmission) else "",
+            supplied_confirmation=submission_recovery_label(target) if isinstance(target, BookSubmission) else "")
 
     def test_configuration_defaults_validation_and_forms(self):
         t = self.theme(0)
@@ -290,8 +303,9 @@ class PercentageThemeTests(TestCase):
         self.assertEqual((c.award_basis_pages, c.award_bonus_pages,
                           self.submission.final_scored_pages), (500, 125, 625))
         from .models import AuditEvent
-        event = AuditEvent.objects.get(action='submission.approved', object_id=str(self.submission.pk))
-        self.assertIn('500', event.summary)
+        self.assertTrue(AuditEvent.objects.filter(
+            action='submission.approved', object_id=str(self.submission.pk), summary__contains='500',
+        ).exists())
 
     def test_rejected_awards_correct_independently_without_activation(self):
         claims = [ThemeClaim.objects.create(theme=self.theme(rate), submission=self.submission)
@@ -399,7 +413,7 @@ class PercentageThemeTests(TestCase):
             recovery_request=self.request(self.submission, 'submission.recover'))
         recover_theme_claim(claim=c, status='approved',
             recovery_request=self.request(c, 'theme_claim.reconcile'))
-        with patch('core.recovery_scoring._synchronize_reader_sources', side_effect=RuntimeError('rollback')):
+        with patch('core.recovery_scoring._synchronize_submission_sources', side_effect=RuntimeError('rollback')):
             with self.assertRaises(RuntimeError):
                 set_submission_removed(submission=self.submission, removed=False,
                     recovery_request=self.request(self.submission, 'submission.recover'))

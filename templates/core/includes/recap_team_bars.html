@@ -1,0 +1,1 @@
+<ul class="recap-team-bars plain-list" aria-label="Team points comparison">{% for row in rows %}<li><div class="recap-bar-label"><span>{{ row.name }}</span><strong>{{ row.points }} points</strong></div><div class="recap-bar-track" aria-hidden="true"><span style="width:{{ row.bar_width }}%"></span></div></li>{% endfor %}</ul>

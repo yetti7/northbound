@@ -6,11 +6,16 @@ from .models import AuditEvent, BookSubmission, BotmBook, BotmMatch, ChallengeMo
 from .permissions import can_operate_challenge, challenge_history_locked
 
 
-def _finalize_submission_matches(submission, matches):
+def _finalize_submission_matches(submission, matches, *, earned_only=False, restore_earned=False):
     from .botm_rewards import synchronize_botm_book_rewards_for_submission
-    synchronize_botm_book_rewards_for_submission(submission)
+    synchronize_botm_book_rewards_for_submission(
+        submission, earned_only=earned_only, restore_earned=restore_earned,
+    )
     from .botm_completion import synchronize_botm_completion_for_reader
-    synchronize_botm_completion_for_reader(month=submission.month, participant=submission.participant)
+    synchronize_botm_completion_for_reader(
+        month=submission.month, participant=submission.participant,
+        earned_only=earned_only, restore_earned=restore_earned,
+    )
     return matches
 
 
@@ -24,12 +29,13 @@ def _submission_is_eligible(submission):
     return (
         submission.status == BookSubmission.Status.APPROVED
         and not submission.is_removed
+        and not submission.late_approval_evidence
         and submission.participant.is_active
         and not submission.participant.user.is_superuser
         and MonthEnrollment.objects.filter(
             month_id=submission.month_id,
             participant_id=submission.participant_id,
-            is_active=True,
+            is_active=True, awaiting_scoring_team=False,
         ).exists()
     )
 

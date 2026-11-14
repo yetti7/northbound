@@ -18,7 +18,7 @@
       <div class="host-picker-row">
         <select id="host-picker" data-host-picker>
           <option value="">Select a Group member</option>
-          {% for membership in eligible_hosts %}<option value="{{ membership.pk }}">{{ membership.display_name }}</option>{% endfor %}
+          {% for membership in eligible_hosts %}<option value="{{ membership.pk }}">{{ membership.user.username }}</option>{% endfor %}
         </select>
         <button class="button" type="button" data-add-host disabled>Add Host</button>
       </div>
@@ -31,7 +31,7 @@
         <p class="muted" data-no-selected-hosts>No Hosts selected.</p>
       </div>
     </div>
-    <button class="button primary">Save</button>
+    <div class="form-actions"><button class="button primary">Save</button>{% if logical_parent_url %}<a class="button secondary" href="{{ logical_parent_url }}">Cancel</a>{% endif %}</div>
   </form>
 </section>
 {% endblock %}

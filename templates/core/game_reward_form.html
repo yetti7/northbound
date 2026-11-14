@@ -2,7 +2,7 @@
 {% block title %}Apply Reward · {{ game.name }}{% endblock %}
 {% block content %}
 <section class="form-card"><p class="eyebrow">{{ month.name }} · {{ game.name }}</p><h1>Apply Reward</h1><p class="lede">Maximum: {{ game.advertised_bonus_pages }} pages</p>
-{% if unavailable_reason %}<div class="notice">{{ unavailable_reason }}</div><div class="action-row"><a class="button" href="{% url 'game-detail' month.group.slug month.pk game.pk %}">Back to Game</a></div>
+{% if unavailable_reason %}<div class="notice">{{ unavailable_reason }}</div>{% if not logical_parent_url %}<div class="action-row"><a class="button" href="{% url 'game-detail' month.group.slug month.pk game.pk %}">Back to Game</a></div>{% endif %}
 {% else %}<form method="post" class="stacked-form standard-form" data-game-reward-form>{% csrf_token %}{{ form.idempotency_key }}{{ form.non_field_errors }}
 <p>{{ form.amount.label_tag }}{{ form.amount }}{{ form.amount.errors }}</p>
 <p>{{ form.target_type.label_tag }}{{ form.target_type }}{{ form.target_type.errors }}</p>

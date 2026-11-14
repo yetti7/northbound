@@ -1,0 +1,5 @@
+.photo-reader-page{min-width:0;overflow-wrap:anywhere}.photo-reader-page .action-row{flex-wrap:wrap;gap:.6rem}.photo-reader-page .button{min-height:44px;white-space:normal}.photo-reader-page select,.photo-reader-page input[type=url]{width:100%;max-width:100%;min-width:0}.photo-reader-page select{white-space:normal;overflow-wrap:anywhere}.photo-confirmation{border:0;padding:0;margin:1rem 0}.photo-confirmation label{display:flex;align-items:flex-start;gap:.65rem;min-height:44px}.photo-confirmation input[type=checkbox]{width:20px;height:20px;flex:0 0 20px;margin-top:.2rem}.photo-history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1rem}.photo-history-grid>.card{min-width:0}.photo-reader-page .action-row form{margin:0;max-width:100%}
+
+.photo-review-card{min-width:0;overflow-wrap:anywhere}.photo-review-card h2{overflow-wrap:anywhere}.photo-review-card .button{min-height:44px;white-space:normal}
+
+.photo-submission td:nth-child(2){max-width:32rem;overflow-wrap:anywhere}.photo-submission .action-row{flex-wrap:wrap;gap:.5rem}.photo-submission .action-row a{min-height:44px;display:inline-flex;align-items:center}

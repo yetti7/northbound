@@ -93,8 +93,14 @@ def _operate(s, actor, *, domain, entry_id, operation, reason, acknowledge=False
     if not reason or not reason.strip():raise ValidationError('Explain why this credit needs correction.')
     if operation not in {'assign','reverse','restore'} or domain not in {'botm','tbr'}:
         raise ValidationError('Choose a supported credit operation.')
-    if (s.status!='approved' or s.is_removed or not s.participant.is_active or not s.participant.user.is_active
-        or s.participant.user.is_superuser or not MonthEnrollment.objects.filter(month=s.month,participant=s.participant,is_active=True).exists()):
+    if s.status != 'approved' or s.is_removed:
+        raise ValidationError('The submission must be approved and its Reader actively enrolled.')
+    if operation != 'reverse' and (
+        not s.participant.is_active or not s.participant.user.is_active or s.participant.user.is_superuser
+        or not MonthEnrollment.objects.filter(
+            month=s.month, participant=s.participant, is_active=True, awaiting_scoring_team=False,
+        ).exists()
+    ):
         raise ValidationError('The submission must be approved and its Reader actively enrolled.')
     book=eligible_entry(s,domain,entry_id)
     model,field=(BotmMatch,'botm_book') if domain=='botm' else (PersonalTBRMatch,'personal_tbr_book')

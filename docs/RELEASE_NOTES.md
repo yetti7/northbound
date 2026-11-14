@@ -1,5 +1,37 @@
 # Release notes
 
+## Northbound v1.1.0
+
+A cumulative upgrade from v1.0.9.1, including the production title-only Personal TBR Recovery hotfix.
+
+- Separate registration/challenge scheduling, clearer lifecycle actions, registration-answer corrections, consistent contextual navigation, and mobile administration/submission improvements.
+- In-place eligible Personal TBR title/author corrections; streamlined submission editing, history/activity, scoped global search, Team Books and numeric roster sorting.
+- Preserved participating-Host, Floater and Team Leader boundaries, independent score/standings audiences, historical lifecycle locks, and audited Advanced Recovery safeguards.
+- Historical participation, late approval, earning evidence and frozen award preservation, using authoritative Reader/team scoring.
+- Group/Challenge/Team branding, privacy-first Chronicle/Wrapped recaps, slideshows and PNG exports with verified Reading Highlights covers.
+- Reader Rumble with fixed 1080×1350 PNGs, Top 5–25 layouts, bonus/zero-score controls, scoped rosters and matching previews/downloads.
+- Bingo/Scavenger Book and Photo workflows: independent review, frozen prompt/completion credit, corrections, void/restoration, progress and scoped reports.
+- Optional encrypted Group Discord webhooks with Team-grouped hourly review digests, bounded multipart messages and credential safeguards.
+- Clean Dev builds prevent image-layer accumulation, metadata contamination and stale collected static assets.
+
+### Database upgrade required
+
+From v1.0.9.1, apply **core migrations 0067–0077**, ending at `0077_scavenger_photo_foundation`. Existing records/scores/media are preserved; no historical participation backfill or retroactive prompt awards are performed. Django creates the expected new model permissions/content types.
+
+Before production changes, obtain explicit deployment approval and take a fresh consistent SQLite backup (backup API, integrity and foreign-key checks), preserve media/configuration/encryption keys, and record current scores. Keep the previous immutable image and paired database/configuration rollback. Do not copy Dev configuration, fixtures, databases or its pending restore archive into production.
+
+Pin the verified release image/digest, quiesce web writes, explicitly run migrations against the intended production database before starting the new application, then verify health, workers, migration state, record/media preservation and current Reader/team totals. Do not reconcile or backfill scoring as part of upgrade. Never use image-only rollback after schema changes; preserve failed state and restore the compatible database/image/configuration pair if needed.
+
+### Activation and validation
+
+Bingo/Scavenger readiness remains **disabled in code**, both categories default disabled, and November 2026 GuildWars remains excluded. Environment variables alone do not activate prompts. Discord delivery defaults disabled and requires separate Group configuration/authorization. Preserve the existing production scheduler/Hardcover settings and secrets; this release does not authorize integration activation.
+
+Phase E: **PASS WITH CONDITIONS**. Production-backup rehearsal: **PASS**, migrations 0066→0077, 61 users, 717 submissions, all original rows and 35 media files preserved; Challenge 259,003 and Team 138,961/120,042 points unchanged. These are backup-snapshot values, not assumed live-production baselines.
+
+Known limits: one documented test assertion compares a Group-local Photo earning date to UTC and can fail around the date boundary; no application scoring change is indicated. Covers without CORS support fall back to text. Partially delivered Discord digests do not resume within the same claimed hour. Live external integrations, touch swipe and PostgreSQL-specific row locks were not independently revalidated in final acceptance; the previously documented administrator table overflow remains noted.
+
+This is a **source release**, not a production deployment. GHCR image availability depends on the normal GitHub Actions workflow completing successfully; verify the `v1.1.0` image digest/revision before any production update. Tagged builds set `NORTHBOUND_VERSION=v1.1.0`; Dev builds intentionally retain their development version.
+
 ## v1.0.9
 
 ### Submission management and challenge credit

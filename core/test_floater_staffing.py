@@ -109,7 +109,7 @@ class FloaterStaffingTests(TestCase):
             {"participant": self.member.pk, "team": self.team.pk},
         )
         self.assertEqual(team_response.status_code, 200)
-        self.assertContains(team_response, "End this member&#x27;s active Floater assignment")
+        self.assertContains(team_response, "Select a valid choice")
         self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=self.member).exists())
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.member).exists())
         floater.refresh_from_db()

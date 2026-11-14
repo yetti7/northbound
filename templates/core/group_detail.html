@@ -1,14 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ group.name }} · Northbound{% endblock %}
-{% block content %}
-<div class="page-heading page-header">
-  <div class="page-header-content"><p class="eyebrow">Reading Group</p><h1>{{ group.name }}</h1><p class="lede">{{ participant_count }} active member{{ participant_count|pluralize }} · {{ active_month_count }} visible Challenge{{ active_month_count|pluralize }}</p></div>
-  <div class="action-row page-actions">
-    {% if can_manage_months %}<a class="button primary" href="{% url 'month-create' group.slug %}">Create Challenge</a>{% endif %}
-    {% if can_edit_group %}<a class="button secondary" href="{% url 'group-edit' group.slug %}">Group Settings</a>{% endif %}
-    {% if can_view_access_code %}<a class="button secondary" href="{% url 'group-access-code' group.slug %}">Access Code</a>{% endif %}
-  </div>
-</div>
+{% block content %}{% load community_branding %}{% artwork group as community_art %}{% branding_settings_visible group as can_view_art_settings %}
+{% include 'core/includes/group_identity_header.html' with branding=community_art %}
 {% if group.announcement_enabled and group.announcement %}<div class="announcement" role="status"><span class="announcement-label">Group Announcement</span><p>{{ group.announcement|linebreaksbr }}</p>{% if can_manage_group_announcements %}<details class="announcement-editor"><summary class="button">Edit Group Announcement</summary><form method="post" action="{% url 'group-announcement-update' group.slug %}" class="stacked-form">{% csrf_token %}<p><label for="group-announcement">Group Announcement</label><textarea id="group-announcement" name="announcement" rows="3" required>{{ group.announcement }}</textarea></p><div class="action-row"><button class="button primary">Save</button><button class="button" type="button" data-close-details>Cancel</button></div></form></details>{% endif %}</div>{% endif %}
 <section class="page-section">
   <div class="section-heading"><div><h2>Group Navigation</h2><p>Members and Challenges are the main Group workspaces.</p></div></div>

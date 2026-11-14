@@ -20,395 +20,492 @@ def needs_attention(request):
     return {"needs_attention": needs_attention_summary(request.user)}
 
 
-def logical_parent_label(request):
-    """Return destination-aware copy for the existing logical parent link."""
+# Source route -> (existing destination route, destination kwargs from source kwargs).
+# APIs, actions, roots and existing contextual returns are documented below.
+NAVIGATION_PARENTS = {
+ 'photo-correct': ('month-detail', {'group_slug':'group_slug','pk':'month_pk'}),
+ 'photo-credit-action': ('month-detail', {'group_slug':'group_slug','pk':'month_pk'}),
+ 'photo-review': ('review-queue', {'group_slug':'group_slug','month_pk':'month_pk'}),
+ 'photo-create': ('month-detail', {'group_slug':'group_slug','pk':'month_pk'}),
+ 'photo-detail': ('my-stats', {}),
+ 'photo-edit': ('my-stats', {}),
+'reader-rumble': ('team-detail', {'group_slug':'group_slug','month_pk':'month_pk','pk':'team_pk'}),
+ 'team-branding': ('team-detail', {'group_slug':'group_slug','month_pk':'month_pk','pk':'team_pk'}),
+ 'group-branding': ('group-edit', {'group_slug':'group_slug'}),
+ 'challenge-prompt-settings': ('challenge-settings', {'group_slug':'group_slug','month_pk':'month_pk'}),
+ 'account': ('dashboard', {}),
+ 'advanced-recovery': ('config-dashboard', {}),
+ 'botm-book-create': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'botm-book-delete': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'botm-book-edit': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'botm-book-reactivate': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'botm-book-retire': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'botm-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'botm-match-list': ('botm-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-botm-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-branding': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-floater-end': ('challenge-floater-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-floater-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'challenge-games-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-general-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-host-end': ('challenge-host-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-host-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'challenge-lifecycle-transition': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'pk'}),
+ 'challenge-participant-detail': ('month-participant-list',
+                                  {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-progress-checkpoints': ('challenge-settings',
+                                    {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-register': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'challenge-registration-detail': ('month-participant-list',
+                                   {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-registration-edit': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'challenge-schedule-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-settings': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'challenge-signup-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-visibility-settings': ('challenge-settings',
+                                   {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'challenge-withdraw': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'config-audit': ('config-dashboard', {}),
+ 'config-group-detail': ('config-group-list', {}),
+ 'config-group-list': ('config-dashboard', {}),
+ 'config-user-detail': ('config-user-list', {}),
+ 'config-user-edit': ('config-user-detail', {'pk': 'pk'}),
+ 'config-user-list': ('config-dashboard', {}),
+ 'config-user-password-reset': ('config-user-detail', {'pk': 'pk'}),
+ 'game-create': ('game-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'game-delete': ('game-detail', {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'game-detail': ('game-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'game-edit': ('game-detail', {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'game-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'game-reward-apply': ('game-detail', {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'game-reward-void': ('game-detail', {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'group-access-code': ('group-edit', {'group_slug': 'group_slug'}),
+ 'group-create': ('dashboard', {}),
+ 'group-detail': ('dashboard', {}),
+ 'group-discord-notifications': ('group-edit', {'group_slug': 'group_slug'}),
+ 'group-edit': ('group-detail', {'group_slug': 'group_slug'}),
+ 'group-hardcover-connection': ('group-edit', {'group_slug': 'group_slug'}),
+ 'group-join': ('dashboard', {}),
+ 'immersive-settings': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'member-create': ('group-detail', {'group_slug': 'group_slug'}),
+ 'month-create': ('month-list', {'group_slug': 'group_slug'}),
+ 'month-delete': ('month-detail', {'group_slug': 'group_slug', 'pk': 'pk'}),
+ 'month-detail': ('month-list', {'group_slug': 'group_slug'}),
+ 'month-edit': ('challenge-settings', {'group_slug': 'group_slug', 'month_pk': 'pk'}),
+ 'month-list': ('group-detail', {'group_slug': 'group_slug'}),
+ 'month-participant-add': ('month-participant-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'month-participant-edit': ('month-participant-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'month-participant-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'month-participant-reactivate': ('month-participant-list',
+                                  {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'month-participant-remove': ('month-participant-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'my-stats': ('dashboard', {}),
+ 'needs-attention': ('dashboard', {}),
+ 'participant-deactivate': ('participant-list', {'group_slug': 'group_slug'}),
+ 'participant-detail': ('participant-list', {'group_slug': 'group_slug'}),
+ 'participant-list': ('group-detail', {'group_slug': 'group_slug'}),
+ 'participant-permissions-edit': ('participant-list', {'group_slug': 'group_slug'}),
+ 'participant-role-edit': ('participant-list', {'group_slug': 'group_slug'}),
+ 'personal-tbr-match-list': ('review-queue', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'platform-audit-prune': ('platform-storage-maintenance', {}),
+ 'platform-backup-restore': ('platform-backups', {}),
+ 'platform-backups': ('config-dashboard', {}),
+ 'platform-cache-cleanup': ('platform-storage-maintenance', {}),
+ 'platform-general-settings': ('config-dashboard', {}),
+ 'platform-hardcover-oauth': ('config-dashboard', {}),
+ 'platform-owner-create': ('platform-owner-list', {}),
+ 'platform-owner-list': ('config-dashboard', {}),
+ 'platform-owner-status-toggle': ('platform-owner-list', {}),
+ 'platform-restore-restart': ('platform-backups', {}),
+ 'platform-settings': ('config-dashboard', {}),
+ 'platform-sqlite-optimize': ('platform-storage-maintenance', {}),
+ 'platform-storage-maintenance': ('config-dashboard', {}),
+ 'platform-system-status': ('config-dashboard', {}),
+ 'recovery-account-list': ('advanced-recovery', {}),
+ 'recovery-account-status': ('recovery-account-list', {}),
+ 'recovery-botm-book-correct': ('recovery-botm-list', {}),
+ 'recovery-botm-book-detail': ('recovery-botm-list', {}),
+ 'recovery-botm-book-status': ('recovery-botm-list', {}),
+ 'recovery-botm-list': ('advanced-recovery', {}),
+ 'recovery-botm-match': ('recovery-botm-list', {}),
+ 'recovery-botm-match-purge': ('recovery-botm-list', {}),
+ 'recovery-challenge-detail': ('recovery-challenge-list', {}),
+ 'recovery-challenge-list': ('advanced-recovery', {}),
+ 'recovery-challenge-purge': ('recovery-challenge-list', {}),
+ 'recovery-checkpoint-detail': ('recovery-checkpoint-list', {}),
+ 'recovery-checkpoint-list': ('advanced-recovery', {}),
+ 'recovery-checkpoint-release': ('recovery-checkpoint-list', {}),
+ 'recovery-checkpoint-reset': ('recovery-checkpoint-list', {}),
+ 'recovery-enrollment-origin': ('recovery-challenge-list', {}),
+ 'recovery-enrollment-status': ('recovery-challenge-list', {}),
+ 'recovery-game-application': ('recovery-game-list', {}),
+ 'recovery-game-detail': ('recovery-game-list', {}),
+ 'recovery-game-list': ('advanced-recovery', {}),
+ 'recovery-game-recreate': ('recovery-game-list', {}),
+ 'recovery-game-status': ('recovery-game-list', {}),
+ 'recovery-group-detail': ('recovery-group-list', {}),
+ 'recovery-group-hardcover-clear': ('recovery-hardcover-list', {}),
+ 'recovery-group-list': ('advanced-recovery', {}),
+ 'recovery-group-status': ('recovery-group-list', {}),
+ 'recovery-group-transfer-owner': ('recovery-group-list', {}),
+ 'recovery-hardcover-list': ('advanced-recovery', {}),
+ 'recovery-history': ('advanced-recovery', {}),
+ 'recovery-host-scope-restore': ('recovery-challenge-list', {}),
+ 'recovery-membership-role': ('recovery-group-list', {}),
+ 'recovery-membership-status': ('recovery-group-list', {}),
+ 'recovery-provenance-detail': ('recovery-provenance-list', {}),
+ 'recovery-provenance-list': ('advanced-recovery', {}),
+ 'recovery-provenance-purge': ('recovery-provenance-list', {}),
+ 'recovery-provenance-rebuild': ('recovery-provenance-list', {}),
+ 'recovery-provenance-void': ('recovery-provenance-list', {}),
+ 'recovery-reader-hardcover-clear': ('recovery-hardcover-list', {}),
+ 'recovery-staffing-role': ('recovery-challenge-list', {}),
+ 'recovery-staffing-status': ('recovery-challenge-list', {}),
+ 'recovery-submission-detail': ('recovery-submission-list', {}),
+ 'recovery-submission-list': ('advanced-recovery', {}),
+ 'recovery-submission-purge': ('recovery-submission-list', {}),
+ 'recovery-submission-status': ('recovery-submission-list', {}),
+ 'recovery-tbr-detail': ('recovery-tbr-list', {}),
+ 'recovery-tbr-title': ('recovery-tbr-list', {}),
+ 'recovery-tbr-entry': ('recovery-tbr-list', {}),
+ 'recovery-tbr-list': ('advanced-recovery', {}),
+ 'recovery-tbr-match': ('recovery-tbr-list', {}),
+ 'recovery-tbr-match-purge': ('recovery-tbr-list', {}),
+ 'recovery-tbr-rebuild': ('recovery-tbr-list', {}),
+ 'recovery-team-assignment-reassign': ('recovery-challenge-list', {}),
+ 'recovery-team-assignment-status': ('recovery-challenge-list', {}),
+ 'recovery-team-delete': ('recovery-challenge-list', {}),
+ 'recovery-team-status': ('recovery-challenge-list', {}),
+ 'recovery-theme-claim': ('recovery-submission-list', {}),
+ 'recovery-theme-correct': ('recovery-theme-list', {}),
+ 'recovery-theme-detail': ('recovery-theme-list', {}),
+ 'recovery-theme-list': ('advanced-recovery', {}),
+ 'recovery-theme-status': ('recovery-theme-list', {}),
+ 'review-queue': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'staff-challenge-tbr': ('challenge-participant-detail',
+                         {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'stored-backup-restore': ('platform-backups', {}),
+ 'submission-create': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'submission-remove': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'submission-review': ('review-queue', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-archive-toggle': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-assignment-create': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-assignment-remove': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-create': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-delete': ('team-edit', {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'pk': 'pk'}),
+ 'team-detail': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-edit': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-leader-end': ('team-leader-list',
+                     {'group_slug': 'group_slug', 'month_pk': 'month_pk', 'team_pk': 'team_pk'}),
+ 'team-leader-list': ('team-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'team-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'team-stats-settings': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'theme-create': ('theme-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'theme-edit': ('theme-list', {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
+ 'theme-list': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'})}
+
+PARENT_LABELS = {'my-stats': 'Back to My Stats',
+'team-detail': 'Back to Team',
+ 'account': 'Back to My Account',
+ 'advanced-recovery': 'Back to Advanced Recovery',
+ 'botm-list': 'Back to Book of the Month',
+ 'challenge-floater-list': 'Back to Challenge Staff',
+ 'challenge-host-list': 'Back to Challenge Staff',
+ 'challenge-participant-detail': 'Back to Challenge Participant',
+ 'challenge-settings': 'Back to Challenge Settings',
+ 'config-dashboard': 'Back to Platform Administration',
+ 'config-group-detail': 'Back to Group Overview',
+ 'config-group-list': 'Back to Groups',
+ 'config-user-detail': 'Back to Account',
+ 'config-user-list': 'Back to Accounts',
+ 'dashboard': 'Back to Home',
+ 'game-detail': 'Back to Game',
+ 'game-list': 'Back to Games',
+ 'group-detail': 'Back to Group',
+ 'group-edit': 'Back to Group Settings',
+ 'month-detail': 'Back to Challenge',
+ 'month-list': 'Back to Challenges',
+ 'month-participant-list': 'Back to Challenge Participants',
+ 'participant-list': 'Back to Members',
+ 'platform-backups': 'Back to Backups',
+ 'platform-owner-list': 'Back to Platform Owners',
+ 'platform-storage-maintenance': 'Back to Storage & Maintenance',
+ 'recovery-account-detail': 'Back to Account Recovery',
+ 'recovery-account-list': 'Back to Account Recovery',
+ 'recovery-botm-book-detail': 'Back to BOTM Recovery',
+ 'recovery-botm-detail': 'Back to BOTM Recovery',
+ 'recovery-botm-list': 'Back to BOTM Recovery',
+ 'recovery-challenge-detail': 'Back to Challenge Recovery',
+ 'recovery-challenge-list': 'Back to Challenge Recovery',
+ 'recovery-checkpoint-detail': 'Back to Checkpoint Recovery',
+ 'recovery-checkpoint-list': 'Back to Checkpoint Recovery',
+ 'recovery-game-detail': 'Back to Game Reward Recovery',
+ 'recovery-game-list': 'Back to Game Reward Recovery',
+ 'recovery-group-detail': 'Back to Group Recovery',
+ 'recovery-group-list': 'Back to Group Recovery',
+ 'recovery-hardcover-detail': 'Back to Hardcover Credential Recovery',
+ 'recovery-hardcover-list': 'Back to Hardcover Credential Recovery',
+ 'recovery-provenance-detail': 'Back to Modifier Recovery',
+ 'recovery-provenance-list': 'Back to Modifier Recovery',
+ 'recovery-submission-detail': 'Back to Submission Recovery',
+ 'recovery-submission-list': 'Back to Submission Recovery',
+ 'recovery-tbr-detail': 'Back to Personal TBR Recovery',
+ 'recovery-tbr-list': 'Back to Personal TBR Recovery',
+ 'recovery-theme-detail': 'Back to Theme Recovery',
+ 'recovery-theme-list': 'Back to Theme Recovery',
+ 'review-queue': 'Back to Review Queue',
+ 'team-edit': 'Back to Edit Team',
+ 'team-leader-list': 'Back to Team Leaders',
+ 'team-list': 'Back to Teams',
+ 'theme-list': 'Back to Themes'}
+
+NAVIGATION_EXCEPTIONS = {'photo-withdraw': 'POST-only action endpoint; no application return control.',
+'botm-catalog': 'JSON/API endpoint; no application return control.',
+ 'botm-match-review': 'Action endpoint, not a secondary navigation screen.',
+ 'botm-match-synchronize': 'Action endpoint, not a secondary navigation screen.',
+ 'botm-metadata-refresh': 'Action endpoint, not a secondary navigation screen.',
+ 'challenge-register-confirm': 'Existing contextual local return; avoid a duplicate global link.',
+ 'challenge-registration-action': 'Action endpoint, not a secondary navigation screen.',
+ 'config-audit-export': 'Download response; no page return control.',
+ 'config-dashboard': 'Primary dashboard.',
+ 'config-group-status-toggle': 'Action endpoint, not a secondary navigation screen.',
+ 'config-login': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'config-user-status-toggle': 'Action endpoint, not a secondary navigation screen.',
+ 'dashboard': 'Primary dashboard.',
+ 'game-active-toggle': 'Action endpoint, not a secondary navigation screen.',
+ 'global-search': 'JSON/API endpoint; no application return control.',
+ 'group-announcement-update': 'Action endpoint, not a secondary navigation screen.',
+ 'group-hardcover-disconnect': 'Action endpoint, not a secondary navigation screen.',
+ 'hardcover-test-token': 'JSON/API endpoint; no application return control.',
+ 'health': 'JSON/API endpoint; no application return control.',
+ 'host-assignment-notice-open': 'Action endpoint, not a secondary navigation screen.',
+ 'immersive-action': 'Existing contextual local return; avoid a duplicate global link.',
+ 'month-announcement-update': 'Action endpoint, not a secondary navigation screen.',
+ 'personal-tbr-catalog': 'JSON/API endpoint; no application return control.',
+ 'personal-tbr-detail': 'Existing contextual local return; avoid a duplicate global link.',
+ 'personal-tbr-match-review': 'Action endpoint, not a secondary navigation screen.',
+ 'personal-tbr-match-synchronize': 'Action endpoint, not a secondary navigation screen.',
+ 'platform-backup-create': 'Action endpoint, not a secondary navigation screen.',
+ 'platform-owner-accept': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'platform-owner-invitation-revoke': 'Action endpoint, not a secondary navigation screen.',
+ 'platform-submission-activity': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'prompt-progress': 'Existing contextual local return; avoid a duplicate global link.',
+ 'prompt-progress-report': 'Existing contextual local return; avoid a duplicate global link.',
+ 'reader-hardcover-connect': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'reader-hardcover-disconnect': 'Action endpoint, not a secondary navigation screen.',
+ 'reader-hardcover-oauth-callback': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'reader-hardcover-oauth-start': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'reader-hardcover-sync-now': 'Action endpoint, not a secondary navigation screen.',
+ 'reader-hardcover-sync-preferences': 'Action endpoint, not a secondary navigation screen.',
+ 'reader-hardcover-test': 'Action endpoint, not a secondary navigation screen.',
+ 'recap-dashboard': 'Validated recap context supplies the canonical parent.',
+ 'recap-wrapped': 'Existing contextual local return; avoid a duplicate global link.',
+ 'register': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'setup': 'Authentication/setup/OAuth flow; retain its existing flow navigation.',
+ 'staff-challenge-tbr-book-edit': 'Existing contextual local return; avoid a duplicate global link.',
+ 'staff-challenge-tbr-catalog': 'JSON/API endpoint; no application return control.',
+ 'stored-backup-delete': 'Action endpoint, not a secondary navigation screen.',
+ 'stored-backup-download': 'Download response; no page return control.',
+ 'submission-activity': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-catalog': 'JSON/API endpoint; no application return control.',
+ 'submission-credit': 'Existing contextual local return; avoid a duplicate global link.',
+ 'submission-edit': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-edit-catalog': 'JSON/API endpoint; no application return control.',
+ 'submission-editor': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-fix-book': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-fix-pages': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-history': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'submission-immersive': 'Existing contextual local return; avoid a duplicate global link.',
+ 'submission-manage': 'Phase 2 contextual origin with an authorized logical fallback.',
+ 'tbr-metadata-refresh': 'Action endpoint, not a secondary navigation screen.',
+ 'team-book-detail': 'Existing contextual local return; avoid a duplicate global link.',
+ 'submission-restore': 'Phase 2 contextual origin with an authorized logical fallback.'}
+
+
+def _authorized_parent(request, name, kwargs):
+    """Navigation never grants access; use the existing destination boundaries."""
+    from .models import ReadingGroup, ChallengeMonth, Team, MonthEnrollment
+    from .permissions import (membership_for, can_view_challenge, can_manage_group,
+        can_operate_challenge, can_manage_months, can_review_challenge,
+        can_run_challenge_wide_operations, can_manage_challenge_tbr)
+    user = request.user
+    if not user.is_authenticated or not user.is_active:
+        return False
+    if name.startswith(('config-', 'platform-', 'recovery-')) or name == 'advanced-recovery':
+        return user.is_superuser
+    if name in {'dashboard', 'account', 'my-stats'}:
+        return True
+    slug = kwargs.get('group_slug')
+    if not slug:
+        return False
+    group = ReadingGroup.objects.filter(slug=slug, is_active=True).first()
+    if group is None or not (user.is_superuser or membership_for(user, group)):
+        return False
+    if name == 'group-edit':
+        from .permissions import can_view_group_settings
+        return can_view_group_settings(user, group)
+    if name in {'group-detail', 'month-list', 'participant-list'}:
+        return True
+    month_id = kwargs.get('month_pk', kwargs.get('pk') if name == 'month-detail' else None)
+    month = ChallengeMonth.objects.select_related('group').filter(pk=month_id, group=group).first()
+    if month is None or not can_view_challenge(user, month):
+        return False
+    if name == 'challenge-settings':
+        return can_manage_months(user, group) or can_operate_challenge(user, month)
+    if name == 'review-queue':
+        member = membership_for(user, group)
+        return (month.status in {'active','finalizing','completed'} and
+            (can_review_challenge(user, month) or bool(member and member.role == 'owner')))
+    if name == 'team-edit':
+        return (can_run_challenge_wide_operations(user, month)
+            and month.status not in {'completed', 'archived'}
+            and Team.objects.filter(pk=kwargs['pk'], month=month).exists())
+    if name == 'challenge-participant-detail':
+        enrollment = MonthEnrollment.objects.filter(month=month, participant_id=kwargs['pk']).first()
+        return bool(enrollment and can_manage_challenge_tbr(user, enrollment))
+    return True
+
+
+def _parent(request, name, kwargs=None):
+    kwargs = kwargs or {}
+    if name not in PARENT_LABELS or not _authorized_parent(request, name, kwargs):
+        return None
+    try:
+        return {'logical_parent_url': reverse(name, kwargs=kwargs or None),
+                'logical_parent_label': PARENT_LABELS[name]}
+    except NoReverseMatch:
+        return None
+
+
+def _specialized_recovery_parent(request):
+    """Derive parents from persisted objects, never user-supplied return URLs."""
+    from . import models
+    if not (request.user.is_authenticated and request.user.is_active and request.user.is_superuser):
+        return None
+    rules = {
+        'recovery-theme-correct': ('MonthTheme', '', 'recovery-theme-detail'),
+        'recovery-theme-claim': ('ThemeClaim', 'submission_id', 'recovery-submission-detail'),
+        'recovery-botm-book-correct': ('BotmBook', '', 'recovery-botm-book-detail'),
+        'recovery-botm-match-purge': ('BotmMatch', 'botm_book_id', 'recovery-botm-book-detail'),
+        'recovery-botm-match': ('BotmMatch', 'botm_book_id', 'recovery-botm-book-detail'),
+        'recovery-tbr-title': ('PersonalTBRBook', 'personal_tbr_id', 'recovery-tbr-detail'),
+        'recovery-tbr-entry': ('PersonalTBRBook', 'personal_tbr_id', 'recovery-tbr-detail'),
+        'recovery-tbr-rebuild': ('PersonalTBR', '', 'recovery-tbr-detail'),
+        'recovery-tbr-match-purge': ('PersonalTBRMatch', 'personal_tbr_book__personal_tbr_id', 'recovery-tbr-detail'),
+        'recovery-tbr-match': ('PersonalTBRMatch', 'personal_tbr_book__personal_tbr_id', 'recovery-tbr-detail'),
+        'recovery-game-recreate': ('GameRewardApplication', 'game_id', 'recovery-game-detail'),
+    }
+    rule = rules.get(request.resolver_match.view_name)
+    if rule is None:
+        return None
+    model, field, target = rule
+    pk = getattr(models, model).objects.filter(pk=request.resolver_match.kwargs.get('pk')).values_list(field or 'pk', flat=True).first()
+    if pk is None:
+        return None
+    # Verify the detail target still exists, as for trusted confirmation hints.
+    detail_models = {'recovery-theme-detail': models.MonthTheme,
+        'recovery-submission-detail': models.BookSubmission,
+        'recovery-botm-book-detail': models.BotmBook,
+        'recovery-tbr-detail': models.PersonalTBR,
+        'recovery-game-detail': models.Game}
+    if not detail_models[target].objects.filter(pk=pk).exists():
+        return None
+    return _parent(request, target, {'pk': pk})
+
+
+def _recovery_parent(request):
+    """Only the shared Recovery view supplies this URL, never GET/POST/Referer."""
+    from urllib.parse import urlsplit
+    from django.urls import resolve, Resolver404
+    from . import models
+    candidate = getattr(request, '_recovery_navigation_parent', '')
+    if not candidate or not (request.user.is_authenticated and request.user.is_active and request.user.is_superuser):
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or parsed.path.startswith('//'):
+        return None
+    try:
+        match = resolve(parsed.path)
+    except Resolver404:
+        return None
+    objects = {'recovery-group-detail': models.ReadingGroup,
+               'recovery-challenge-detail': models.ChallengeMonth,
+               'recovery-submission-detail': models.BookSubmission,
+               'recovery-theme-detail': models.MonthTheme,
+               'recovery-provenance-detail': models.ModifierProvenance,
+               'recovery-botm-book-detail': models.BotmBook,
+               'recovery-tbr-detail': models.PersonalTBR,
+               'recovery-game-detail': models.Game,
+               'recovery-checkpoint-detail': models.ProgressCheckpoint}
+    name = match.view_name
+    model = objects.get(name)
+    if model is not None and not model.objects.filter(pk=match.kwargs.get('pk')).exists():
+        return None
+    if model is None and not (name.startswith('recovery-') and name.endswith('-list')):
+        return None
+    return _parent(request, name, match.kwargs)
+
+
+def _resolve_logical_parent(request):
     match = request.resolver_match
     if not match:
-        return ""
-
-    view_name = match.view_name
-    if view_name in {
-        "platform-owner-list", "config-user-list", "config-group-list",
-        "config-audit", "advanced-recovery", "platform-settings",
-        "platform-general-settings", "platform-hardcover-oauth",
-        "platform-system-status", "platform-storage-maintenance", "platform-backups",
-    }:
-        return "Back to Platform Administration"
-    if view_name in {
-        "recovery-history", "recovery-challenge-list", "recovery-group-list",
-        "recovery-account-list", "recovery-submission-list", "recovery-theme-list",
-        "recovery-provenance-list", "recovery-botm-list", "recovery-tbr-list",
-        "recovery-game-list", "recovery-checkpoint-list", "recovery-hardcover-list",
-    }:
-        return "Back to Advanced Recovery"
-    if view_name in {"recovery-reader-hardcover-clear", "recovery-group-hardcover-clear"}:
-        return "Back to Hardcover Credential Recovery"
-    if view_name == "recovery-theme-claim":
-        return "Back to Submission Recovery"
-    recovery_domain_labels = {
-        "challenge": "Back to Challenge Recovery",
-        "group": "Back to Group Recovery",
-        "account": "Back to Account Recovery",
-        "submission": "Back to Submission Recovery",
-        "theme": "Back to Theme Recovery",
-        "provenance": "Back to Modifier Recovery",
-        "botm": "Back to BOTM Recovery",
-        "tbr": "Back to Personal TBR Recovery",
-        "game": "Back to Game Reward Recovery",
-        "checkpoint": "Back to Checkpoint Recovery",
-        "hardcover": "Back to Hardcover Credential Recovery",
-    }
-    for domain, label in recovery_domain_labels.items():
-        if view_name.startswith(f"recovery-{domain}-"):
-            return label
-    if view_name in {
-        "platform-cache-cleanup", "platform-audit-prune", "platform-sqlite-optimize",
-    }:
-        return "Back to Storage & Maintenance"
-    if view_name in {
-        "platform-backup-create", "stored-backup-download", "stored-backup-delete",
-        "stored-backup-restore", "platform-backup-restore", "platform-restore-restart",
-    }:
-        return "Back to Backups"
-    if view_name.startswith("platform-owner-"):
-        return "Back to Platform Owners"
-    if view_name == "config-user-detail":
-        return "Back to Accounts"
-    if view_name.startswith("config-user-"):
-        return "Back to Account"
-    if view_name == "config-group-detail":
-        return "Back to Groups"
-    if view_name.startswith("config-group-"):
-        return "Back to Group Overview"
-    if view_name in {"group-create", "group-join", "account", "my-stats", "needs-attention"}:
-        return "Back to Home"
-    if view_name == "password-change":
-        return "Back to My Account"
-    if view_name == "group-detail":
-        return "Back to Reading Groups"
-    if view_name in {
-        "group-edit", "group-access-code", "group-hardcover-connection",
-        "member-create", "participant-list", "month-list",
-    }:
-        return "Back to Group"
-    if view_name == "group-hardcover-disconnect":
-        return "Back to Group Settings"
-    if view_name == "participant-detail" or view_name.startswith("participant-"):
-        return "Back to Members"
-    if view_name in {"month-detail", "month-create"}:
-        return "Back to Challenges"
-    if view_name in {
-        "challenge-settings", "challenge-host-list", "challenge-floater-list",
-        "team-list", "month-participant-list", "theme-list", "game-list",
-        "review-queue", "team-stats-settings", "challenge-register",
-        "challenge-withdraw", "submission-create", "submission-catalog",
-        "submission-remove", "personal-tbr-detail", "botm-list",
-    }:
-        return "Back to Challenge"
-    if view_name in {
-        "challenge-general-settings", "challenge-schedule-settings",
-        "challenge-games-settings", "challenge-botm-settings",
-        "challenge-visibility-settings", "challenge-signup-settings",
-        "challenge-progress-checkpoints", "month-announcement-update", "month-edit",
-        "challenge-lifecycle-transition",
-    }:
-        return "Back to Challenge Settings"
-    if view_name == "month-delete":
-        return "Back to Challenge"
-    if view_name == "team-detail" or view_name in {
-        "team-create", "team-edit", "team-archive-toggle", "team-delete",
-        "team-assignment-create", "team-assignment-remove", "team-leader-list",
-    }:
-        return "Back to Teams"
-    if view_name == "team-leader-end":
-        return "Back to Team Leaders"
-    if view_name in {"challenge-host-end", "challenge-floater-end"}:
-        return "Back to Challenge Staff"
-    if view_name.startswith("month-participant-"):
-        return "Back to Challenge Participants"
-    if view_name in {"theme-create", "theme-edit"}:
-        return "Back to Themes"
-    if view_name == "game-detail" or view_name == "game-create":
-        return "Back to Games"
-    if view_name.startswith("game-"):
-        return "Back to Game"
-    if view_name == "submission-review":
-        return "Back to Review Queue"
-    return "Back"
+        return None
+    from .navigation_context import contextual_parent
+    contextual = contextual_parent(request)
+    if contextual:
+        return contextual
+    name, kwargs = match.view_name, match.kwargs
+    if name == 'recap-dashboard':
+        # Only _recap_context supplies these validated IDs after authorization.
+        context = getattr(request, '_validated_recap_navigation', {})
+        from .models import ChallengeMonth, ReadingGroup
+        month = ChallengeMonth.objects.select_related('group').filter(pk=context.get('challenge')).first() if context.get('challenge') else None
+        if month:
+            parent = _parent(request, 'month-detail', {'group_slug':month.group.slug, 'pk':month.pk})
+            if parent:
+                return parent
+        group = ReadingGroup.objects.filter(pk=context.get('group')).first() if context.get('group') else None
+        if group:
+            parent = _parent(request, 'group-detail', {'group_slug':group.slug})
+            if parent:
+                return parent
+        return _parent(request, 'config-dashboard' if request.user.is_superuser else 'dashboard')
+    if name.startswith('recovery-'):
+        parent = _specialized_recovery_parent(request) or _recovery_parent(request)
+        if parent:
+            return parent
+    from .navigation_context import SCREENS
+    if name in SCREENS and name not in NAVIGATION_PARENTS and name not in {'recap-wrapped','prompt-progress','team-book-detail','submission-credit','submission-immersive'}:
+        return _parent(request, 'month-detail', {'group_slug':kwargs['group_slug'], 'pk':kwargs['month_pk']}) if kwargs.get('month_pk') else None
+    if name == 'team-book-detail':
+        from .navigation_context import authorized
+        args={k:v for k,v in kwargs.items() if k != 'book_pk'}
+        if authorized(request,'team-detail',args,{}):
+            return {'logical_parent_url':reverse('team-detail',kwargs=args)+'?view=books', 'logical_parent_label':'Back to Team Books'}
+    spec = NAVIGATION_PARENTS.get(name)
+    if spec is None:
+        return None
+    target, argument_names = spec
+    if name == 'account' and request.user.is_superuser:
+        target = 'config-dashboard'
+    try:
+        parent_kwargs = {key:kwargs[source] for key,source in argument_names.items()}
+    except KeyError:
+        return None
+    parent = _parent(request, target, parent_kwargs)
+    if parent is None and name in {'group-branding','group-discord-notifications','group-access-code','group-hardcover-connection'}:
+        return _parent(request, 'group-detail', {'group_slug':kwargs['group_slug']})
+    return parent
 
 
 def logical_navigation(request):
-    """Return the explicit application parent for the current page."""
-    match = request.resolver_match
-    if not match:
-        return {"logical_parent_url": None}
+    """Resolve the public URL and label context keys atomically, once per request."""
+    if not hasattr(request, '_logical_navigation_result'):
+        request._logical_navigation_result = (_resolve_logical_parent(request) or
+            {'logical_parent_url':None, 'logical_parent_label':''})
+    return request._logical_navigation_result.copy()
 
-    view_name = match.view_name
-    kwargs = match.kwargs
-    group_slug = kwargs.get("group_slug")
 
-    static_parents = {
-        "platform-owner-list": "config-dashboard",
-        "config-user-list": "config-dashboard",
-        "config-group-list": "config-dashboard",
-        "config-audit": "config-dashboard",
-        "advanced-recovery": "config-dashboard",
-        "recovery-history": "advanced-recovery",
-        "recovery-challenge-list": "advanced-recovery",
-        "recovery-group-list": "advanced-recovery",
-        "recovery-account-list": "advanced-recovery",
-        "recovery-submission-list": "advanced-recovery",
-        "recovery-theme-list": "advanced-recovery",
-        "recovery-provenance-list": "advanced-recovery",
-        "recovery-botm-list": "advanced-recovery",
-        "recovery-tbr-list": "advanced-recovery",
-        "recovery-game-list": "advanced-recovery",
-        "recovery-checkpoint-list": "advanced-recovery",
-        "recovery-hardcover-list": "advanced-recovery",
-        "platform-settings": "config-dashboard",
-        "platform-general-settings": "config-dashboard",
-        "platform-hardcover-oauth": "config-dashboard",
-        "platform-system-status": "config-dashboard",
-        "platform-storage-maintenance": "config-dashboard",
-        "platform-backups": "config-dashboard",
-        "platform-owner-create": "platform-owner-list",
-        "platform-owner-status-toggle": "platform-owner-list",
-        "platform-owner-invitation-revoke": "platform-owner-list",
-        "config-user-detail": "config-user-list",
-        "config-group-detail": "config-group-list",
-        "group-create": "dashboard",
-        "group-join": "dashboard",
-        "account": "config-dashboard" if request.user.is_superuser else "dashboard",
-        "my-stats": "dashboard",
-        "needs-attention": "dashboard",
-        "password-change": "account",
-    }
-    if view_name in static_parents:
-        return {"logical_parent_url": reverse(static_parents[view_name])}
-
-    if view_name in {"recovery-challenge-detail", "recovery-challenge-purge"}:
-        return {"logical_parent_url": reverse("recovery-challenge-list")}
-    if view_name in {"recovery-group-detail", "recovery-group-status", "recovery-group-transfer-owner"}:
-        return {"logical_parent_url": reverse("recovery-group-list")}
-    if view_name == "recovery-account-status":
-        return {"logical_parent_url": reverse("recovery-account-list")}
-    if view_name in {"recovery-submission-detail", "recovery-submission-status", "recovery-submission-purge"}:
-        return {"logical_parent_url": reverse("recovery-submission-list")}
-    if view_name in {"recovery-theme-detail", "recovery-theme-status", "recovery-theme-correct"}:
-        return {"logical_parent_url": reverse("recovery-theme-list")}
-    if view_name == "recovery-theme-claim":
-        return {"logical_parent_url": reverse("recovery-submission-list")}
-    if view_name in {"recovery-provenance-detail", "recovery-provenance-void", "recovery-provenance-rebuild", "recovery-provenance-purge"}:
-        return {"logical_parent_url": reverse("recovery-provenance-list")}
-    if view_name in {"recovery-botm-book-detail", "recovery-botm-book-status", "recovery-botm-book-correct", "recovery-botm-match", "recovery-botm-match-purge"}:
-        return {"logical_parent_url": reverse("recovery-botm-list")}
-    if view_name in {"recovery-tbr-detail", "recovery-tbr-entry", "recovery-tbr-rebuild", "recovery-tbr-match", "recovery-tbr-match-purge"}:
-        return {"logical_parent_url": reverse("recovery-tbr-list")}
-    if view_name in {"recovery-game-detail", "recovery-game-status", "recovery-game-application", "recovery-game-recreate"}:
-        return {"logical_parent_url": reverse("recovery-game-list")}
-    if view_name in {"recovery-checkpoint-detail", "recovery-checkpoint-reset", "recovery-checkpoint-release"}:
-        return {"logical_parent_url": reverse("recovery-checkpoint-list")}
-    if view_name in {"recovery-reader-hardcover-clear", "recovery-group-hardcover-clear"}:
-        return {"logical_parent_url": reverse("recovery-hardcover-list")}
-
-    try:
-        if view_name in {"config-user-edit", "config-user-password-reset", "config-user-status-toggle"}:
-            return {"logical_parent_url": reverse("config-user-detail", kwargs={"pk": kwargs["pk"]})}
-        if view_name == "config-group-status-toggle":
-            return {"logical_parent_url": reverse("config-group-detail", kwargs={"group_slug": group_slug})}
-        if view_name in {
-            "platform-cache-cleanup",
-            "platform-audit-prune",
-            "platform-sqlite-optimize",
-        }:
-            return {"logical_parent_url": reverse("platform-storage-maintenance")}
-        if view_name in {
-            "platform-backup-create",
-            "stored-backup-download",
-            "stored-backup-delete",
-            "stored-backup-restore",
-            "platform-backup-restore",
-            "platform-restore-restart",
-        }:
-            return {"logical_parent_url": reverse("platform-backups")}
-        if view_name == "group-detail":
-            return {"logical_parent_url": reverse("dashboard")}
-        if view_name in {
-            "group-edit",
-            "group-access-code",
-            "group-hardcover-connection",
-            "member-create",
-            "participant-list",
-            "month-list",
-        }:
-            return {"logical_parent_url": reverse("group-detail", kwargs={"group_slug": group_slug})}
-        if view_name == "participant-detail":
-            return {"logical_parent_url": reverse("participant-list", kwargs={"group_slug": group_slug})}
-        if view_name in {"participant-role-edit", "participant-permissions-edit", "participant-deactivate"}:
-            return {"logical_parent_url": reverse("participant-list", kwargs={"group_slug": group_slug})}
-        if view_name == "group-hardcover-disconnect":
-            return {"logical_parent_url": reverse("group-edit", kwargs={"group_slug": group_slug})}
-        if view_name == "month-detail":
-            return {"logical_parent_url": reverse("month-list", kwargs={"group_slug": group_slug})}
-        if view_name == "month-create":
-            return {"logical_parent_url": reverse("month-list", kwargs={"group_slug": group_slug})}
-        if view_name == "challenge-settings":
-            return {
-                "logical_parent_url": reverse(
-                    "month-detail", kwargs={"group_slug": group_slug, "pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name in {"challenge-general-settings", "challenge-schedule-settings", "challenge-games-settings", "challenge-visibility-settings", "month-announcement-update"}:
-            return {
-                "logical_parent_url": reverse(
-                    "challenge-settings",
-                    kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]},
-                )
-            }
-        if view_name in {"month-edit", "challenge-lifecycle-transition"}:
-            return {
-                "logical_parent_url": reverse(
-                    "challenge-settings",
-                    kwargs={"group_slug": group_slug, "month_pk": kwargs["pk"]},
-                )
-            }
-        if view_name == "month-delete":
-            return {
-                "logical_parent_url": reverse(
-                    "month-detail", kwargs={"group_slug": group_slug, "pk": kwargs["pk"]}
-                )
-            }
-        if view_name in {"challenge-signup-settings", "challenge-progress-checkpoints"}:
-            return {
-                "logical_parent_url": reverse(
-                    "challenge-settings",
-                    kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]},
-                )
-            }
-        if view_name in {
-            "challenge-host-list",
-            "challenge-floater-list",
-            "team-list",
-            "month-participant-list",
-            "theme-list",
-            "game-list",
-            "review-queue",
-            "team-stats-settings",
-        }:
-            return {
-                "logical_parent_url": reverse(
-                    "month-detail", kwargs={"group_slug": group_slug, "pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "team-detail":
-            return {
-                "logical_parent_url": reverse(
-                    "team-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "challenge-host-end":
-            return {
-                "logical_parent_url": reverse(
-                    "challenge-host-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "challenge-floater-end":
-            return {
-                "logical_parent_url": reverse(
-                    "challenge-floater-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name in {
-            "team-create",
-            "team-edit",
-            "team-archive-toggle",
-            "team-assignment-create",
-            "team-assignment-remove",
-        }:
-            return {
-                "logical_parent_url": reverse(
-                    "team-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "team-delete":
-            return {
-                "logical_parent_url": reverse(
-                    "team-edit",
-                    kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"], "pk": kwargs["pk"]},
-                )
-            }
-        if view_name == "team-leader-list":
-            return {
-                "logical_parent_url": reverse(
-                    "team-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "team-leader-end":
-            return {
-                "logical_parent_url": reverse(
-                    "team-leader-list",
-                    kwargs={
-                        "group_slug": group_slug,
-                        "month_pk": kwargs["month_pk"],
-                        "team_pk": kwargs["team_pk"],
-                    },
-                )
-            }
-        if view_name in {
-            "month-participant-add",
-            "month-participant-edit",
-            "month-participant-remove",
-            "month-participant-reactivate",
-        }:
-            return {
-                "logical_parent_url": reverse(
-                    "month-participant-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name in {"challenge-register", "challenge-withdraw"}:
-            return {
-                "logical_parent_url": reverse(
-                    "month-detail", kwargs={"group_slug": group_slug, "pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name in {"theme-create", "theme-edit"}:
-            return {
-                "logical_parent_url": reverse(
-                    "theme-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "game-create":
-            return {
-                "logical_parent_url": reverse(
-                    "game-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "game-detail":
-            return {
-                "logical_parent_url": reverse(
-                    "game-list", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name in {"game-edit", "game-active-toggle", "game-delete", "game-reward-apply", "game-reward-void"}:
-            return {
-                "logical_parent_url": reverse(
-                    "game-detail",
-                    kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"], "pk": kwargs["pk"]},
-                )
-            }
-        if view_name in {"submission-create", "submission-catalog", "submission-remove"}:
-            return {
-                "logical_parent_url": reverse(
-                    "month-detail", kwargs={"group_slug": group_slug, "pk": kwargs["month_pk"]}
-                )
-            }
-        if view_name == "submission-review":
-            return {
-                "logical_parent_url": reverse(
-                    "review-queue", kwargs={"group_slug": group_slug, "month_pk": kwargs["month_pk"]}
-                )
-            }
-    except (KeyError, NoReverseMatch):
-        return {"logical_parent_url": None}
-
-    return {"logical_parent_url": None}
+def logical_parent_label(request):
+    """Compatibility wrapper; labels always come from the resolved destination."""
+    return logical_navigation(request)['logical_parent_label']

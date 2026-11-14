@@ -244,9 +244,9 @@ class ThemeReviewIntegrationTests(TestCase):
             "pk": self.submission.pk,
         })
         page = self.client.get(url)
-        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "This page is read-only.")
+        self.assertNotContains(page, 'name="matching_version"')
         response = self.client.post(url, {
-            "matching_version": page.context["matching_form"]["matching_version"].value(),
             "approved_pages": 200,
             "status": BookSubmission.Status.APPROVED,
             "verification_url": "",
@@ -259,10 +259,7 @@ class ThemeReviewIntegrationTests(TestCase):
             "claims-0-submission": str(self.submission.pk),
             "claims-0-status": ThemeClaim.Status.REJECTED,
         })
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Nothing was saved.")
-        self.assertFalse(response.context["matching_form"].errors)
-        self.assertTrue(response.context["form"].non_field_errors())
+        self.assertContains(response, "Nothing was saved.", status_code=403)
         self.assertEqual(history_snapshot(), before)
 
         self.submission.refresh_from_db()

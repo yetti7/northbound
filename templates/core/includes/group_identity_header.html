@@ -1,0 +1,10 @@
+<header class="group-identity{% if branding.group_logo %} has-logo{% endif %}{% if branding.group_banner %} has-banner{% endif %}"{% if identity_preview %} data-group-identity-preview{% endif %}>
+{% if branding.group_banner %}<img class="group-identity-banner" src="{{ branding.group_banner }}" alt="" aria-hidden="true" data-community-image{% if identity_preview %} data-group-preview-banner{% endif %}>{% elif identity_preview %}<img class="group-identity-banner" alt="" aria-hidden="true" hidden data-community-image data-group-preview-banner>{% endif %}
+<div class="group-identity-main">
+{% if branding.group_logo %}<img class="group-identity-logo" src="{{ branding.group_logo }}" alt="{{ group.name }} logo" data-community-image{% if identity_preview %} data-group-preview-logo{% endif %}>{% elif identity_preview %}<img class="group-identity-logo" alt="{{ group.name }} logo" hidden data-community-image data-group-preview-logo>{% endif %}
+<div class="group-identity-info"><p class="eyebrow">Reading Group</p>{% if identity_preview %}<h2>{{ group.name }}</h2>{% else %}<h1>{{ group.name }}</h1><p class="group-identity-counts">{{ participant_count }} active member{{ participant_count|pluralize }} · {{ active_month_count }} visible Challenge{{ active_month_count|pluralize }}</p>{% endif %}
+</div>{% if not identity_preview %}<div class="action-row group-identity-actions">
+{% if can_manage_months %}<a class="button primary" href="{% url 'month-create' group.slug %}">Create Challenge</a>{% endif %}
+{% if can_access_group_settings %}<a class="button secondary" href="{% url 'group-edit' group.slug %}">Group Settings</a>{% endif %}
+{% if can_view_access_code %}<a class="button secondary" href="{% url 'group-access-code' group.slug %}">Access Code</a>{% endif %}
+</div>{% endif %}</div></header>

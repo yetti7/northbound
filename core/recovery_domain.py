@@ -163,7 +163,7 @@ def transfer_group_ownership(*, group, target_membership, recovery_request):
             raise ValidationError("Ownership transfer must leave exactly one active Group Owner.")
         return {
             "owner_membership_id": target.pk,
-            "owner_label": target.display_name,
+            "owner_label": target.user.username,
             "previous_owner_ids": [item.pk for item in previous_owners],
         }
     return execute_recovery_operation(recovery_request, mutation)
@@ -287,6 +287,7 @@ def _has_required_registration_answers(enrollment):
 
 def set_enrollment_active(*, enrollment, active, recovery_request):
     def mutation():
+        ChallengeMonth.objects.select_for_update().get(pk=enrollment.month_id)
         locked = MonthEnrollment.objects.select_for_update().select_related("month__group", "participant__user").get(pk=enrollment.pk)
         before = locked.is_active
         if active:
@@ -317,7 +318,7 @@ def restore_inactive_host_scope(*, enrollment, recovery_request):
                 or current.participant.user_id == recovery_request.actor.pk
                 or not is_challenge_host(current.participant.user, month)):
             raise ValidationError("Choose an inactive enrollment belonging to a current restricted Host.")
-        label = f"{current.participant.display_name} — {month.name}"
+        label = f"{current.participant.user.username} — {month.name}"
         validate_reason(recovery_request.reason, required=True)
         validate_typed_confirmation(required=label, supplied=recovery_request.supplied_confirmation)
         current.host_scope_restored = True
@@ -362,7 +363,7 @@ def delete_unused_team(*, team, recovery_request):
         locked = Team.objects.select_for_update().select_related("month__group").get(pk=team.pk)
         if locked.month.status != ChallengeMonth.Status.DRAFT:
             raise ValidationError("Only an unused Team in a Draft Challenge can be deleted.")
-        if locked.assignments.exists() or locked.staff_assignments.exists() or locked.game_reward_applications.exists():
+        if locked.assignments.exists() or locked.credited_enrollments.exists() or locked.staff_assignments.exists() or locked.game_reward_applications.exists():
             raise ValidationError("Historically used Teams cannot be deleted; archive the Team instead.")
         label = locked.name
         locked.delete()
@@ -372,6 +373,7 @@ def delete_unused_team(*, team, recovery_request):
 
 def set_team_assignment_active(*, assignment, active, recovery_request):
     def mutation():
+        ChallengeMonth.objects.select_for_update().get(pk=assignment.month_id)
         locked = TeamAssignment.objects.select_for_update().select_related("month__group", "participant", "team").get(pk=assignment.pk)
         before = locked.ended_at is None
         if active:
@@ -386,7 +388,14 @@ def set_team_assignment_active(*, assignment, active, recovery_request):
             locked.full_clean()
             locked.save(update_fields=["ended_at", "ended_by"])
         else:
-            end_team_assignment(assignment=locked, actor=recovery_request.actor, reason=recovery_request.reason)
+            end_team_assignment(assignment=locked, actor=recovery_request.actor, reason=recovery_request.reason, ordinary_staff_change=False)
+        if active and locked.month.status not in {locked.month.Status.COMPLETED, locked.month.Status.ARCHIVED}:
+            enrollment = MonthEnrollment.objects.select_for_update().filter(
+                month=locked.month, participant=locked.participant, is_active=True,
+            ).first()
+            if enrollment:
+                from .participation import record_scoring_team
+                record_scoring_team(enrollment, locked.team)
         locked.refresh_from_db()
         return {"is_active": locked.ended_at is None, "previous_is_active": before, "team_id": locked.team_id}
     return execute_recovery_operation(recovery_request, mutation)
@@ -394,6 +403,7 @@ def set_team_assignment_active(*, assignment, active, recovery_request):
 
 def reassign_team_assignment(*, assignment, team, recovery_request):
     def mutation():
+        ChallengeMonth.objects.select_for_update().get(pk=assignment.month_id)
         locked = TeamAssignment.objects.select_for_update().select_related("month__group", "participant", "team").get(pk=assignment.pk)
         target = Team.objects.select_for_update().get(pk=team.pk)
         if locked.ended_at is not None:
@@ -403,10 +413,17 @@ def reassign_team_assignment(*, assignment, team, recovery_request):
         if target.pk == locked.team_id:
             raise ValidationError("Choose a different Team.")
         old_team_id = locked.team_id
-        end_team_assignment(assignment=locked, actor=recovery_request.actor, reason=f"Platform recovery reassigned the Reader to {target.name}")
+        end_team_assignment(assignment=locked, actor=recovery_request.actor, reason=f"Platform recovery reassigned the Reader to {target.name}", ordinary_staff_change=False)
         replacement = TeamAssignment.objects.create(
             month=locked.month, team=target, participant=locked.participant,
             assigned_by=recovery_request.actor,
         )
+        if locked.month.status not in {locked.month.Status.COMPLETED, locked.month.Status.ARCHIVED}:
+            enrollment = MonthEnrollment.objects.select_for_update().filter(
+                month=locked.month, participant=locked.participant, is_active=True,
+            ).first()
+            if enrollment:
+                from .participation import record_scoring_team
+                record_scoring_team(enrollment, target)
         return {"ended_assignment_id": locked.pk, "replacement_assignment_id": replacement.pk, "previous_team_id": old_team_id, "team_id": target.pk}
     return execute_recovery_operation(recovery_request, mutation)

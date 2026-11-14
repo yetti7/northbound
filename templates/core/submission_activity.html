@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% load navigation %}
+{% load tz %}
+{% block title %}{% if submission %}Submission Activity{% else %}Recent Activity{% endif %} · Northbound{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+  <div class="page-heading"><div>
+    {% if month %}<p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p>{% endif %}
+    <h1>{% if submission %}Submission Activity{% else %}Recent Activity{% endif %}</h1>
+  </div></div>
+  {% if submission %}
+  {% if voided_review %}<p class="notice neutral">This submission has been voided. This page is read-only.</p>{% endif %}
+  {% timezone month.group.timezone %}
+  <section class="card submission-compact-summary">
+    <h2>{% include "core/includes/submission_title.html" %}</h2><p>{{ submission.author }} · {{ submission.participant.user.username }}</p>
+    <p>{% if submission.is_removed %}<span class="pill status-warning">Voided</span>{% else %}<span class="pill">{{ submission.get_status_display }}</span>{% endif %}</p>
+    {% if submission.is_removed %}
+    <p>Original status: {{ submission.get_status_display }} · {{ submission.submitted_pages }} submitted pages{% if user.is_superuser or user.pk == submission.participant.user_id %}{% if submission.approved_pages != None %} · {{ submission.approved_pages }} approved pages{% endif %}{% endif %}</p>
+    <p>Excluded from totals</p>
+    {% endif %}
+  </section>
+  {% endtimezone %}
+  {% include "core/includes/submission_timeline.html" with standalone=True %}
+  {% else %}
+  <div class="submission-activity-list">
+  {% for card in cards %}
+    {% timezone card.submission.month.group.timezone %}
+    <article class="card submission-compact-summary">
+      <span class="pill">{{ card.label }}</span>
+      {% if not submission %}<h2>{{ card.submission.title }}</h2><p>{{ card.submission.participant.user.username }} · Current status: {{ card.submission.get_status_display }}</p>{% endif %}
+      {% if card.actor %}<p>By {{ card.actor }}</p>{% endif %}
+      {% for detail in card.details %}<p>{{ detail }}</p>{% endfor %}
+      <p><time datetime="{{ card.timestamp|date:'c' }}">{{ card.timestamp|date:"F j, Y · g:i A" }}</time></p>
+      {% if not submission %}<a class="button secondary" {% url 'submission-history' card.submission.month.group.slug card.submission.month_id card.submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">View Submission</a>{% endif %}
+    </article>
+    {% endtimezone %}
+  {% empty %}<p>No recorded activity to show.</p>{% endfor %}
+  </div>
+  {% if activity_page.has_other_pages %}
+  <nav class="submission-editor-actions" aria-label="Activity pages">
+    {% if activity_page.has_previous %}<a class="button secondary" href="?page={{ activity_page.previous_page_number }}">Newer activity</a>{% endif %}
+    {% if activity_page.has_next %}<a class="button secondary" href="?page={{ activity_page.next_page_number }}">Older activity</a>{% endif %}
+  </nav>
+  {% endif %}
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ book.title }} · Team Books{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+  <div class="page-heading"><div><p class="eyebrow">{{ team.name }}</p><h1>Team Books</h1></div></div>
+  {% include "core/includes/team_book_card.html" %}
+  {% if not logical_parent_url %}<p><a class="button secondary" href="{% url 'team-detail' month.group.slug month.pk team.pk %}#team-books">Back to Team Books</a></p>{% endif %}
+</div>
+{% endblock %}

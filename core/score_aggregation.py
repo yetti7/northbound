@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db.models import F, Q, Sum
 
-from .models import BookSubmission, ModifierProvenance
+from .models import BookSubmission, ModifierProvenance, TeamAssignment
 
 
 def _date_bounds(query, field, *, effective_from, effective_to):
@@ -76,4 +76,30 @@ def challenge_score_totals(
 
     for score in totals.values():
         score["total_pages"] = score["base_pages"] + score["modifier_pages"]
+    return totals
+
+def challenge_team_totals(*, month, team_ids, effective_from=None, effective_to=None):
+    """Allocate each Reader once, preserving credit after participation ends."""
+    totals = dict.fromkeys(month.teams.filter(pk__in=team_ids).values_list("pk", flat=True), 0)
+    if not totals:
+        return totals
+    current = dict(TeamAssignment.objects.filter(
+        month=month, ended_at__isnull=True, team__month=month,
+    ).values_list("participant_id", "team_id"))
+    attribution = {}
+    for enrollment in month.enrollments.filter(participant__group_id=month.group_id):
+        current_team = current.get(enrollment.participant_id) if enrollment.is_active else None
+        # A current assignment also covers pre-migration Readers. Historical
+        # rows without a credited team retain their existing roster calculation.
+        team_id = current_team
+        if not enrollment.is_active or enrollment.awaiting_scoring_team:
+            team_id = current_team or enrollment.credited_team_id
+        if team_id in totals:
+            attribution[enrollment.participant_id] = team_id
+    scores = challenge_score_totals(
+        month=month, participant_ids=attribution,
+        effective_from=effective_from, effective_to=effective_to,
+    )
+    for participant_id, team_id in attribution.items():
+        totals[team_id] += scores[participant_id]["total_pages"]
     return totals

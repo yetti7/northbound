@@ -12,7 +12,7 @@ from .models import (
     PersonalTBRCompletionAward, PersonalTBRMatch, ProgressCheckpoint, ReadingGroup,
     ThemeClaim,
 )
-from .participation import activate_participation, deactivate_participation
+from .participation import activate_participation, assign_participant_to_team, deactivate_participation
 from .personal_tbr_completion import (
     personal_tbr_completion_set_fingerprint, personal_tbr_completion_source_reference,
     synchronize_personal_tbr_completion_for_reader,
@@ -146,9 +146,14 @@ class PersonalTbrCompletionRewardTests(TestCase):
     def test_withdrawal_and_feature_toggle_reactivate_same_history(self):
         self.qualify(); award = PersonalTBRCompletionAward.objects.get(); provenance = self.completion_provenance()
         deactivate_participation(enrollment=self.enrollment, actor=self.reader_user, reason=MonthEnrollment.InactiveReason.WITHDRAWN)
-        award.refresh_from_db(); provenance.refresh_from_db(); self.assertFalse(award.is_qualifying); self.assertFalse(provenance.is_active)
+        award.refresh_from_db(); provenance.refresh_from_db(); self.assertTrue(award.is_qualifying); self.assertTrue(provenance.is_active)
         activate_participation(month=self.month, participant=self.reader, actor=self.reader_user, origin=MonthEnrollment.Origin.SELF)
         award.refresh_from_db(); self.assertTrue(award.is_qualifying)
+        from .models import Team
+        assign_participant_to_team(
+            month=self.month, participant=self.reader,
+            team=Team.objects.create(month=self.month, name="Rejoined team"), actor=self.host_user,
+        )
         self.month.tbr_enabled = False; self.month.save(update_fields=["tbr_enabled"])
         synchronize_personal_tbr_completions_for_challenge(self.month)
         provenance.refresh_from_db(); self.assertFalse(provenance.is_active)
@@ -187,6 +192,35 @@ class PersonalTbrCompletionRewardTests(TestCase):
         refresh_submission_score(first); first.refresh_from_db()
         self.assertEqual((first.approved_pages, first.bonus_pages, first.final_scored_pages), (100, 135, 235))
         self.assertEqual(self.score(), {"base_pages": 900, "modifier_pages": 1575, "total_pages": 2475})
+        from .models import ImmersiveRequest, Team
+        from .score_aggregation import challenge_team_totals
+
+        ImmersiveRequest.objects.create(
+            submission=first, requester=self.reader_user, captured_percent=10,
+            status="approved", reviewed_by=self.host_user, reviewed_at=timezone.now(),
+        )
+        refresh_submission_score(first)
+        team = Team.objects.create(month=self.month, name="Credited team")
+        assign_participant_to_team(month=self.month, participant=self.reader, team=team, actor=self.host_user)
+        expected = {"base_pages": 900, "modifier_pages": 1585, "total_pages": 2485}
+        self.assertEqual(self.score(), expected)
+        deactivate_participation(
+            enrollment=self.enrollment, actor=self.host_user, reason=MonthEnrollment.InactiveReason.REMOVED,
+            ordinary_staff_removal=True,
+        )
+        self.assertEqual(self.score(), expected)
+        self.assertEqual(challenge_team_totals(month=self.month, team_ids=[team.pk]), {team.pk: 2485})
+        synchronize_submission(first)
+        synchronize_botm_submission(first)
+        self.assertEqual(self.score(), expected)
+        first.is_removed = True
+        first.save(update_fields=["is_removed"])
+        synchronize_submission(first)
+        synchronize_botm_submission(first)
+        refresh_submission_score(first)
+        self.assertLess(self.score()["total_pages"], 2485)
+        self.assertEqual(challenge_team_totals(month=self.month, team_ids=[team.pk])[team.pk],
+                         self.score()["total_pages"])
 
     def test_frozen_effective_date_controls_ranges_and_checkpoint_history_is_immutable(self):
         tbr, books = self.locked_tbr()
