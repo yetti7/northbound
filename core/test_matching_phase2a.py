@@ -147,12 +147,13 @@ class MatchingPhase2ATests(TestCase):
         self.assertEqual(ModifierProvenance.objects.filter(submission=s,source_type='botm_book').count(),1)
         self.assertEqual(ModifierProvenance.objects.filter(submission=s,source_type='tbr_book').count(),1)
 
-    def test_reviewed_decision_suspends_and_reactivates_without_rewriting_evidence(self):
+    def test_reviewed_credit_survives_departure_but_revalidates_identity(self):
         self.botm();s=self.submission();sync_botm(s);match=BotmMatch.objects.get(submission=s)
         self.confirm(s,self.actor('floater'),'botm',match)
         match.refresh_from_db();evidence=match.decision_evidence
         MonthEnrollment.objects.filter(pk=self.tbr.enrollment_id).update(is_active=False);sync_botm(s)
-        match.refresh_from_db();self.assertFalse(match.is_qualifying)
+        match.refresh_from_db();self.assertTrue(match.is_qualifying)
+        self.assertEqual(match.decision_evidence,evidence)
         MonthEnrollment.objects.filter(pk=self.tbr.enrollment_id).update(is_active=True);sync_botm(s)
         match.refresh_from_db();self.assertTrue(match.is_qualifying)
         BookSubmission.objects.filter(pk=s.pk).update(title='An unrelated corrected identity');sync_botm(s)

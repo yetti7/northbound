@@ -166,7 +166,8 @@ class TeamDetailReportingTests(TestCase):
         response = self.get_as(self.host_user, {"bonuses": "0"})
         self.assertFalse(response.context["show_bonuses"])
         self.assertNotContains(response, "<th>Modifier</th>", html=True)
-        self.assertEqual(response.context["team_total"], 600)
+        self.assertEqual(response.context["team_total"], 660)
+        self.assertEqual(response.context["roster_total"], 600)
         self.assertContains(response, "Filtered roster · Base only")
         self.assertEqual(list(ModifierProvenance.objects.values_list("pk", "is_active", "amount")), before)
 
@@ -190,12 +191,14 @@ class TeamDetailReportingTests(TestCase):
         self.add_progress()
         response = self.get_as(self.host_user, {"themes": "complete"})
         self.assertEqual([row.participant for row in response.context["roster"]], [self.alpha])
-        self.assertEqual(response.context["team_total"], 380)
+        self.assertEqual(response.context["team_total"], 720)
+        self.assertEqual(response.context["roster_total"], 380)
         self.assertEqual(response.context["full_roster_count"], 3)
         self.assertContains(response, "1 of 3 shown")
         self.assertContains(response, "Reset Filters")
         empty = self.get_as(self.host_user, {"themes": "complete", "tbr": "none"})
-        self.assertEqual(empty.context["team_total"], 0)
+        self.assertEqual(empty.context["team_total"], 720)
+        self.assertEqual(empty.context["roster_total"], 0)
         self.assertContains(empty, "No Readers match these filters.")
 
     def test_invalid_dates_fail_safely_with_defaults_and_errors(self):
@@ -265,8 +268,13 @@ class TeamDetailReportingTests(TestCase):
                 response = self.get_as(user, query)
                 self.assertContains(response, "AlphaDiscord")
                 self.assertContains(response, "731")
-                self.assertNotContains(response, 'name="from"')
-                self.assertNotContains(response, 'name="bonuses"')
+                # Sorting preserves the viewer's query in hidden inputs; it must
+                # not expose actionable score controls or authoritative scores.
+                self.assertNotContains(response, 'type="date" name="from"')
+                self.assertNotContains(response, 'type="checkbox" name="bonuses"')
+                self.assertFalse(response.context["can_view_reader_scores"])
+                self.assertNotContains(response, '<th>Base</th>', html=True)
+                self.assertNotContains(response, '<th>Total</th>', html=True)
                 self.assertIsNone(response.context["team_total"])
                 self.assertFalse(hasattr(response.context["roster"][0], "base_pages"))
                 listing = self.client.get(list_url, {"sort": "average"})

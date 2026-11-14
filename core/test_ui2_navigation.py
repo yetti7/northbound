@@ -128,7 +128,7 @@ class GroupChallengeUi2Tests(TestCase):
     def test_challenge_header_permissions_settings_and_protected_layout(self):
         reader = self.get_as(self.reader_user, self.challenge_url)
         self.assertEqual(reader.status_code, 200)
-        self.assertContains(reader, "page-heading page-header")
+        self.assertContains(reader, 'class="challenge-identity')
         self.assertContains(reader, "challenge-upper-layout")
         self.assertContains(reader, "challenge-schedule")
         self.assertContains(reader, "challenge-botm-preview")
@@ -163,7 +163,7 @@ class GroupChallengeUi2Tests(TestCase):
     def test_settings_landing_uses_grouped_navigation_without_changing_routes(self):
         response = self.get_as(self.host_user, self.settings_url)
         self.assertEqual(response.status_code, 200)
-        for heading in ("Core Configuration", "People &amp; Operations", "Optional Features", "Visibility &amp; Lifecycle"):
+        for heading in ("Core Configuration", "People &amp; Operations", "Optional Features", "Competition"):
             self.assertContains(response, heading)
         for name in (
             "challenge-general-settings", "challenge-schedule-settings", "challenge-signup-settings",
