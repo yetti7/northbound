@@ -228,3 +228,6 @@ NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT = env_bool("NORTHBOUND_DISCORD_ALLOW_DEVELO
 
 # Separate from lifecycle scheduling; explicit activation is required.
 NORTHBOUND_DISCORD_SCHEDULER_ENABLED = env_bool("NORTHBOUND_DISCORD_SCHEDULER_ENABLED", False)
+
+# Stage C is independently activated; saved categories never authorize a worker.
+NORTHBOUND_DISCORD_EVENTS_ENABLED = env_bool("NORTHBOUND_DISCORD_EVENTS_ENABLED", False)

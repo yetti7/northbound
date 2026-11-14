@@ -141,7 +141,7 @@ class DiscordSchedulingTests(TestCase):
         for value in [self.month.name,'Private book','reviews','participation','results']:
             self.assertNotIn(value,text)
         form=scheduling.ReportScheduleForm(self.data(destination='community',categories=['results']),group=self.group,destination='community')
-        self.assertFalse(form.is_valid())
+        self.assertTrue(form.is_valid())
 
     def test_reentrant_worker_and_unique_claim_prevent_duplicates(self):
         self.book();schedule=self.configure();due=schedule.next_run_at
@@ -238,7 +238,7 @@ class DiscordSchedulingTests(TestCase):
         self.client.force_login(self.owner)
         response=self.client.post(self.url,{'destination':'moderator','action':'preferences',**self.data('custom',times='17:00,08:00',weekdays=['0','4'])})
         self.assertEqual(response.status_code,302)
-        page=self.client.get(self.url);self.assertContains(page,'Immediate Notifications — Coming Soon');self.assertContains(page,'Custom Times')
+        page=self.client.get(self.url);self.assertContains(page,'Enable immediate notifications');self.assertContains(page,'Custom Times')
         url=reverse('challenge-general-settings',args=[self.group.slug,self.month.pk])
         response=self.client.post(url,{'name':self.month.name,'description':'','discord_community_opt_in':'on'})
         self.assertEqual(response.status_code,302);self.month.refresh_from_db();self.assertTrue(self.month.discord_community_opt_in)

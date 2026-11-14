@@ -1,3 +1,4 @@
+from .discord_events import observe_challenge
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError
@@ -292,6 +293,8 @@ class DiscordReportSchedule(models.Model):
     weekdays = models.JSONField(default=list, blank=True)
     send_empty = models.BooleanField(default=False)
     immediate_categories = models.JSONField(default=list, blank=True)
+    immediate_enabled = models.BooleanField(default=False)
+    immediate_activated_at = models.DateTimeField(null=True, blank=True)
     configured_at = models.DateTimeField(default=timezone.now)
     timezone_name = models.CharField(max_length=64, blank=True)
     revision = models.PositiveIntegerField(default=0)
@@ -324,6 +327,35 @@ class DiscordSchedulerHeartbeat(models.Model):
     name = models.CharField(max_length=32, primary_key=True, default="discord")
     last_seen = models.DateTimeField(default=timezone.now)
     daemon = models.BooleanField(default=False)
+
+
+class DiscordEventDelivery(models.Model):
+    """Minimal transactional outbox; no payloads or decrypted credentials."""
+    event_key = models.UUIDField(default=uuid.uuid4)
+    group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE)
+    challenge = models.ForeignKey('ChallengeMonth', on_delete=models.CASCADE)
+    destination = models.CharField(max_length=16, choices=DiscordManualDelivery.Destination.choices)
+    category = models.CharField(max_length=32)
+    review_category = models.CharField(max_length=16, blank=True)
+    source_kind = models.CharField(max_length=24)
+    source_id = models.PositiveBigIntegerField()
+    team = models.ForeignKey('Team', null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(default=timezone.now)
+    activated_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    state = models.CharField(max_length=16, default='pending')
+    attempts = models.PositiveSmallIntegerField(default=0)
+    claim_id = models.UUIDField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    failure_category = models.CharField(max_length=32, blank=True)
+    webhook_fingerprint = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['event_key','destination'], name='unique_discord_event_destination')]
+        indexes = [models.Index(fields=['state','next_attempt_at'], name='discord_event_due')]
+        ordering = ['created_at','pk']
 
 
 class HardcoverConnection(models.Model):
@@ -694,6 +726,7 @@ class ChallengeMonth(models.Model):
         ):
             raise ValidationError({"status": "Reopening a Completed Challenge requires explicit recovery confirmation."})
 
+    @observe_challenge
     def transition_to(self, target_status, *, confirm_reversal=False, confirm_completed_recovery=False):
         if not self.pk:
             raise ValidationError({"status": "Save the Challenge before changing its lifecycle state."})
@@ -712,6 +745,7 @@ class ChallengeMonth(models.Model):
         self.status = target_status
         return self
 
+    @observe_challenge
     def apply_scheduled_actions(self, *, now=None, registration=True, lifecycle=True):
         from .scheduling import lifecycle_due_target
 

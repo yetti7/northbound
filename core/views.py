@@ -1,3 +1,4 @@
+from .discord_events import observe_challenge
 from .photo_history import reader_photo_history
 from .photo_submissions import can_submit_photo
 from .prompt_scoring import pending_submission_ids as pending_prompt_submissions
@@ -4197,6 +4198,7 @@ def _lock_challenge_for_edit(month):
     return ChallengeMonth.objects.select_for_update().get(pk=month.pk)
 
 
+@observe_challenge
 def _save_challenge_schedule(request, form, month):
     from .scheduling import prepare_schedule_save, reconcile_saved_registration
 
@@ -6136,6 +6138,8 @@ def submission_create(request, group_slug, month_pk):
                         AuditEvent.objects.create(group=month.group, action="submission.approved",
                             object_type="BookSubmission", object_id=str(submission.pk),
                             summary=json.dumps({"challenge_id": month.pk, "status": submission.status, "automatic": True}))
+                    from .discord_events import record_book_created
+                    record_book_created(submission)
                     return submission
                 try:
                     with transaction.atomic():

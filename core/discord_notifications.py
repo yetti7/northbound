@@ -219,7 +219,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 @sensitive_variables()
-def send_webhook(url, payload, *, detailed=False):
+def send_webhook(url, payload, *, detailed=False, retryable=False):
     """Return only safe status/cooldown values; never return provider messages."""
     try:
         validate_webhook(url)
@@ -232,10 +232,12 @@ def send_webhook(url, payload, *, detailed=False):
             try:
                 body = json.loads(exc.read(4096))
                 delay = float(body.get('retry_after', exc.headers.get('Retry-After', 3600)))
-                delay = min(86400, max(3600, delay))
+                delay = min(86400, max(1 if retryable else 3600, delay))
             except (ValueError, TypeError, AttributeError):
                 delay = 3600
             return 'rate_limited', delay
+        if retryable and 500 <= exc.code < 600:
+            return 'server_error', 0
         return ('rejected' if detailed else 'failed'), 0
     except TimeoutError:
         return ('timeout' if detailed else 'failed'), 0

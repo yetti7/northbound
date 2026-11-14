@@ -1,4 +1,5 @@
 """Verified Photo decisions using the shared prompt provenance and completion ledger."""
+from .discord_events import observe_photo
 import json
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from django.contrib.auth import get_user_model
@@ -137,6 +138,7 @@ def validate_photo_scoring_boundary(claim,actor):
 
 
 @atomic_reservations
+@observe_photo
 def review_photo_submission(*,photo_id,actor,version,decision,reviewer_verified=False):
     require_ready()
     if not actor.is_authenticated or not actor.is_active:raise PermissionDenied('An active reviewer is required.')

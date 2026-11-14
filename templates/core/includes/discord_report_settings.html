@@ -3,8 +3,12 @@
 {{ destination.schedule_form.non_field_errors }}
 <fieldset{% if not editable %} disabled{% endif %}>
 <legend>Notification Preferences</legend>
-{% if destination.unavailable_categories %}<p class="muted">Community Challenge, registration, participation and results categories are unavailable until a public-sharing policy is approved. Challenge opt-in does not override those restrictions.</p>{{ destination.schedule_form.categories.errors }}{% else %}<p class="muted">Choose the review categories to include in scheduled reports.</p><div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>{% endif %}
-<div class="discord-coming-soon"><strong>Immediate Notifications — Coming Soon</strong><p class="muted">Event-driven notifications arrive in Stage C. Previously saved event preferences are retained; immediate delivery is inactive.</p>{{ destination.schedule_form.immediate_categories.errors }}</div>
+<p class="muted">Scheduled report categories. {% if destination.key == 'community' %}Only opted-in Challenges and publicly shareable information are included. Restricted participation and unpublished results are omitted.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
+<div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>
+<h3>Immediate Notifications</h3><input type="hidden" name="immediate_controls" value="1">
+<label for="{{ destination.schedule_form.immediate_enabled.id_for_label }}">{{ destination.schedule_form.immediate_enabled }} Enable immediate notifications</label>{{ destination.schedule_form.immediate_enabled.errors }}
+<p class="muted">Event announcements are separate from scheduled summaries. Saved categories require explicit activation here and a separately authorized event worker. No historical events are replayed.</p>
+<div class="discord-category-list">{{ destination.schedule_form.immediate_categories }}{{ destination.schedule_form.immediate_categories.errors }}</div>
 <h3>Scheduling</h3>
 <label for="{{ destination.schedule_form.scheduled_enabled.id_for_label }}">{{ destination.schedule_form.scheduled_enabled }} Enable scheduled reports</label>{{ destination.schedule_form.scheduled_enabled.errors }}
 <p class="muted">Group timezone: <strong>{{ destination.schedule_status.timezone }}</strong> · <a href="{% url 'group-edit' group.slug %}">Change in Group Settings</a></p>
@@ -13,7 +17,7 @@
 <div data-fixed-times{% if destination.schedule_form.frequency.value != 'daily' and destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.times.label_tag }}{{ destination.schedule_form.times }}{{ destination.schedule_form.times.errors }}<span class="muted" id="{{ destination.schedule_form.times.auto_id }}_helptext">{{ destination.schedule_form.times.help_text }}</span></p></div>
 <div data-weekdays{% if destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.weekdays.label_tag }}</p><div class="discord-category-list">{{ destination.schedule_form.weekdays }}{{ destination.schedule_form.weekdays.errors }}</div></div>
 <label for="{{ destination.schedule_form.send_empty.id_for_label }}">{{ destination.schedule_form.send_empty }} {{ destination.schedule_form.send_empty.label }}</label>
-{% if destination.key == 'community' %}<p class="muted">Only an explicitly enabled empty report can currently send the neutral Community card.</p>{% endif %}
+{% if destination.key == 'community' %}<p class="muted">If no selected category has eligible content, send only the neutral Community card when empty reports are enabled.</p>{% endif %}
 {% if destination.schedule_form.retire_legacy %}<p>{{ destination.schedule_form.retire_legacy }} {{ destination.schedule_form.retire_legacy.label }}{{ destination.schedule_form.retire_legacy.errors }}</p>{% endif %}
 </div>
 </fieldset>

@@ -1,4 +1,5 @@
 """Gated prompt selection and lifecycle bridge; scoring lives in prompt_scoring."""
+from .discord_events import observe_book
 from functools import wraps
 import json
 from django import forms
@@ -200,6 +201,7 @@ def save_new_submission(*,submission,actor,selections):
 
 
 @atomic_reservations
+@observe_book
 def replace_selections(*,submission,actor,selections,preview_authorization=None):
     selections=_selections(selections)
     if not selections:return submission

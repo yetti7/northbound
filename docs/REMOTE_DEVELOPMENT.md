@@ -642,3 +642,43 @@ media and migration fingerprints matched after these two new manual history rows
 webhook ciphertext/settings and scheduled history were unchanged. Development health
 returned HTTP 200. Manual testing remains enabled; both recurring scheduler gates
 remain disabled. No production, image, workflow or Stage C change was made.
+
+## Discord Stage C: event outbox (automatic delivery remains off)
+
+Stage C supersedes the earlier policy-deferred Community category descriptions.
+The approved opt-in policy permits non-Draft Challenge identity, dates and
+registration metadata for the configured Community audience. Existing membership
+requirements on links remain; Drafts, restricted participation and unpublished
+results are excluded. Participation counts and final-results notices are limited
+to the existing Completed/Archived release boundary. See
+[DISCORD_EVENTS.md](DISCORD_EVENTS.md) for authoritative producer boundaries,
+retry/uncertainty semantics, privacy rules and the exact controlled-test procedure.
+
+The additive migration `core.0081_discord_event_outbox` adds default-off immediate
+activation fields and a minimal outbox. Saved categories are retained without
+activation or historical backfill. Existing scheduled slot calculations, webhook
+encryption, manual claims and lifecycle scheduling remain unchanged. The companion
+`run_discord_events` command requires `NORTHBOUND_DISCORD_EVENTS_ENABLED=1` plus all
+existing transport/destination gates and explicit local immediate activation.
+`--dry-run` creates no claims, heartbeat or messages. No daemon was started.
+
+A consistent private Dev database/source/config backup was made at
+`/srv/docker/northbound-dev/rollback-discord-stagec-d4d6ee5`. Migration was rehearsed
+on a disposable copy before applying it only to Dev. Existing row values across
+66 tables and all 40 media hashes matched after deployment; only the expected
+migration was added. No event backfill or automatic activation occurred. The
+existing image and environment files were retained; health returned HTTP 200.
+
+Validation included a 220-test regression run, updated Community/manual/settings
+coverage (89 focused cases), 36 final event/worker tests, JavaScript tab/scheduling checks and Django
+schema checks. Responsive browser verification used sandboxed, fixed-width frames
+of deployed read-only Owner/Moderator renders, because browser-level viewport
+resize requests were unreliable. Frame widths 375/440/1280px were measured in the
+browser; both destinations had no horizontal overflow. Custom controls, validation
+feedback, keyboard tab navigation, retained edits and Moderator read-only controls
+passed. No live form was submitted and no real Discord message was sent.
+
+At completion the event and recurring Discord gates are off, the Challenge
+scheduler remains off, immediate destination activation remains off, and manual
+Dev testing remains enabled. Production, GitHub Actions, main, tags and releases
+are outside this deployment.

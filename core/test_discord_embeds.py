@@ -53,7 +53,10 @@ class DiscordEmbedTests(TestCase):
 
     def test_community_is_public_neutral_and_never_queries_private_services(self):
         self.book();self.month.name='Secret unpublished Challenge';self.month.save(update_fields=['name'])
-        def no_query(execute,sql,params,many,context):raise AssertionError('Private data query')
+        def no_query(execute,sql,params,many,context):
+            if any(table in sql.lower() for table in ('core_booksubmission','core_themeclaim','core_immersiverequest','core_promptclaim','core_scavengerphotosubmission')):
+                raise AssertionError('Private data query')
+            return execute(sql,params,many,context)
         with connection.execute_wrapper(no_query),patch('core.discord_notifications.group_pending_review_counts') as reviews:
             payloads=manual_payloads(self.group,'community','status')
         reviews.assert_not_called();self.assert_valid(payloads)

@@ -1,4 +1,5 @@
 """Conservative shared identity evaluation; awards stay in domain services."""
+from .discord_events import observe_book
 import hashlib
 import json
 import re
@@ -322,6 +323,7 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
 
 
 @transaction.atomic
+@observe_book
 def review_submission_with_matches(submission, reviewed_claims, reviewer, reviewed_at, *, suggestions=None):
     """Normal approval plus explicit suggested IDs; no arbitrary target selection."""
     from .permissions import can_review_submission, is_active_floater

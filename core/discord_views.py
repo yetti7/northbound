@@ -1,3 +1,4 @@
+from .discord_events import event_diagnostics
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
@@ -77,7 +78,7 @@ def discord_notification_settings(request, group_slug):
         invalid_preferences, saved = configure_report_schedule(group=group, actor=request.user,
             destination=selected, data=request.POST)
         if invalid_preferences.is_valid():
-            messages.success(request, 'Notification preferences saved. Recurring service activation is separate; immediate notifications remain inactive.')
+            messages.success(request, 'Notification preferences saved. Automatic delivery requires separate global worker activation.')
             return settings_redirect(group, selected)
     destinations = []
     for destination, label in DESTINATIONS.items():
@@ -100,8 +101,9 @@ def discord_notification_settings(request, group_slug):
         destinations.append({'key': destination, 'label': label, 'form': form,
             'status': destination_diagnostics(config, destination, group=group),
             'schedule_form': report_form, 'schedule_status': schedule_diagnostics(report,group=group),
-            'unavailable_categories': COMMUNITY_CATEGORIES if destination=='community' else [],
+            'unavailable_categories': [],
             'history': history_rows(group,destination),
+            'events': event_diagnostics(group,destination),
             'active': destination == (selected if selected in DESTINATIONS else 'community'),
             'actions': [{'key': action_key, 'label': action_label, 'token': manual_request_token(
                 actor=request.user, group=group, destination=destination, action=action_key)}

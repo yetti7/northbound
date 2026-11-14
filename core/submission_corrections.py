@@ -1,4 +1,5 @@
 """Atomic, explicitly authorized submission corrections. No editing interface."""
+from .discord_events import observe_book
 import hashlib
 import json
 from datetime import date, datetime
@@ -314,6 +315,7 @@ def _promote_released_matches(submission, released_tbr, released_botm):
 
 
 @sensitive_variables('hardcover_token')
+@observe_book
 def correct_submission(*, submission, actor, changes, version, hardcover_token=None, _preview=False, _expected_impact=None):
     if connection.in_atomic_block:
         raise ValidationError('Begin correction outside an existing write transaction.')

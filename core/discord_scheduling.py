@@ -55,24 +55,25 @@ class ReportScheduleForm(forms.Form):
     weekdays = forms.MultipleChoiceField(required=False, choices=WEEKDAYS, widget=forms.CheckboxSelectMultiple,
         label='Delivery days (local timezone)')
     send_empty = forms.BooleanField(required=False, label='Send scheduled reports when there is nothing new to report')
+    immediate_enabled = forms.BooleanField(required=False, label='Enable immediate notifications')
     immediate_categories = forms.MultipleChoiceField(required=False, widget=forms.CheckboxSelectMultiple,
-        label='Planned immediate categories — Coming in Stage C')
+        label='Immediate event categories')
     retire_legacy = forms.BooleanField(required=False, label='Turn off the existing hourly digest (keep its history)')
 
     def __init__(self, *args, group, destination, schedule=None, legacy_enabled=False, **kwargs):
         initial = {'frequency':'disabled','send_empty':False}
         if schedule:
-            initial.update({key:getattr(schedule,key) for key in ('frequency','categories','weekdays','send_empty','immediate_categories')})
+            initial.update({key:getattr(schedule,key) for key in ('frequency','categories','weekdays','send_empty','immediate_categories','immediate_enabled')})
             initial['times'] = ', '.join(schedule.times)
             initial['weekdays'] = [str(x) for x in schedule.weekdays]
             initial['scheduled_enabled'] = schedule.frequency != 'disabled'
         kwargs['initial'] = initial
         kwargs.setdefault('auto_id', destination+'_report_%s')
         super().__init__(*args, **kwargs)
-        # The compact UI no longer edits Stage C preferences. Omission must not
-        # erase values saved through the earlier editor; explicit values still
-        # undergo the existing choice validation.
-        if self.is_bound and schedule and 'immediate_categories' not in self.data:
+        # Older clients omit the Stage C editor entirely. Preserve their saved
+        # categories; the current editor sends a marker so an empty selection
+        # can be cleared explicitly and still receives choice validation.
+        if self.is_bound and schedule and 'immediate_categories' not in self.data and not self.data.get('immediate_controls'):
             self.data = self.data.copy()
             if hasattr(self.data, 'setlist'):
                 self.data.setlist('immediate_categories', schedule.immediate_categories)
@@ -81,7 +82,7 @@ class ReportScheduleForm(forms.Form):
         self.group = group
         self.destination = destination
         self.legacy_enabled = legacy_enabled and destination=='moderator'
-        self.fields['categories'].choices = MODERATOR_CATEGORIES if destination=='moderator' else []
+        self.fields['categories'].choices = MODERATOR_CATEGORIES if destination=='moderator' else COMMUNITY_CATEGORIES
         self.fields['immediate_categories'].choices = IMMEDIATE_CATEGORIES[destination]
         if not self.legacy_enabled:
             self.fields.pop('retire_legacy')
@@ -108,6 +109,8 @@ class ReportScheduleForm(forms.Form):
             self.add_error('frequency', 'Select a delivery frequency or disable scheduled reports.')
         elif self.destination=='moderator' and not data.get('categories'):
             self.add_error('categories', 'Select at least one review category for scheduled reports.')
+        if data.get('immediate_enabled') and not data.get('immediate_categories'):
+            self.add_error('immediate_categories','Choose at least one immediate event category.')
         if data.get('frequency') in {'daily','weekly','custom'}:
             times = data.get('times', [])
             days = data.get('weekdays', [])
@@ -176,16 +179,22 @@ def configure_report_schedule(*, group, actor, destination, data, now=None):
         configuration = GroupDiscordNotification.objects.create(group=group)
     if not schedule:
         schedule = DiscordReportSchedule(configuration=configuration,destination=destination)
-    keys = ('frequency','categories','times','weekdays','send_empty','immediate_categories')
+    keys = ('frequency','categories','times','weekdays','send_empty','immediate_categories','immediate_enabled')
     values = {key:form.cleaned_data[key] for key in keys}
     if schedule.pk and all(getattr(schedule,key)==value for key,value in values.items()) and schedule.timezone_name==group.timezone and not form.cleaned_data.get('retire_legacy'):
         return form, False
     now = now or timezone.now()
+    report_changed = not schedule.pk or any(getattr(schedule,key)!=values[key] for key in ('frequency','categories','times','weekdays','send_empty')) or schedule.timezone_name!=group.timezone
+    if values['immediate_enabled'] and not schedule.immediate_enabled:
+        schedule.immediate_activated_at = now
+    elif not values['immediate_enabled']:
+        schedule.immediate_activated_at = None
     for key,value in values.items():setattr(schedule,key,value)
-    schedule.configured_at = now
-    schedule.timezone_name = group.timezone
-    schedule.revision += 1
-    schedule.next_run_at = next_run(schedule,max(now,schedule.cooldown_until-timedelta(microseconds=1)) if schedule.cooldown_until else now)
+    if report_changed:
+        schedule.configured_at = now
+        schedule.timezone_name = group.timezone
+        schedule.revision += 1
+        schedule.next_run_at = next_run(schedule,max(now,schedule.cooldown_until-timedelta(microseconds=1)) if schedule.cooldown_until else now)
     schedule.save()
     retired = bool(form.cleaned_data.get('retire_legacy'))
     if retired:
@@ -193,7 +202,7 @@ def configure_report_schedule(*, group, actor, destination, data, now=None):
         configuration.save(update_fields=['enabled'])
     AuditEvent.objects.create(actor=actor,group=group,action='group.discord_schedule_updated',
         object_type='DiscordReportSchedule',object_id=str(schedule.pk),
-        summary=json.dumps({'destination':destination,**values,'legacy_digest_disabled':retired,'immediate_delivery_active':False}))
+        summary=json.dumps({'destination':destination,**values,'legacy_digest_disabled':retired,'immediate_delivery_active':schedule.immediate_enabled}))
     return form, True
 
 
@@ -201,9 +210,8 @@ def scheduled_payloads(schedule):
     from .discord_embeds import pack, community_status_embed, moderator_status_embeds
     group = schedule.configuration.group
     if schedule.destination=='community':
-        # Opt-in is necessary, but no anonymous/public Challenge audience policy
-        # exists yet. Even opted-in private Challenges remain excluded.
-        return pack([community_status_embed(group,timezone.now().isoformat())]) if schedule.send_empty else []
+        from .discord_community import community_embeds
+        return pack(community_embeds(group,schedule.categories,send_empty=schedule.send_empty))
     summary = deepcopy(discord.group_pending_review_counts(group))
     selected = set(schedule.categories)
     rows = []
@@ -369,8 +377,8 @@ def schedule_diagnostics(schedule, *, group, now=None):
         if error:readiness=error
         elif schedule.destination=='moderator' and schedule.configuration.enabled:
             readiness='The existing hourly digest must be disabled before using this schedule.'
-        elif schedule.destination=='community' and not schedule.send_empty:
-            readiness='Configured for checks, but no public categories are approved and empty reports are suppressed.'
+        elif schedule.destination=='community':
+            readiness='Only opted-in, eligible public-sharing content is included; restricted information is omitted.'
     outcome_labels={'claimed':'Started; outcome may be unknown. No automatic retry.', 'sent':'Accepted by Discord',
         'empty':'No eligible content; no message sent', 'failed':'Delivery failed',
         'blocked':'Delivery blocked by configuration or cooldown', 'missed':'Missed slot skipped; not replayed'}
@@ -381,4 +389,4 @@ def schedule_diagnostics(schedule, *, group, now=None):
         'last_failure':schedule.last_failure_at if schedule else None,
         'failure_label':FAILURES.get(schedule.last_failure_category,'Configuration or delivery changed; inspect settings.') if schedule and schedule.last_failure_category else '',
         'last_outcome':schedule.last_outcome if schedule else '',
-        'categories_unavailable':schedule.destination=='community' if schedule else False}
+        'categories_unavailable':False}

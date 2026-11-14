@@ -237,5 +237,7 @@ def manual_payloads(group, destination, action):
             value['fields'] = [link]
         return pack([value])
     if destination == 'community':
-        return pack([community_status_embed(group, timestamp)])
+        from .discord_community import community_embeds
+        from .discord_scheduling import COMMUNITY_CATEGORIES
+        return pack(community_embeds(group,[key for key,_ in COMMUNITY_CATEGORIES],send_empty=True))
     return pack(moderator_status_embeds(group, timestamp))

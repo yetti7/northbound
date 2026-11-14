@@ -46,10 +46,10 @@ class DiscordSettingsRefinementTests(TestCase):
 
     def test_compact_categories_placeholder_and_advanced_sections(self):
         page=self.page();text=page.content.decode()
-        self.assertContains(page,'Immediate Notifications — Coming Soon')
-        self.assertNotContains(page,'name="immediate_categories"')
+        self.assertContains(page,'Enable immediate notifications')
+        self.assertContains(page,'name="immediate_categories"')
         self.assertNotContains(page,'Active Challenges — unavailable')
-        self.assertContains(page,'public-sharing policy')
+        self.assertContains(page,'publicly shareable information')
         for label in ('Advanced Settings','Manage webhook and destination','Technical diagnostics','Legacy hourly digest information','Detailed delivery history'):
             self.assertContains(page,label)
         for key in ('books','themes','immersive','bingo','scavenger','photos'):
@@ -78,7 +78,7 @@ class DiscordSettingsRefinementTests(TestCase):
         self.assertEqual(response.status_code,302)
         schedule=DiscordReportSchedule.objects.get(configuration__group=self.group,destination='moderator')
         self.assertEqual(schedule.immediate_categories,['approved','new_submission'])
-        self.assertNotContains(self.client.get(response.url),'name="immediate_categories"')
+        self.assertContains(self.client.get(response.url),'name="immediate_categories"')
 
     def test_moderator_readonly_and_sensitive_history_redacted(self):
         self.configure()
