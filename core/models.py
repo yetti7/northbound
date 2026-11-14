@@ -225,6 +225,10 @@ class ReadingGroup(models.Model):
 
 
 class GroupDiscordNotification(models.Model):
+    # Manual destination switches do not enable the existing hourly digest.
+    moderator_enabled = models.BooleanField(default=False)
+    community_enabled = models.BooleanField(default=False)
+    encrypted_community_webhook = models.TextField(blank=True)
     group = models.OneToOneField(ReadingGroup, on_delete=models.CASCADE, related_name="discord_notifications")
     enabled = models.BooleanField(default=False)
     encrypted_webhook = models.TextField(blank=True)
@@ -245,6 +249,28 @@ class DiscordDigestDelivery(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["group", "hour"], name="unique_group_discord_digest_hour")]
+
+
+class DiscordManualDelivery(models.Model):
+    class Destination(models.TextChoices):
+        COMMUNITY = "community", "Community Announcements"
+        MODERATOR = "moderator", "Moderator Notifications"
+
+    class Action(models.TextChoices):
+        TEST = "test", "Test Message"
+        STATUS = "status", "Current Status"
+
+    group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE, related_name="discord_manual_deliveries")
+    request_id = models.UUIDField(unique=True)
+    destination = models.CharField(max_length=16, choices=Destination.choices)
+    action = models.CharField(max_length=16, choices=Action.choices)
+    attempted_at = models.DateTimeField(default=timezone.now)
+    outcome = models.CharField(max_length=16, choices=[("pending", "Pending"), ("sent", "Succeeded"), ("failed", "Failed")], default="pending")
+    failure_category = models.CharField(max_length=32, blank=True)
+    retry_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-attempted_at", "-pk"]
 
 
 class HardcoverConnection(models.Model):

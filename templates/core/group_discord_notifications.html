@@ -1,9 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Discord Notifications · {{ group.name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">An hourly summary of outstanding book, Theme, and Immersive reviews, grouped by Challenge. No messages are sent when the queues are empty.</p></div></div>
-<section class="card"><h2>Delivery status</h2><dl class="details"><dt>Notifications</dt><dd>{{ status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Webhook</dt><dd>{{ status.configured|yesno:"Saved securely,Not configured" }}</dd><dt>Latest result</dt><dd>{{ status.label }}</dd><dt>Last attempt</dt><dd>{{ status.last_attempt|default:"None" }}</dd><dt>Last delivered</dt><dd>{{ status.last_sent|default:"None" }}</dd><dt>Next eligible attempt</dt><dd>{{ status.next_attempt|default:"Next scheduler check" }}</dd></dl>
-{% if not delivery_enabled %}<p class="notice">Discord delivery is disabled by this environment. Saving settings does not send a message.</p>{% endif %}
-{% if not public_url_configured %}<p class="notice">A Platform Administrator must configure Northbound's public URL before delivery can begin.</p>{% endif %}</section>
-{% if editable %}<section class="form-card"><h2>Notification settings</h2><form method="post" class="stacked-form">{% csrf_token %}{{ form.as_p }}<p class="muted">Saved webhook URLs are encrypted and never displayed. Replacement and removal take effect for future attempts. Outstanding items remain in later hourly digests until reviewed. No users or roles are mentioned.</p><div class="form-actions"><button class="button primary">Save Settings</button><a class="button secondary" href="{{ logical_parent_url }}">Cancel</a></div></form></section>{% else %}<p class="muted">Moderators have read-only access. A Group Owner or Platform Administrator can change these settings.</p>{% endif %}
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">Configure separate public and private destinations. Use the message buttons to send manual messages. Saving these settings does not enable automatic notifications.</p></div></div>
+{% if not editable %}<p class="notice neutral">Moderators have read-only access. A Group Owner or Platform Administrator can configure destinations and send messages.</p>{% endif %}
+{% for destination in destinations %}
+<section class="card page-section" aria-labelledby="{{ destination.key }}-heading">
+<h2 id="{{ destination.key }}-heading">{{ destination.label }}</h2>
+<p>{% if destination.key == 'community' %}For a public community channel. Test messages identify this Group. Current Status shares only messaging availability; Challenge details, participation, results and moderation data are excluded.{% else %}For a private moderator channel. Current Status includes aggregate book, Theme, Immersive, Bingo, Scavenger Hunt and Photo review tasks without personal or book details.{% endif %}</p>
+<dl class="details"><dt>Manual messages</dt><dd>{{ destination.status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Webhook</dt><dd>{{ destination.status.configured|yesno:"Saved securely,Not configured" }}</dd><dt>Latest manual result</dt><dd>{{ destination.status.last_result }}</dd>{% if destination.status.last_action %}<dt>Last action</dt><dd>{{ destination.status.last_action }}</dd>{% endif %}<dt>Last manual attempt</dt><dd>{{ destination.status.last_attempt|default:"None" }}</dd></dl><p class="muted">Delivery results describe past attempts and may refer to an earlier webhook configuration.</p>
+<ul>{% for notice in destination.status.notices %}<li>{{ notice }}</li>{% endfor %}</ul>
+<details><summary>Automatic delivery status</summary><p>{{ destination.status.scheduler }}</p>{% if destination.key == 'moderator' %}<p>Existing hourly review digest: {{ destination.status.legacy_digest_enabled|yesno:"enabled,disabled" }}. Manual actions do not change its schedule or delivery history.</p>{% else %}<p>Automatic community announcements are not enabled.</p>{% endif %}</details>
+{% if editable %}
+<form method="post" class="stacked-form">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="save">
+{{ destination.form.as_p }}
+<p class="muted">Saved URLs are encrypted and never displayed. Leave the URL blank to keep it, enter a replacement, or select removal to clear and disable this destination. No users or roles are mentioned.</p>
+<div class="action-row"><button class="button primary">Save {{ destination.label }}</button></div>
+</form>
+<div class="action-row">{% for action in destination.actions %}<form method="post">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="{{ action.key }}"><input type="hidden" name="request_token" value="{{ action.token }}"><button class="button secondary" aria-label="Send {{ action.label }} to {{ destination.label }}">Send {{ action.label }}</button></form>{% endfor %}</div>
+{% endif %}
+</section>
+{% endfor %}
+<a class="button secondary" href="{{ logical_parent_url }}">Back to Group Settings</a>
 {% endblock %}

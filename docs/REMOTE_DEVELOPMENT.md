@@ -366,3 +366,66 @@ Dev, restore its four source directories from that private `source.tar`, then st
 Dev and verify health. Leave the new columns in place for this source-only rollback;
 do not reverse the migration or replace the database casually. A database restore
 would discard any subsequent Dev changes and requires a separately reviewed plan.
+
+## Discord Stage A: configuration and manual messages
+
+Migration `core.0079_discord_manual_destinations` adds disabled-by-default
+`community_enabled` and `moderator_enabled` manual switches and an empty encrypted
+Community webhook field. The existing `encrypted_webhook` remains the Moderator
+webhook, byte-for-byte. Its existing `enabled` flag and all scheduled digest
+fields/history retain their original semantics. The new settings interface changes
+only manual switches; saving it cannot turn on the old hourly digest. Existing
+legacy scheduling status is displayed separately and is not changed by this work.
+
+Owners and Platform Administrators can independently save, replace, clear, test or
+send status to either destination; Moderators remain read-only. Password inputs
+never redisplay a submitted or stored URL. Saving, GET requests and migrations
+send nothing. Manual Test/Current Status use POST, CSRF, one-hour signed request
+tokens bound to actor/Group/destination/action, a unique persistent manual claim,
+and redirect-after-POST. Reusing a request cannot resend it, including uncertain
+outcomes. A new explicit button activation may send another message.
+
+Manual attempts use `DiscordManualDelivery`, recording destination, action, attempt
+time, sanitized outcome/category and any rate-limit cooldown. No URL, key, payload
+or provider body is stored. Manual delivery never updates scheduled digest claims,
+last/next attempt timestamps or last-sent status. Transport retains exact Discord
+HTTPS URL validation, disabled mentions, no redirects, a bounded timeout and no
+automatic retry. Manual failure feedback distinguishes missing/disabled destinations,
+global/development blocks, unreadable/invalid webhooks, timeouts, rate limits,
+rejection, connectivity failures and unavailable snapshots. Failed network requests
+can have uncertain delivery; check Discord before making a new request.
+
+Diagnostics distinguish saved configuration from proven delivery and expose the
+last manual result and action for each destination. Past results may refer to an
+earlier saved URL. Scheduler readiness is separate: a disabled scheduler is shown
+as such; when enabled by configuration, process availability remains unverified.
+Manual sends do not require the scheduler or a public application URL.
+
+Moderator Current Status uses existing Group-wide review-count services and only
+aggregate Book, Theme, Immersive, Bingo, Scavenger Hunt Book and Photo task counts.
+It explicitly distinguishes review tasks from unique submissions. Community Current
+Status includes Group identity, manual messaging availability and automatic
+community-announcement status only. Challenge names/lifecycle, participation,
+results, scores and moderation data are excluded pending a public-sharing policy.
+Neither snapshot changes lifecycle, scoring or review state.
+
+Development delivery stays globally disabled, development delivery stays disallowed,
+and the Challenge scheduler stays disabled. All automated delivery tests use mocked
+transport. **Real delivery has not been verified.** Before any live test, obtain
+separate authorization naming a development-only test webhook/destination and the
+development-only delivery gates to enable. Never use a production webhook or enable
+the scheduler for a manual test.
+
+The consistent pre-Stage-A Dev database, source and private configuration backup is
+`/srv/docker/northbound-dev/rollback-discord4a-f66ba27`. Migration rehearsal on a
+disposable copy includes synthetic encrypted legacy webhook and digest-history
+records and verifies their preservation. Follow the paused-worker live-source
+migration procedure above, targeting only `core 0079`. Verify all existing row
+values, ciphertext, digest history and media afterwards; only the additive schema,
+its migration record and Django's new model permissions/content type are expected.
+A source-only rollback can leave these additive fields/tables in place. Do not
+restore the database over subsequent Dev changes or reverse migrations casually.
+
+Deferred work: Stage B reporting schedules and category controls; Stage C automatic
+lifecycle/moderation event delivery, including privacy and duplicate-prevention
+policy. No new automatic reporting or event subscriptions are implemented here.
