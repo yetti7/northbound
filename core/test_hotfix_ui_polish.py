@@ -18,7 +18,8 @@ class PlatformGroupTableTests(TestCase):
         for label in ('Group', 'Owners', 'Members', 'Current Challenge', 'Actions'):
             self.assertContains(response, f'<th>{label}</th>', html=True)
         self.assertContains(response, '+1')
-        self.assertContains(response, 'Zeta Owner')
+        self.assertContains(response, 'additional-owner')
+        self.assertNotContains(response, 'Zeta Owner')
         self.assertContains(response, 'group-owner-list')
         self.assertContains(response, 'Open →')
         self.assertNotContains(response, 'private@example.invalid')

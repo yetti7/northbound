@@ -65,7 +65,7 @@ class NavigationFoundationTests(TestCase):
     def test_routes_are_intentionally_classified_once(self):
         from .urls import urlpatterns
         names={route.name for route in urlpatterns if route.name}
-        self.assertEqual(len(names),233)
+        self.assertIn('recovery-tbr-title', names)
         self.assertFalse(set(NAVIGATION_PARENTS)&set(NAVIGATION_EXCEPTIONS))
         self.assertEqual(names,set(NAVIGATION_PARENTS)|set(NAVIGATION_EXCEPTIONS))
         for name,kwargs in [('dashboard',None),('global-search',None),('health',None),('config-login',None),('submission-catalog',self.month_kwargs())]:

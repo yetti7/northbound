@@ -233,7 +233,7 @@ class RegistrationAgreementMigrationTests(TransactionTestCase):
             executor.migrate(executor.loader.graph.leaf_nodes())
             self.assertEqual(
                 MonthEnrollment.objects.values().get(pk=enrollment.pk),
-                {**inactive_before, "host_scope_restored": False},
+                {**inactive_before, "host_scope_restored": False, "credited_team_id": None, "awaiting_scoring_team": False},
             )
         finally:
             executor = MigrationExecutor(connection)

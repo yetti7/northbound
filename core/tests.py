@@ -401,7 +401,7 @@ class PlatformGroupManagementTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Central Reading Group")
         self.assertContains(response, "Inactive Archive")
-        self.assertContains(response, "Central Owner")
+        self.assertContains(response, "central-owner")
         self.assertContains(response, "August Challenge")
         self.assertNotContains(response, "Updated the group for directory testing.")
         self.assertContains(response, "Members")
@@ -423,7 +423,7 @@ class PlatformGroupManagementTests(TestCase):
         self.assertContains(dashboard, reverse("config-group-list"))
         overview = self.client.get(reverse("config-group-detail", kwargs={"group_slug": self.group.slug}))
         self.assertContains(overview, reverse("group-detail", kwargs={"group_slug": self.group.slug}))
-        self.assertContains(overview, "Central Owner")
+        self.assertContains(overview, "central-owner")
         self.assertContains(overview, "Members")
         self.assertFalse(Membership.objects.filter(group=self.group, user=self.root).exists())
 
@@ -1258,7 +1258,7 @@ class PlatformRootVisibilityTests(TestCase):
         participant_page = self.client.get(reverse("participant-list", kwargs={"group_slug": self.group.slug}))
         self.assertContains(participant_page, "<h1>Members</h1>", html=True)
         self.assertNotContains(participant_page, "<h1>Participants</h1>", html=True)
-        self.assertContains(participant_page, "Visible Reader")
+        self.assertContains(participant_page, "visible-reader")
         self.assertNotContains(participant_page, "Hidden Root")
 
     def test_root_can_adjust_other_roles(self):
@@ -2537,13 +2537,13 @@ class MonthEnrollmentTests(TestCase):
         ChallengeStaffAssignment.objects.create(month=self.month, membership=admin_membership, role=ChallengeStaffAssignment.Role.HOST, assigned_by=self.owner)
         self.team = Team.objects.create(month=self.month, name="Enrollment Team")
 
-    def test_staff_team_assignment_explicitly_creates_participation(self):
+    def test_staff_add_participant_explicitly_creates_participation(self):
         self.client.force_login(self.admin)
         response = self.client.post(
-            reverse("team-assignment-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
+            reverse("month-participant-add", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
             {"participant": self.reader_membership.pk, "team": self.team.pk},
         )
-        self.assertRedirects(response, self.month.get_absolute_url())
+        self.assertRedirects(response, reverse("month-participant-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         enrollment = MonthEnrollment.objects.get(month=self.month, participant=self.reader_membership)
         self.assertEqual(enrollment.origin, MonthEnrollment.Origin.STAFF)
 

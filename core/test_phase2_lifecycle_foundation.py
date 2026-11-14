@@ -381,7 +381,7 @@ class DraftChallengeVisibilityTests(TestCase):
         response = self.client.get(self.month.get_absolute_url())
         # UI.2 separates lifecycle into a semantic badge and registration into the lede.
         self.assertContains(response, '<span class="pill status-badge status-info">Upcoming</span>', html=True)
-        self.assertContains(response, '<p class="lede">Registration Open · Oct 1, 2026–Oct 31, 2026</p>', html=True)
+        self.assertContains(response, '<p class="challenge-identity-meta">Registration Open · Oct 1, 2026–Oct 31, 2026</p>', html=True)
         self.assertNotContains(
             response,
             f'<p class="lede">{self.month.starts_on} – {self.month.ends_on} · Upcoming</p>',
@@ -394,7 +394,7 @@ class DraftChallengeVisibilityTests(TestCase):
         self.month.save(update_fields=["registration_is_open"])
         response = self.client.get(self.month.get_absolute_url())
         self.assertContains(response, '<span class="pill status-badge status-info">Upcoming</span>', html=True)
-        self.assertContains(response, '<p class="lede">Registration Closed · Oct 1, 2026–Oct 31, 2026</p>', html=True)
+        self.assertContains(response, '<p class="challenge-identity-meta">Registration Closed · Oct 1, 2026–Oct 31, 2026</p>', html=True)
 
     def test_challenge_detail_omits_scored_pages_card_in_all_lifecycle_states(self):
         Team.objects.create(month=self.month, name="Preserved Score Surface")
