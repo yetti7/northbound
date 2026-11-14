@@ -8,7 +8,7 @@ from django.db import models, transaction
 from django.utils import timezone
 from .matching_intent import entry_evidence
 from .models import (BookSubmission, BotmBook, PersonalTBRBook, BotmMatch, PersonalTBRMatch,
-                     MonthEnrollment, AuditEvent, normalize_book_identity)
+                     MonthEnrollment, AuditEvent, ModifierProvenance, normalize_book_identity)
 
 
 def identity_stamp(submission, book):
@@ -143,7 +143,7 @@ def assess_entries(submission, books, domain):
 
 
 @transaction.atomic
-def synchronize_domain(submission, domain):
+def synchronize_domain(submission, domain, *, earned_only=False, restore_earned=False):
     if domain not in {'botm', 'tbr'}:
         raise ValidationError('Unknown matching domain.')
     module = import_module('.botm_matching' if domain == 'botm' else '.personal_tbr_matching', __package__)
@@ -151,9 +151,31 @@ def synchronize_domain(submission, domain):
     submission = BookSubmission.objects.select_for_update().select_related(
         'month', 'participant__user', 'catalog_book').get(pk=submission.pk)
     existing = list(match_model.objects.select_for_update().filter(submission=submission).select_related(field+'__catalog_book'))
-    enrollment = MonthEnrollment.objects.filter(month=submission.month, participant=submission.participant, is_active=True).exists()
+    if domain == 'tbr':
+        from .prompt_reservations import has_bingo_selection, assert_bingo_allowed
+        if has_bingo_selection(submission):
+            assert_bingo_allowed(submission)
+            return existing
+    enrollment = MonthEnrollment.objects.filter(
+        month=submission.month, participant=submission.participant, is_active=True, awaiting_scoring_team=False,
+    ).exists()
     participating = (submission.participant.is_active and submission.participant.user.is_active
         and not submission.participant.user.is_superuser and enrollment and not submission.is_removed)
+    from .historical_restoration import limits_automatic_credit
+    earned_only = earned_only or limits_automatic_credit(submission)
+    participating = participating and not earned_only and not submission.late_approval_evidence
+    retained = {match.pk for match in existing if match.is_qualifying}
+    if restore_earned:
+        source_type = "botm_book" if domain == "botm" else "tbr_book"
+        source_ref = "botm_match:" if domain == "botm" else "personal_tbr_match:"
+        earned_sources = set(ModifierProvenance.objects.filter(
+            month=submission.month, participant=submission.participant, submission=submission,
+            source_type=source_type, voided_at__isnull=True,
+        ).values_list("source_reference", flat=True))
+        retained.update(
+            match.pk for match in existing if match.status == "confirmed"
+            and f"{source_ref}{match.pk}" in earned_sources
+        )
     enabled = submission.month.botm_enabled if domain == 'botm' else submission.month.tbr_enabled
     if domain == 'botm':
         books = list(BotmBook.objects.filter(month=submission.month, is_retired=False).select_related('catalog_book'))
@@ -161,6 +183,14 @@ def synchronize_domain(submission, domain):
         books = list(PersonalTBRBook.objects.filter(personal_tbr__enrollment__month=submission.month,
             personal_tbr__enrollment__participant=submission.participant,
             personal_tbr__confirmed_at__isnull=False).select_related('catalog_book'))
+    def finalize(matches):
+        if not earned_only:
+            return module._finalize_submission_matches(submission, matches)
+        return module._finalize_submission_matches(
+            submission, matches, earned_only=True,
+            restore_earned=restore_earned and any(match.is_qualifying for match in matches),
+        )
+
     valid_ids = {b.pk for b in books}
     approved = participating and enabled and submission.status == 'approved'
     for match in existing:
@@ -179,14 +209,29 @@ def synchronize_domain(submission, domain):
                          if match.decision_evidence else _legacy_stamp_matches(match, submission))
             blocked = not unchanged or book.pk not in valid_ids
             match.conflict_reason = 'Reviewed identity changed or entry unavailable; explicit review is required.' if blocked else ''
-            match.is_qualifying = approved and not blocked and not competing(match_model, submission, book, field, match.pk)
+            match.is_qualifying = (
+                approved or (match.pk in retained and enabled and submission.status == 'approved' and not submission.is_removed)
+            ) and not blocked and not competing(match_model, submission, book, field, match.pk)
             match.save(update_fields=['is_qualifying', 'conflict_reason', 'updated_at'])
-        return module._finalize_submission_matches(submission, existing)
+        return finalize(existing)
+    if not participating and retained and enabled and submission.status == 'approved' and not submission.is_removed:
+        # Revalidate only credit that was already earned. Pending suggestions
+        # and inactive historical matches cannot qualify through departure.
+        assessed = assess_entries(submission, books, domain)
+        if len(assessed) == 1:
+            book, evidence, _ = assessed[0]
+            for match in existing:
+                if (match.pk in retained and getattr(match, field + "_id") == book.pk
+                        and evidence in {"work", "exact"}
+                        and not competing(match_model, submission, book, field, match.pk)):
+                    match.is_qualifying = True
+                    match.save(update_fields=["is_qualifying", "updated_at"])
+        return finalize(existing)
     if not participating or not enabled or submission.status not in {'pending', 'approved'}:
-        return module._finalize_submission_matches(submission, existing)
+        return finalize(existing)
     selected = submission.selected_botm_book_id if domain == 'botm' else submission.selected_tbr_book_id
     if selected and selected not in valid_ids:
-        return module._finalize_submission_matches(submission, existing)
+        return finalize(existing)
     assessed = assess_entries(submission, books, domain)
     results = []
     for book, evidence, reason in assessed:
@@ -208,7 +253,7 @@ def synchronize_domain(submission, domain):
                 match.save(update_fields=['status', 'is_qualifying', 'method', 'conflict_reason', 'evidence_summary', 'suggestion_fingerprint', 'updated_at'])
         if match is not None:
             results.append(match)
-    return module._finalize_submission_matches(submission, results)
+    return finalize(results)
 
 
 @transaction.atomic
@@ -220,6 +265,9 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
     if model not in {BotmMatch, PersonalTBRMatch}:
         raise ValidationError('Use an existing BOTM or TBR suggestion.')
     field = 'botm_book' if model is BotmMatch else 'personal_tbr_book'
+    if model is PersonalTBRMatch:
+        submission_id = model.objects.values_list('submission_id',flat=True).get(pk=match.pk)
+        BookSubmission.objects.select_for_update().get(pk=submission_id)
     original_fingerprint = expected_fingerprint if expected_fingerprint is not None else match.suggestion_fingerprint
     match = model.objects.select_for_update().select_related(
         field+'__catalog_book', 'submission__catalog_book', 'submission__month', 'submission__participant__user').get(pk=match.pk)
@@ -278,11 +326,24 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
     """Normal approval plus explicit suggested IDs; no arbitrary target selection."""
     from .permissions import can_review_submission, is_active_floater
     from .scoring import apply_submission_review
+    from .late_approval import enrollment_for, require_late_approval
+    from .models import ChallengeMonth
+    ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     from django.contrib.auth import get_user_model
     reviewer = get_user_model().objects.get(pk=reviewer.pk)
     current = BookSubmission.objects.select_for_update().select_related('month').get(pk=submission.pk)
-    if not reviewer.is_active or not can_review_submission(reviewer,current) or current.month.status not in {'active','finalizing'}:
+    if (not reviewer.is_active or not can_review_submission(reviewer, current) or current.is_removed
+            or current.month.status not in {'active', 'finalizing'}):
         raise PermissionDenied('Current submission review scope and lifecycle are required.')
+    late_assignment = None
+    if submission.status == BookSubmission.Status.APPROVED:
+        enrollment = enrollment_for(current, lock=True)
+        if enrollment and enrollment.is_active and enrollment.awaiting_scoring_team:
+            raise ValidationError("The Reader must have a scoring team before approval.")
+        if enrollment and not enrollment.is_active:
+            late_assignment = require_late_approval(current, enrollment, reviewer)
+            if suggestions:
+                raise ValidationError("Unverified matching credit cannot be confirmed during late approval.")
     if submission.status == BookSubmission.Status.APPROVED and is_active_floater(current.month, current.participant_id):
         raise ValidationError('Active Floaters cannot receive new submission credit.')
     if suggestions is not None and not isinstance(suggestions, dict):
@@ -298,7 +359,7 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
         if not match or not selection['fingerprint'] or selection['fingerprint'] != match.suggestion_fingerprint:
             raise ValidationError('The suggestion is unavailable or stale.')
         prepared.append((match,selection['fingerprint']))
-    result=apply_submission_review(submission,reviewed_claims,reviewer,reviewed_at)
+    result = apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
     for match,stamp in prepared:
         match.refresh_from_db()
         if match.status=='confirmed' and match.method!='manual_review':

@@ -1,0 +1,5 @@
+{% firstof branding.challenge_logo branding.group_logo as effective_logo %}{% firstof branding.challenge_banner branding.group_banner as effective_banner %}
+{% if effective_logo or effective_banner %}<figure class="recap-community-art{% if effective_banner %} has-banner{% endif %}" aria-label="Community branding">
+{% if effective_banner %}<img class="recap-community-banner" src="{{ effective_banner }}" alt="{% if branding.challenge_banner %}{{ branding.challenge_name }}{% else %}{{ branding.group_name }}{% endif %} banner" data-community-image>{% endif %}
+{% if effective_logo %}<img class="recap-community-logo" src="{{ effective_logo }}" alt="{% if branding.challenge_logo %}{{ branding.challenge_name }}{% else %}{{ branding.group_name }}{% endif %} logo" data-community-image>{% endif %}
+<figcaption>{% if branding.challenge_logo or branding.challenge_banner %}{{ branding.challenge_name }}{% else %}{{ branding.group_name }}{% endif %}</figcaption></figure>{% endif %}

@@ -1,0 +1,45 @@
+{% load tz %}
+{% if timeline %}
+{% timezone submission.month.group.timezone %}
+<section class="card submission-compact-summary submission-timeline">
+  <dl class="details">
+    <dt>Submitted</dt><dd>{{ submission.submitted_at|date:"F j, Y · g:i A" }}</dd>
+    {% if standalone %}<dt>Completed</dt><dd>{{ submission.completed_on|date:"F j, Y" }}</dd>{% endif %}
+    {% if timeline.edited %}<dt>Last edited</dt><dd>{{ timeline.edited.created_at|date:"F j, Y · g:i A" }}{% if timeline.edited_actor %} · {{ timeline.edited_actor }}{% endif %}</dd>{% endif %}
+    {% if timeline.reviewed %}<dt>Reviewed</dt><dd>{{ timeline.reviewed.created_at|date:"F j, Y · g:i A" }}</dd>{% endif %}
+  </dl>
+  <details class="submission-editor-section"{% if standalone %} open{% endif %}>
+    <summary>View History</summary>
+    <p class="muted">Older submissions may have fewer recorded events.</p>
+    <div class="submission-activity-list">
+    {% if timeline.voided %}
+      <article>
+        <strong>Voided</strong>
+        {% if timeline.removed_actor %}<p>By {{ timeline.removed_actor }}</p>{% endif %}
+        {% if timeline.removed_at %}<p><time datetime="{{ timeline.removed_at|date:'c' }}">{{ timeline.removed_at|date:"F j, Y · g:i A" }}</time></p>{% endif %}
+        <p>Removal reason: {{ timeline.removal_reason|default:"No reason recorded" }}</p>
+      </article>
+    {% endif %}
+    {% for card in timeline.cards %}
+      <article>
+        <strong>{{ card.label }}</strong>
+        {% if card.actor %}<p>By {{ card.actor }}</p>{% endif %}
+        {% for detail in card.details %}<p>{{ detail }}</p>{% endfor %}
+        <p><time datetime="{{ card.timestamp|date:'c' }}">{{ card.timestamp|date:"F j, Y · g:i A" }}</time></p>
+      </article>
+    {% empty %}{% if not timeline.voided %}<p>No recorded activity to show.</p>{% endif %}{% endfor %}
+    </div>
+    {% if timeline.page.has_other_pages %}
+    <nav class="submission-editor-actions" aria-label="Submission history pages">
+      {% if standalone %}
+        {% if timeline.page.has_previous %}<a class="button secondary" href="?page={{ timeline.page.previous_page_number }}">Newer activity</a>{% endif %}
+        {% if timeline.page.has_next %}<a class="button secondary" href="?page={{ timeline.page.next_page_number }}">Older activity</a>{% endif %}
+      {% else %}
+        <a class="button secondary" href="{% url 'submission-history' submission.month.group.slug submission.month_id submission.pk %}?page=2">Older activity</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </details>
+</section>
+{% endtimezone %}
+{% endif %}

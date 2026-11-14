@@ -43,7 +43,7 @@ class OwnershipTransferForm(RecoveryConfirmationForm):
         super().__init__(*args, **kwargs)
         self.fields["target_membership"].queryset = Membership.objects.filter(
             group=group, is_active=True, user__is_superuser=False,
-        ).select_related("user").order_by("display_name")
+        ).select_related("user").order_by("user__username")
 
 
 class MembershipRoleRecoveryForm(RecoveryConfirmationForm):
@@ -185,3 +185,7 @@ LockedTbrListBookFormSet = forms.formset_factory(LockedTbrListBookForm, extra=9,
 
 class GameReplacementRecoveryForm(RecoveryConfirmationForm):
     amount = forms.IntegerField(min_value=1, label="Correct Replacement Amount")
+
+
+class TbrTitlePreviewForm(forms.Form):
+    title = forms.CharField(label="Corrected title", max_length=300)

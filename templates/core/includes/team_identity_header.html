@@ -1,0 +1,5 @@
+<header class="challenge-identity team-identity{% if team_art.effective_logo %} has-logo{% endif %}{% if team_art.effective_banner %} has-banner{% endif %}">
+{% if team_art.effective_banner %}<img class="challenge-identity-banner" src="{{ team_art.effective_banner }}" alt="" aria-hidden="true" data-community-image>{% endif %}
+<div class="challenge-identity-main">{% if team_art.effective_logo %}<img class="challenge-identity-logo" src="{{ team_art.effective_logo }}" alt="" data-community-image>{% endif %}
+<div class="challenge-identity-info"><p class="eyebrow"><a href="{% url 'team-list' group.slug month.pk %}">{{ month.name }} Teams</a></p><h1>{{ team.name }}</h1><p class="lede"><span class="team-swatch" style="background:{{ team.color }}"></span> Current team overview</p></div>
+<div class="action-row challenge-identity-actions">{% if can_edit_team %}<a class="button" href="{% url 'team-edit' group.slug month.pk team.pk %}">Edit Team</a>{% endif %}{% if can_manage_leaders %}<a class="button" href="{% url 'team-leader-list' group.slug month.pk team.pk %}">Manage Team Leaders</a>{% endif %}</div></div></header>

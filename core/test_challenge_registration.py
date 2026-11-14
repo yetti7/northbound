@@ -387,7 +387,7 @@ class ChallengeRegistrationTests(TestCase):
         page = self.client.get(self.register_url())
         self.assertNotContains(page, "Discord Username (Optional)")
 
-    def test_registration_answers_are_private_with_bounded_staff_read_only_visibility(self):
+    def test_registration_answers_are_private_with_bounded_staff_correction_visibility(self):
         question = self.question("Private plan", "short_text", position=1)
         enrollment = MonthEnrollment.objects.create(month=self.month, participant=self.reader, origin=MonthEnrollment.Origin.SELF)
         ChallengeSignupAnswer.objects.create(enrollment=enrollment, question=question, value="Sensitive planning value")
@@ -410,8 +410,9 @@ class ChallengeRegistrationTests(TestCase):
                 self.client.force_login(viewer)
                 self.assertEqual(self.client.get(url).status_code, 403)
         self.client.force_login(self.owner_user)
-        self.client.post(url, {f"question_{question.pk}": "Staff rewrite"})
-        self.assertEqual(enrollment.signup_answers.get(question=question).value, "Sensitive planning value")
+        version = self.client.get(url).context["correction_form"]["version"].value()
+        self.client.post(url, {f"question_{question.pk}": "Staff rewrite", "version": version})
+        self.assertEqual(enrollment.signup_answers.get(question=question).value, "Staff rewrite")
 
     def test_platform_owner_can_correct_answers_with_audit_without_changing_relationships(self):
         question = self.question("Correction target", "short_text", True)
@@ -419,7 +420,8 @@ class ChallengeRegistrationTests(TestCase):
         answer = ChallengeSignupAnswer.objects.create(enrollment=enrollment, question=question, value="Original private value")
         original_enrolled_at = enrollment.enrolled_at
         self.client.force_login(self.platform_owner)
-        response = self.client.post(self.detail_url(enrollment), {f"question_{question.pk}": "Corrected private value"})
+        version = self.client.get(self.detail_url(enrollment)).context["correction_form"]["version"].value()
+        response = self.client.post(self.detail_url(enrollment), {f"question_{question.pk}": "Corrected private value", "version": version})
         self.assertRedirects(response, self.detail_url(enrollment))
         answer.refresh_from_db()
         enrollment.refresh_from_db()

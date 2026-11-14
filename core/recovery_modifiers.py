@@ -27,15 +27,15 @@ from .scoring import refresh_submission_score
 
 
 def botm_match_label(match):
-    return f"BOTM match #{match.pk}: {match.botm_title_snapshot} — {match.participant.display_name}"
+    return f"BOTM match #{match.pk}: {match.botm_title_snapshot} — {match.participant.user.username}"
 
 
 def tbr_match_label(match):
-    return f"TBR match #{match.pk}: {match.tbr_title_snapshot} — {match.participant.display_name}"
+    return f"TBR match #{match.pk}: {match.tbr_title_snapshot} — {match.participant.user.username}"
 
 
 def tbr_label(tbr):
-    return f"Personal TBR #{tbr.pk}: {tbr.enrollment.participant.display_name} — {tbr.enrollment.month.name}"
+    return f"Personal TBR #{tbr.pk}: {tbr.enrollment.participant.user.username} — {tbr.enrollment.month.name}"
 
 
 def game_application_label(application):
@@ -272,6 +272,8 @@ def recover_tbr_match(*, match, decision, target_book, recovery_request):
         raise ValidationError("Choose Pending, Rejected, or Confirmed.")
 
     def mutation():
+        submission_id = PersonalTBRMatch.objects.values_list('submission_id',flat=True).get(pk=match.pk)
+        BookSubmission.objects.select_for_update().get(pk=submission_id)
         locked = PersonalTBRMatch.objects.select_for_update().select_related(
             "month__group", "participant", "submission", "personal_tbr_book__personal_tbr__enrollment",
         ).get(pk=match.pk)

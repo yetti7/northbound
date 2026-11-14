@@ -1,7 +1,7 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load navigation %}
 {% block title %}Submission History · {{ submission.title }} · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'submission-manage' month.group.slug month.pk submission.pk %}">Manage Submission #{{ submission.pk }}</a></p><h1>View Change History</h1><p>{{ submission.title }} · {{ submission.author }}</p></div></div>
+<div class="page-heading"><div><p class="eyebrow"><a {% url 'submission-manage' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Manage Submission #{{ submission.pk }}</a></p><h1>View Change History</h1><p>{{ submission.title }} · {{ submission.author }}</p></div></div>
 {% for entry in entries %}<section class="card"><h2>{{ entry.action }}</h2><p>{{ entry.timestamp }} · {% if entry.actor %}{{ entry.actor }}{% else %}System / actor unavailable{% endif %}</p><p>{{ entry.detail }}</p>
 {% if entry.rows %}<dl class="details">{% for row in entry.rows %}<dt>{{ row.label }}</dt><dd>{{ row.before|default_if_none:"Not recorded" }} → {{ row.after|default_if_none:"Not recorded" }}</dd>{% endfor %}</dl>{% endif %}</section>{% empty %}<p>No recorded submission events.</p>{% endfor %}
 <div class="action-row">{% if pagination.previous %}<a href="?page={{ pagination.previous }}">Previous</a>{% endif %}<span>Page {{ pagination.number }} of {{ pagination.total }}</span>{% if pagination.next %}<a href="?page={{ pagination.next }}">Next</a>{% endif %}</div>

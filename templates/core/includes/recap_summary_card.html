@@ -1,0 +1,11 @@
+{% load static %}
+<div class="recap-summary-card" data-recap-summary>
+<img class="recap-summary-logo" src="{% static 'branding/northbound-header-dark.png' %}" alt="Northbound — Reading. Challenges. Together." width="700" height="233">
+{% if not suppress_community_branding %}{% include 'core/includes/community_branding.html' with branding=recap.branding %}{% endif %}<p class="eyebrow">{{ recap.period }}</p><h2>{{ recap.heading }}</h2>
+{% for chapter in slide.sections %}<section class="recap-summary-chapter"><div class="recap-summary-heading"><span class="pill">{{ chapter.mode }}</span><h3>{{ chapter.subject }} · {{ chapter.challenge }}</h3><p class="muted">{{ chapter.group }}{% if chapter.from_date %} · {{ chapter.from_date }} – {{ chapter.to_date }}{% endif %}</p></div>
+{% if chapter.cards %}<div class="recap-summary-metrics">{% for card in chapter.cards %}<div class="recap-summary-metric{% if card.key == 'entries' or card.key == 'pages' or card.key == 'total_pages' or card.key == 'team_points' %} is-headline{% endif %}"><strong style="--recap-digits:{{ card.digits }}">{{ card.value }}</strong><span>{{ card.label }}</span></div>{% endfor %}</div>{% endif %}
+{% if chapter.books %}<p class="eyebrow">Reading Highlights</p><div class="wrapped-books recap-summary-books">{% for book in chapter.books %}<figure>{% include 'core/includes/book_cover.html' with image_url=book.cover_url title=book.title defer_load=True %}<figcaption><strong>{{ book.title }}</strong><span>{{ book.author }}</span></figcaption></figure>{% endfor %}</div>{% endif %}
+{% if recap.perspective == 'challenge' and chapter.team_bars %}{% include 'core/includes/recap_team_bars.html' with rows=chapter.team_bars %}{% endif %}
+</section>{% endfor %}
+</div>
+<a class="button secondary wrapped-summary-return" href="{{ dashboard_url }}">Back to Chronicle</a>

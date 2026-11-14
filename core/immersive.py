@@ -42,11 +42,15 @@ def _submission(submission):
     return BookSubmission.objects.select_for_update().select_related('month__group', 'participant__user').get(pk=submission.pk)
 
 
-def _book_eligible(submission):
+def _book_eligible(submission, *, earned=False):
     return (submission.status == BookSubmission.Status.APPROVED and not submission.is_removed
         and submission.approved_pages is not None and submission.approved_pages > 0
-        and submission.participant.is_active and submission.participant.user.is_active
-        and MonthEnrollment.objects.filter(month=submission.month, participant=submission.participant, is_active=True).exists())
+        and (earned or (
+            submission.participant.is_active and submission.participant.user.is_active
+            and MonthEnrollment.objects.filter(
+                month=submission.month, participant=submission.participant, is_active=True, awaiting_scoring_team=False,
+            ).exists()
+        )))
 
 
 def _staff(actor, submission):
@@ -93,11 +97,26 @@ def request_immersive(*, submission, actor):
     return request
 
 
+def _late_request_eligible(request):
+    from .late_approval import departure_evidence, enrollment_for
+
+    submission = request.submission
+    if submission.month.status not in {"active", "finalizing"} or not submission.late_approval_evidence:
+        return False
+    if not departure_evidence(submission, enrollment_for(submission)):
+        return False
+    return (
+        request.requester_id == submission.participant.user_id
+        and submission.accepted_at <= request.requested_at < submission.participation_period.ended_at
+    )
+
+
 @transaction.atomic
 def review_immersive(*, request, actor, decision, reason=''):
     if decision not in {'approved', 'rejected', 'revoked'}:
         raise ValidationError('Choose approval, rejection or revocation.')
     actor = _actor(actor)
+    ChallengeMonth.objects.select_for_update().get(pk=request.submission.month_id)
     submission = _submission(request.submission)
     request = ImmersiveRequest.objects.select_for_update().get(pk=request.pk, submission=submission)
     request.submission = submission
@@ -116,7 +135,13 @@ def review_immersive(*, request, actor, decision, reason=''):
     else:
         if request.status != 'pending':
             raise ValidationError('Only pending requests may be reviewed.')
-        if not _book_eligible(submission):
+        late = _late_request_eligible(request)
+        if late:
+            from .permissions import challenge_review_scope
+            scope = challenge_review_scope(actor, submission.month)
+            if not scope or scope[0] != "challenge":
+                raise PermissionDenied("Challenge-wide authority is required for a departed Reader.")
+        if not _book_eligible(submission, earned=late):
             raise ValidationError('The underlying book must be approved and eligible before review.')
         request.reviewed_by, request.reviewed_at, request.review_reason = actor, timezone.now(), reason.strip()
     request.status = decision
@@ -147,23 +172,35 @@ def withdraw_immersive(*, request, actor, reason=''):
 
 
 @transaction.atomic
-def synchronize_awards(submission):
+def synchronize_awards(submission, *, earned_only=False, restore_earned=False, late_only=False):
     """Called inside score refresh's transaction; does not recurse into scoring.
 
     Only Immersive provenance can have its rate-derived amount recalculated.
     Approval and percentage snapshots are preserved, including while suspended.
     """
     submission = _submission(submission)
-    if submission.month.status == 'archived':
+    if submission.month.status == 'archived' and not earned_only:
         return
     for request in ImmersiveRequest.objects.select_for_update().filter(submission=submission).exclude(status='pending'):
         request.submission = submission
+        late = not earned_only and request.status == "approved" and _late_request_eligible(request)
+        if late_only and not late:
+            continue
         source = f'immersive_request:{request.pk}'
+        from .historical_restoration import permits_automatic_source
+        if not permits_automatic_source(submission, source):
+            continue
         provenance = ModifierProvenance.objects.select_for_update().filter(source_type='immersive', source_reference=source).first()
         if provenance and (provenance.submission_id != submission.pk or provenance.participant_id != submission.participant_id or provenance.month_id != submission.month_id):
             raise ValidationError('Immersive provenance does not belong to its request.')
         before = {'amount': request.awarded_pages, 'active': request.is_active}
-        active = request.status == 'approved' and _book_eligible(submission)
+        earned = request.is_active or (
+            restore_earned and request.awarded_pages is not None
+            and provenance is not None and provenance.voided_at is None
+        )
+        active = request.status == 'approved' and (earned or not earned_only) and _book_eligible(
+            submission, earned=earned or late,
+        )
         if active:
             request.awarded_pages = bonus_pages(submission.approved_pages, request.captured_percent)
         request.is_active = active
@@ -172,7 +209,7 @@ def synchronize_awards(submission):
             if provenance.is_active:
                 provenance.is_active = False
                 provenance.save(update_fields=['is_active'])
-        elif request.awarded_pages is not None and active:
+        elif request.awarded_pages is not None and active and (provenance is not None or not earned_only):
             defaults = dict(month=submission.month, participant=submission.participant, submission=submission,
                 source_label='Immersive Reading', source_context=f'{request.captured_percent}% of approved base pages; request {request.pk}',
                 amount=request.awarded_pages, effective_date=submission.completed_on, applied_by=request.reviewed_by,
@@ -194,6 +231,18 @@ def synchronize_awards(submission):
             _audit(request, None, action, before=before, after=after)
 
 
+def pending_review_requests(*, month):
+    """Unscoped queue candidates for private Group aggregates and reviewer scoping."""
+    query = ImmersiveRequest.objects.filter(submission__month=month, status='pending',
+        submission__status='approved', submission__is_removed=False, submission__approved_pages__gt=0,
+        submission__participant__is_active=True, submission__participant__user__is_active=True,
+        submission__participant__month_enrollments__month=month,
+        submission__participant__month_enrollments__is_active=True)
+    if month.status not in {"active", "finalizing", "completed"}:
+        return query.none()
+    return query.distinct()
+
+
 def review_queue_requests(*, actor, month):
     """Separate Immersive entries for the existing queue, with no book duplicates.
 
@@ -201,11 +250,7 @@ def review_queue_requests(*, actor, month):
     calculated_bonus property. Completed reviews use this service without reopening
     the normal book-review queue or changing its lifecycle permissions.
     """
-    query = ImmersiveRequest.objects.filter(submission__month=month, status='pending',
-        submission__status='approved', submission__is_removed=False, submission__approved_pages__gt=0,
-        submission__participant__is_active=True, submission__participant__user__is_active=True,
-        submission__participant__month_enrollments__month=month,
-        submission__participant__month_enrollments__is_active=True).exclude(requester_id=getattr(actor, 'pk', None))
+    query = pending_review_requests(month=month).exclude(requester_id=getattr(actor, 'pk', None))
     if not actor.is_authenticated or not actor.is_active or month.status not in {'active', 'finalizing', 'completed'}:
         return query.none()
     member = membership_for(actor, month.group)
@@ -240,8 +285,10 @@ def synchronize_reader_awards(*, month, participant):
 def _validate_new_request(submission, actor, month):
     if actor.pk != submission.participant.user_id or not submission.participant.is_active:
         raise PermissionDenied('Only the submitting Reader may request Immersive Reading.')
+    if submission.late_approval_evidence:
+        raise ValidationError('Late-approved submissions require an Immersive request made before departure.')
     if (month.status != 'active' or not month.immersive_enabled or submission.is_removed
-        or not MonthEnrollment.objects.filter(month=month, participant=submission.participant, is_active=True).exists()):
+        or not MonthEnrollment.objects.filter(month=month, participant=submission.participant, is_active=True, awaiting_scoring_team=False).exists()):
         raise ValidationError('New Immersive requests require an enabled, Active Challenge and active participation.')
     if (not submission.completed_on or not month.starts_on or not month.ends_on
         or not month.starts_on <= submission.completed_on <= month.ends_on):

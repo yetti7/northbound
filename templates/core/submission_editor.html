@@ -1,0 +1,80 @@
+{% extends "base.html" %}{% load navigation %}
+{% load static %}
+{% block title %}Edit Submission · {{ submission.title }}{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+  <div class="page-heading"><div><p class="eyebrow"><a href="{% navigation_url cancel_url %}">Manage Submission</a></p><h1>Edit Submission</h1></div></div>
+  <section class="card submission-compact-summary"><h2>{{ submission.title }}</h2><p>{{ submission.author }} · {{ submission.participant.user.username }}</p><span class="pill">{{ submission.get_status_display }}</span></section>
+  <form method="post" class="stacked-form submission-editor-form" data-correction-form data-compact-editor>
+    {% csrf_token %}{{ form.version }}{{ form.preview_token }}{{ form.edition }}
+    {{ form.non_field_errors }}
+    {% if reload_required %}<p class="notice" role="alert">Your changes were not saved. <a href="{% navigation_url edit_url %}">Reload submission</a> before trying again.</p>{% endif %}
+    {{ original_themes|json_script:"submission-original-themes" }}
+    <details class="card submission-editor-section"{% if book_open %} open{% endif %}>
+      <summary>Book Details <span>{{ submission.title }}</span></summary>
+      {{ form.title.as_field_group }}{{ form.author.as_field_group }}
+      {{ form.edition.errors }}
+      <details class="submission-editor-section"{% if association_changed or form.edition.errors %} open{% endif %}>
+        <summary>{% if submission.catalog_edition_id %}Change Hardcover edition{% else %}Link a Hardcover edition{% endif %}</summary>
+        <section data-edit-association data-current-edition="{{ submission.catalog_edition_id|default_if_none:'' }}" data-url="{% url 'submission-edit-catalog' month.group.slug month.pk submission.pk %}">
+          <label for="association-query">Title or author</label><input type="search" id="association-query" value="{{ submission.title }}" maxlength="300">
+          <div class="submission-editor-actions">
+            <button type="button" class="button secondary" data-association-search>Search Hardcover</button>
+            <button type="button" class="button secondary" data-association-keep>Keep Current Association</button>
+          </div>
+          <p data-association-status role="status"></p><div data-association-results></div><div data-association-selection role="status"></div>
+        </section>
+        <div data-association-options{% if not association_changed %} hidden{% endif %}>
+          {{ form.association_mode.errors }}{{ form.association_mode.label_tag }}{{ form.association_mode }}
+          <p class="muted">Associate Only keeps existing pages and awards. Associate and Update can change book information and scoring.</p>
+        </div>
+      </details>
+    </details>
+    <details class="card submission-editor-section"{% if pages_open %} open{% endif %}>
+      <summary>Pages &amp; Completion <span>{{ form.submitted_pages.initial }} pages</span></summary>
+      {{ form.submitted_pages.as_field_group }}{{ form.completed_on.as_field_group }}
+      <p class="muted">Changing the page count uses the number you enter for scoring.</p>
+      <div data-manual-override{% if not association_changed and not form.manual_page_override.errors %} hidden{% endif %}>
+        {{ form.manual_page_override.errors }}{{ form.manual_page_override }} {{ form.manual_page_override.label_tag }}
+        <p class="muted">Use this to keep the entered page count when selecting a different edition.</p>
+      </div>
+    </details>
+    {% if form.bingo_prompt or form.scavenger_prompt %}<section class="card submission-editor-section"><h2>Optional Challenge Prompts</h2><p class="muted">Selections reserve prompts for review. No prompt credit or points are awarded.</p>{{ form.bingo_prompt.as_field_group }}{{ form.scavenger_prompt.as_field_group }}{{ form.prompt_decision_bingo.as_field_group }}{{ form.prompt_decision_scavenger.as_field_group }}</section>{% endif %}
+    <details class="card submission-editor-section"{% if themes_open %} open{% endif %}>
+      <summary>Themes <span>{{ original_themes|length }} selected</span></summary>
+      <div class="submission-editor-themes">{{ form.themes.as_field_group }}</div>
+      {% for theme_id, field in theme_responses %}
+        <div data-theme-response="{{ theme_id }}">{{ field.as_field_group }}</div>
+      {% endfor %}
+      {% if original_themes %}<div data-theme-removal>{{ form.confirm_theme_removal.as_field_group }}</div>{% endif %}
+    </details>
+    {% if preview %}
+      <section class="notice submission-editor-preview" data-correction-preview aria-label="Correction preview">
+        <h2>Review Changes</h2>
+        <p>{{ operation }}</p>
+        <dl class="details">
+          {% if preview.before.submission.title != preview.after.submission.title %}<dt>Title</dt><dd>{{ preview.before.submission.title }} → {{ preview.after.submission.title }}</dd>{% endif %}
+          {% if preview.before.submission.author != preview.after.submission.author %}<dt>Author</dt><dd>{{ preview.before.submission.author }} → {{ preview.after.submission.author }}</dd>{% endif %}
+          {% if preview.before.submission.completed_on != preview.after.submission.completed_on %}<dt>Completion date</dt><dd>{{ preview.before.submission.completed_on }} → {{ preview.after.submission.completed_on }}</dd>{% endif %}
+          {% if preview.before.submission.verification_method != preview.after.submission.verification_method %}<dt>Page verification</dt><dd>{{ preview.before.submission.verification_method }} → {{ preview.after.submission.verification_method }}</dd>{% endif %}
+          {% for row in preview_editions %}{% if row.before != row.after %}<dt>{{ row.label }}</dt><dd>{{ row.before }} → {{ row.after }}</dd>{% endif %}{% endfor %}
+          <dt>Approved pages</dt><dd>{{ preview.before.submission.approved_pages|default_if_none:"Pending" }} → {{ preview.after.submission.approved_pages|default_if_none:"Pending" }}</dd>
+          <dt>Scored pages</dt><dd>{{ preview.before.submission.final_scored_pages|default_if_none:"Pending" }} → {{ preview.after.submission.final_scored_pages|default_if_none:"Pending" }}</dd>
+        </dl>
+        <details class="submission-editor-section">
+          <summary>Matching and bonus impact</summary>
+          <dl class="details">{% for effect in preview_effects %}<dt>{{ effect.label }}</dt><dd>{{ effect.value }}</dd>{% endfor %}</dl>
+        </details>
+        {% if preview.approved_confirmation %}<p>{{ form.confirm_approved }} {{ form.confirm_approved.label_tag }}</p>{% endif %}
+        {% if preview.work_changed %}<p>{{ form.confirm_work }} {{ form.confirm_work.label_tag }}</p>{% endif %}
+      </section>
+    {% endif %}
+    <div class="submission-editor-actions">
+      <button class="button primary" type="submit" data-correction-submit{% if reload_required %} disabled{% endif %}>{% if preview %}Apply Changes{% else %}Save{% endif %}</button>
+      <a class="button secondary" href="{{ cancel_url }}">Cancel</a>
+    </div>
+  </form>
+</div>
+<script src="{% static 'js/theme_eligibility.js' %}" defer></script>
+<script src="{% static 'js/submission_association.js' %}" defer></script>
+{% endblock %}

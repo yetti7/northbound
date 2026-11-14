@@ -1,9 +1,11 @@
-{% if submission.can_edit or submission.can_manage_submission or submission.can_void or submission.can_purge %}
+{% load navigation %}{% if submission.can_edit or submission.can_manage_submission or submission.can_void or submission.can_restore or submission.can_purge %}
 <div class="submission-actions" data-submission-actions>
   <button type="button" class="submission-menu-toggle" aria-label="Actions for {{ submission.title }}" aria-haspopup="menu" aria-expanded="false" aria-controls="submission-menu-{{ submission.pk }}">•••</button>
   <div id="submission-menu-{{ submission.pk }}" class="submission-action-menu" role="menu" aria-label="Submission actions" hidden>
-    {% if submission.can_edit or submission.can_manage_submission %}<a role="menuitem" tabindex="-1" href="{% url 'submission-manage' submission.month.group.slug submission.month_id submission.pk %}">Manage Submission</a>{% endif %}
+    {% if submission.can_edit %}<a role="menuitem" tabindex="-1" {% url 'submission-editor' submission.month.group.slug submission.month_id submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Edit Submission</a>{% endif %}
+    {% if submission.can_edit or submission.can_manage_submission %}<a role="menuitem" tabindex="-1" {% url 'submission-manage' submission.month.group.slug submission.month_id submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Manage Submission</a>{% endif %}
     {% if submission.can_void %}<a role="menuitem" tabindex="-1" class="submission-action-warning" href="{% url 'submission-remove' submission.month.group.slug submission.month_id submission.pk %}">Void Submission</a>{% endif %}
+    {% if submission.can_restore %}<a role="menuitem" tabindex="-1" {% url 'submission-restore' submission.month.group.slug submission.month_id submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Restore Submission</a>{% endif %}
     {% if submission.can_purge %}<a role="menuitem" tabindex="-1" class="submission-action-danger" href="{% url 'recovery-submission-purge' submission.pk %}">Permanently Delete</a>{% endif %}
   </div>
 </div>

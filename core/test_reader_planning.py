@@ -240,7 +240,7 @@ class ChallengeParticipantsPlanningViewTests(TestCase):
         self.assertNotContains(response, "Popcorn")
         self.assertContains(response, reverse("challenge-participant-detail", kwargs={"group_slug": self.group.slug, "month_pk": self.current.pk, "pk": self.reader.pk}))
         self.assertContains(response, "participant-planning-mobile")
-        self.assertNotContains(response, "Edit Team")
+        self.assertContains(response, "Edit Team")
         self.assertNotContains(response, ">Remove<")
 
     def test_host_keeps_roster_controls(self):
@@ -284,7 +284,10 @@ class ChallengeParticipantsPlanningViewTests(TestCase):
                     self.assertNotContains(response, "unassigned-private-discord")
                 self.assertNotContains(response, "Favorite snack?")
                 self.assertNotContains(response, "View Registration")
-                self.assertNotContains(response, "Edit Team")
+                if challenge_wide:
+                    self.assertContains(response, "Edit Team")
+                else:
+                    self.assertNotContains(response, "Edit Team")
 
     def test_sorting_supports_planning_fields_and_keeps_na_last(self):
         self.client.force_login(self.owner_user)

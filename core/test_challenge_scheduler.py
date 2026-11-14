@@ -120,6 +120,27 @@ class ChallengeSchedulingServiceTests(TestCase):
         self.assertEqual(month.status, ChallengeMonth.Status.COMPLETED)
         self.assertEqual(process_due_challenge_schedules(now=self.due), [])
 
+    def test_handled_events_do_not_undo_the_opposite_manual_action(self):
+        from django.contrib.auth import get_user_model
+
+        from .scheduling import set_manual_registration
+
+        actor = get_user_model().objects.create_superuser("schedule-owner")
+        for action in ("open", "close"):
+            with self.subTest(action=action):
+                month = self.challenge(
+                    action, ChallengeMonth.Status.UPCOMING,
+                    auto_open_registration=action == "close",
+                    auto_close_registration=action == "open",
+                    registration_opens_at=self.due, registration_closes_at=self.due,
+                    registration_is_open=action == "open",
+                )
+                process_due_challenge_schedules(now=self.due)
+                self.assertTrue(set_manual_registration(month_id=month.pk, actor=actor, action=action))
+                self.assertEqual(process_due_challenge_schedules(now=self.due), [])
+                month.refresh_from_db()
+                self.assertEqual(month.registration_is_open, action == "open")
+
 
 class ChallengeSchedulerCommandTests(TestCase):
     @patch("core.management.commands.run_challenge_scheduler.process_due_challenge_schedules")

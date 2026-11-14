@@ -1,17 +1,41 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load navigation %}
 {% block title %}Manage Submission · {{ submission.title }} · Northbound{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a> · Submission #{{ submission.pk }}</p><h1>Manage Submission</h1><p class="lede">{{ submission.title }} · {{ submission.author }}</p><span class="pill">{{ submission.get_status_display }}</span><p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages</p></div></div>
-<div class="card-grid">
-{% if editable %}<a class="card interactive" href="{% url 'submission-fix-book' month.group.slug month.pk submission.pk %}"><h2>Fix Book Information</h2><p>Correct title or author, link a Hardcover edition, or explicitly update book information and applicable scoring.</p></a>
-<a class="card interactive" href="{% url 'submission-fix-pages' month.group.slug month.pk submission.pk %}"><h2>Fix Pages / Themes</h2><p>Correct pages or Theme selections while preserving book identity.</p></a>{% endif %}
-{% if administrative_credit %}<a class="card interactive" href="{% url 'submission-credit' month.group.slug month.pk submission.pk %}"><h2>Fix BOTM / TBR Credit</h2><p>Preview an exceptional credit assignment, reversal or restoration with a required explanation.</p></a>{% else %}<a class="card interactive" href="#tbr-credit"><h2>Fix TBR Credit</h2><p>Inspect existing matching decisions. Confirm supported suggestions during submission review.</p></a>{% endif %}
-{% if user.is_superuser %}<a class="card interactive" href="{% url 'submission-history' month.group.slug month.pk submission.pk %}"><h2>View Change History</h2><p>Submission-specific approval and correction evidence.</p></a>{% endif %}
-{% if editable %}<a class="card interactive" href="{% url 'submission-edit' month.group.slug month.pk submission.pk %}"><h2>Advanced Corrections</h2><p>Use the complete form for combined corrections, including completion-date changes.</p></a>{% endif %}
+<div class="submission-editor-shell submission-manage">
+  <div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Manage Submission</h1></div></div>
+  <section class="card submission-compact-summary">
+    <h2>{% include "core/includes/submission_title.html" %}</h2>
+    <p>{{ submission.author }} · {{ submission.participant.user.username }}</p>
+    <p>{% if submission.is_removed %}<span class="pill status-warning">Voided</span>{% else %}<span class="pill">{{ submission.get_status_display }}</span>{% endif %}
+      {% if tbr_qualified %}<span class="pill">TBR credit</span>{% endif %}
+      {% if botm_qualified %}<span class="pill">BOTM credit</span>{% endif %}</p>
+    <p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {% if submission.is_removed %}Excluded from totals{% else %}{{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages{% endif %}</p>
+  </section>
+  <nav class="submission-editor-actions" aria-label="Submission actions">
+    {% if can_adjudicate and not submission.is_removed %}{% if month.status == 'active' or month.status == 'finalizing' %}<a class="button secondary" {% url 'submission-review' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Review Submission</a>{% endif %}{% endif %}
+    {% if submission.can_restore %}<a class="button primary" {% url 'submission-restore' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Restore Submission</a>{% endif %}
+    {% if editable %}<a class="button primary" {% url 'submission-editor' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Edit Submission</a>{% endif %}
+    {% if administrative_credit %}<a class="button secondary" {% url 'submission-credit' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Review Credit</a>{% endif %}
+  </nav>
+{% include "core/includes/submission_timeline.html" %}
+  {% if editable %}
+  <details class="card submission-editor-section"><summary>Advanced Options</summary>
+    <div class="submission-editor-actions">
+      <a class="button secondary" {% url 'submission-edit' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Advanced Corrections</a>
+      <a class="button secondary" {% url 'submission-fix-book' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Fix Book Information</a>
+      <a class="button secondary" {% url 'submission-fix-pages' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Fix Pages / Themes</a>
+    </div>
+    {% if can_adjudicate and matches %}
+    <h3>Existing TBR candidates</h3>
+    {% for match in matches %}<p>{{ match.personal_tbr_book.title_snapshot }} · {{ match.get_status_display }}</p>
+    {% if match.status == 'pending_review' %}
+    <div class="action-row">
+      <form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'confirm' %}">{% csrf_token %}<button class="button secondary">Confirm existing candidate</button></form>
+      <form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'reject' %}">{% csrf_token %}<button class="button danger-button">Reject existing candidate</button></form>
+    </div>
+    {% endif %}{% endfor %}
+    {% endif %}
+  </details>
+  {% endif %}
 </div>
-<section class="card" id="tbr-credit"><h2>Fix TBR Credit</h2><p>Existing TBR matching history is preserved. {% if administrative_credit %}Use Fix BOTM / TBR Credit above for exceptional corrections.{% else %}Use normal submission review to confirm supported suggestions.{% endif %}</p>
-{% for match in matches %}<article><h3>{{ match.personal_tbr_book.title_snapshot }}</h3><p>{{ match.get_status_display }} · {{ match.get_method_display }} · {% if match.is_qualifying %}Currently qualifying{% else %}Not currently qualifying{% endif %}</p>
-{% if can_adjudicate and match.status == 'pending_review' %}<div class="action-row"><form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'confirm' %}">{% csrf_token %}<button class="button primary">Confirm existing candidate</button></form><form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'reject' %}">{% csrf_token %}<button class="button danger-button">Reject existing candidate</button></form></div>{% endif %}</article>
-{% empty %}<p>No existing TBR match for this submission. A Host or Group Owner can arrange a reviewed missing-match investigation; changing the book identity is not a substitute for repairing credit.</p>{% endfor %}
-</section>
 {% endblock %}

@@ -18,7 +18,8 @@ def operation_label(changes, workflow):
         return 'Link Only — preserve pages and awards'
     if 'catalog_edition_id' in changes or changes.get('association_mode') == 'update':
         return 'Update Book Information — recalculate applicable scores and credit'
-    return {'book': 'Fix Book Information', 'pages': 'Fix Pages / Themes'}.get(workflow, 'Advanced Corrections')
+    return {'book': 'Fix Book Information', 'pages': 'Fix Pages / Themes',
+            'editor': 'Submission correction'}.get(workflow, 'Advanced Corrections')
 
 
 def preview_effects(preview):
@@ -52,6 +53,16 @@ def preview_effects(preview):
                 amounts[row['source_type']] = amounts.get(row['source_type'], 0) + row['amount']
         effects.append({'label': f'Active Reader bonuses — {name}', 'value':
                         ', '.join(f'{key.replace("_", " ")}: {value} pages' for key, value in sorted(amounts.items())) or 'None'})
+    for state, name in [(before, 'Before'), (after, 'After')]:
+        prompt_state = state.get('prompt_reservations', {})
+        for kind, label in [('bingo', 'Bingo'), ('scavenger', 'Scavenger Hunt')]:
+            category_ids = {row['id'] for row in prompt_state.get('categories', []) if row['kind'] == kind}
+            claims = [row for row in prompt_state.get('claims', []) if row['submission_id'] == prompt_state.get('submission_id') and row['is_current'] and row['category_id'] in category_ids]
+            if claims:
+                effects.append({'label': f'{label} qualification — {name}', 'value': ', '.join(row['state'].replace('_', ' ') for row in claims)})
+            awards = [row for row in prompt_state.get('completions', []) if row['category_id'] in category_ids and row['is_active']]
+            if awards:
+                effects.append({'label': f'{label} completion bonus — {name}', 'value': sum(row['bonus_amount_snapshot'] for row in awards)})
     return effects
 
 

@@ -1,9 +1,9 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load navigation %}
 {% block title %}Fix BOTM / TBR Credit · {{ submission.title }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">{{ month.name }} · {{ submission.participant.display_name }}</p><h1>Fix BOTM / TBR Credit</h1><p class="lede">{{ submission.title }} · {{ submission.author }}</p><p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {{ submission.bonus_pages }} bonus pages · {{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages</p></div></div>
+<div class="page-heading"><div><p class="eyebrow">{{ month.name }} · {{ submission.participant.user.username }}</p><h1>Fix BOTM / TBR Credit</h1><p class="lede">{{ submission.title }} · {{ submission.author }}</p><p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {{ submission.bonus_pages }} bonus pages · {{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages</p></div></div>
 <p>For exceptional credit corrections only. Book identity, edition, pages and completion date stay unchanged. Frozen completion awards cannot be reversed here.</p>
-<p><a class="button secondary" href="{% url 'submission-manage' month.group.slug month.pk submission.pk %}">Back to Manage Submission</a></p>
+{% if not logical_parent_url %}<p><a class="button secondary" {% url 'submission-manage' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Back to Manage Submission</a></p>{% endif %}
 <div class="card-grid credit-management-grid">{% for section in sections %}<section class="form-card"><h2>{{ section.title }}</h2>
 {% for match in section.matches %}<p><strong>{{ match.title }}</strong> · {{ match.status }} · {% if match.qualifying %}Currently qualifying{% else %}Not currently qualifying{% endif %} · {{ match.bonus }} active bonus pages{% if match.reason %}<br>Decision reason: {{ match.reason }}{% endif %}</p>{% empty %}<p class="muted">No existing relationship for this submission.</p>{% endfor %}
 <p>{% if section.domain == 'tbr' %}{{ section.totals.tbr_completed }} Personal TBR books currently qualified. {{ section.totals.tbr_completion_bonus }} completion bonus pages.{% else %}{{ section.totals.botm_completed }} BOTM books currently qualified. {{ section.totals.botm_completion_bonus }} completion bonus pages.{% endif %}</p>

@@ -167,7 +167,7 @@ class RegistrationAgreementTests(TestCase):
         for name,payload in [('month-participant-add',{'participant':self.reader.pk}),('team-assignment-create',{'participant':self.reader.pk,'team':self.team.pk})]:
             response=self.client.post(reverse(name,args=[self.group.slug,self.month.pk]),payload)
             self.assertEqual(response.status_code,200)
-            self.assertContains(response,'must self-register')
+            self.assertContains(response,'must self-register' if name == 'month-participant-add' else 'Select a valid choice')
         self.assertFalse(MonthEnrollment.objects.filter(participant=self.reader).exists())
         self.assertFalse(TeamAssignment.objects.filter(participant=self.reader).exists())
         self.register();self.client.force_login(self.host_user)

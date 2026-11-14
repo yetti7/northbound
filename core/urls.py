@@ -1,9 +1,37 @@
+from .reader_rumble import reader_rumble
+from .photo_views import photo_create, photo_edit, photo_detail, photo_withdraw, photo_review, photo_correct, photo_credit_action
+from .prompt_progress_views import prompt_progress
+from .prompt_views import prompt_settings
+from .branding_views import branding_settings
 from django.urls import path
-from . import views
+from . import global_search, views
 
 from . import immersive_ui
 
+from .discord_views import discord_notification_settings
+
+from .recap_views import recap_dashboard, recap_wrapped
+
 urlpatterns = [
+    path('groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:team_pk>/reader-rumble/', reader_rumble, name='reader-rumble'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/correct/',photo_correct,name='photo-correct'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/credit/<str:action>/',photo_credit_action,name='photo-credit-action'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/review/', photo_review, name='photo-review'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/new/', photo_create, name='photo-create'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/', photo_detail, name='photo-detail'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/edit/', photo_edit, name='photo-edit'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/withdraw/', photo_withdraw, name='photo-withdraw'),
+
+    path('groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:team_pk>/branding/', branding_settings, name='team-branding'),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/prompts/", prompt_progress, name="prompt-progress"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/prompts/report/", prompt_progress, {"staff": True}, name="prompt-progress-report"),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/prompts/<str:kind>/', prompt_settings, name='challenge-prompt-settings'),
+    path('groups/<slug:group_slug>/branding/', branding_settings, name='group-branding'),
+    path('groups/<slug:group_slug>/months/<int:month_pk>/branding/', branding_settings, name='challenge-branding'),
+    path("chronicle/", recap_dashboard, name="recap-dashboard"),
+    path("chronicle/wrapped/", recap_wrapped, name="recap-wrapped"),
+    path("groups/<slug:group_slug>/discord/", discord_notification_settings, name="group-discord-notifications"),
+    path("search/", global_search.global_search, name="global-search"),
     path('groups/<slug:group_slug>/months/<int:month_pk>/immersive/settings/', immersive_ui.settings_view, name='immersive-settings'),
     path('groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/immersive/', immersive_ui.submission_view, name='submission-immersive'),
     path('groups/<slug:group_slug>/months/<int:month_pk>/immersive/<int:pk>/<str:operation>/', immersive_ui.action_view, name='immersive-action'),
@@ -69,6 +97,7 @@ urlpatterns = [
     path("config/recovery/botm/matches/<int:pk>/purge/", views.recovery_botm_match_purge, name="recovery-botm-match-purge"),
     path("config/recovery/personal-tbr/", views.recovery_tbr_list, name="recovery-tbr-list"),
     path("config/recovery/personal-tbr/<int:pk>/", views.recovery_tbr_detail, name="recovery-tbr-detail"),
+    path("config/recovery/personal-tbr/books/<int:pk>/title/", views.recovery_tbr_title, name="recovery-tbr-title"),
     path("config/recovery/personal-tbr/books/<int:pk>/repair/", views.recovery_tbr_entry, name="recovery-tbr-entry"),
     path("config/recovery/personal-tbr/<int:pk>/rebuild/", views.recovery_tbr_rebuild, name="recovery-tbr-rebuild"),
     path("config/recovery/personal-tbr/matches/<int:pk>/", views.recovery_tbr_match, name="recovery-tbr-match"),
@@ -130,6 +159,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/members/new/", views.member_create, name="member-create"),
     path("groups/<slug:group_slug>/months/", views.month_list, name="month-list"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/teams/", views.team_list, name="team-list"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:pk>/books/<int:book_pk>/", views.team_book_detail, name="team-book-detail"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:pk>/", views.team_detail, name="team-detail"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/team-stats-settings/", views.team_stats_settings, name="team-stats-settings"),
     path("groups/<slug:group_slug>/months/new/", views.month_create, name="month-create"),
@@ -137,6 +167,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:pk>/edit/", views.month_edit, name="month-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/settings/", views.challenge_settings, name="challenge-settings"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/settings/general/", views.challenge_general_settings, name="challenge-general-settings"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/settings/registration/<str:action>/", views.challenge_registration_action, name="challenge-registration-action"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/settings/schedule/", views.challenge_schedule_settings, name="challenge-schedule-settings"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/settings/games/", views.challenge_games_settings, name="challenge-games-settings"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/settings/botm/", views.challenge_botm_settings, name="challenge-botm-settings"),
@@ -158,6 +189,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/games/", views.game_list, name="game-list"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/botm/", views.botm_list, name="botm-list"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/participants/<int:pk>/tbr/", views.staff_challenge_tbr, name="staff-challenge-tbr"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/participants/<int:pk>/tbr/books/<int:book_pk>/edit/", views.staff_challenge_tbr_book_edit, name="staff-challenge-tbr-book-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/participants/<int:pk>/tbr/catalog/", views.staff_challenge_tbr_catalog, name="staff-challenge-tbr-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/personal-tbr/", views.personal_tbr_detail, name="personal-tbr-detail"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/botm/add/", views.botm_book_create, name="botm-book-create"),
@@ -203,13 +235,17 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/catalog/", views.submission_catalog, name="submission-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/", views.review_queue, name="review-queue"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/catalog/", views.submission_edit_catalog, name="submission-edit-catalog"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/details/", views.submission_edit, {"workflow": "editor"}, name="submission-editor"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/", views.submission_edit, name="submission-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/manage/credit/", views.submission_credit, name="submission-credit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/manage/", views.submission_manage, name="submission-manage"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/book/", views.submission_edit, {"workflow": "book"}, name="submission-fix-book"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/pages/", views.submission_edit, {"workflow": "pages"}, name="submission-fix-pages"),
+    path("config/submission-activity/", views.submission_activity, name="platform-submission-activity"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/activity/", views.submission_activity, name="submission-activity"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/history/", views.submission_history, name="submission-history"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/<int:pk>/", views.submission_review, name="submission-review"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/restore/", views.submission_restore, name="submission-restore"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/remove/", views.submission_remove, name="submission-remove"),
     path("groups/<slug:group_slug>/participants/<int:pk>/remove/", views.participant_deactivate, name="participant-deactivate"),
 ]

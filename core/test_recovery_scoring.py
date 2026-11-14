@@ -17,7 +17,7 @@ from .models import (
 from .recovery import RecoveryRequest
 from .recovery_scoring import (
     correct_unused_theme, purge_malformed_provenance, purge_submission,
-    rebuild_provenance, recover_theme_claim, set_submission_removed,
+    rebuild_provenance, recover_theme_claim, set_submission_removed, preview_submission_restoration,
     set_theme_active, submission_purge_impact, submission_recovery_label,
     void_provenance,
 )
@@ -122,6 +122,7 @@ class RecoveryScoringTests(TestCase):
         set_submission_removed(
             submission=self.submission, removed=False,
             recovery_request=self.request(action="submission.restore", target=self.submission),
+            preview_token=preview_submission_restoration(submission=self.submission, actor=self.root)[1],
         )
         self.submission.refresh_from_db()
         self.assertFalse(self.submission.is_removed)
@@ -427,3 +428,156 @@ class RecoveryScoringTests(TestCase):
                 with self.subTest(user=user.username, route=route):
                     self.assertEqual(self.client.get(route).status_code, 403)
         self.assertEqual(Membership.objects.filter(user=self.root).count(), 0)
+
+    def test_completed_recovery_preserves_earned_awards(self):
+        self.assert_historical_awards_survive(ChallengeMonth.Status.COMPLETED)
+
+    def test_archived_recovery_preserves_earned_awards(self):
+        self.assert_historical_awards_survive(ChallengeMonth.Status.ARCHIVED)
+
+    def assert_historical_awards_survive(self, status):
+        from .immersive import synchronize_awards
+        from .models import HardcoverSyncOutbox, ImmersiveRequest, PersonalTBRCompletionAward
+        from .participation import deactivate_participation
+        from .personal_tbr_matching import synchronize_submission as synchronize_tbr
+
+        self.month.tbr_enabled = True
+        self.month.tbr_book_bonus_pages = 20
+        self.month.tbr_completion_bonus_pages = 100
+        self.month.save(update_fields=["tbr_enabled", "tbr_book_bonus_pages", "tbr_completion_bonus_pages"])
+        botm = BotmBook.objects.create(
+            month=self.month, position=1, catalog_book=self.catalog,
+            title_snapshot=self.submission.title, author_snapshot=self.submission.author,
+            page_count_snapshot=300, bonus_pages=25,
+        )
+        synchronize_botm_reader(month=self.month, participant=self.reader)
+        tbr = PersonalTBR.objects.create(enrollment=self.enrollment)
+        submissions = []
+        for position in range(1, 10):
+            submission = self.submission if position == 1 else BookSubmission.objects.create(
+                month=self.month, participant=self.reader, title=f"Reading book {position}", author="Writer",
+                book_format="ebook", completed_on=self.submission.completed_on,
+                submitted_pages=100, approved_pages=100, status="approved",
+            )
+            PersonalTBRBook.objects.create(
+                personal_tbr=tbr, position=position, title_snapshot=submission.title,
+                author_snapshot=submission.author, catalog_book=submission.catalog_book,
+            )
+            submissions.append(submission)
+        PersonalTBR.objects.filter(pk=tbr.pk).update(confirmed_at=timezone.now())
+        for submission in submissions:
+            synchronize_tbr(submission)
+        immersive = ImmersiveRequest.objects.create(
+            submission=self.submission, requester=self.reader_user, captured_percent=10,
+            status="approved", reviewed_by=self.host_user, reviewed_at=timezone.now(),
+        )
+        synchronize_awards(self.submission)
+        ModifierProvenance.objects.create(
+            month=self.month, participant=self.reader, source_type="game_reward",
+            source_reference="historical-recovery-game", source_label="Game reward",
+            amount=15, effective_date=self.submission.completed_on,
+        )
+        provenance = ModifierProvenance.objects.filter(month=self.month, participant=self.reader)
+        fields = ("pk", "source_type", "source_reference", "amount", "effective_date", "is_active")
+
+        def credit():
+            return list(provenance.order_by("pk").values_list(*fields))
+
+        earned = credit()
+        self.assertEqual({row[1] for row in earned}, {
+            "theme_bonus", "botm_book", "botm_completion", "tbr_book", "tbr_completion",
+            "immersive", "game_reward",
+        })
+        score = self.score()
+        self.assertEqual(score, {"base_pages": 1100, "modifier_pages": 600, "total_pages": 1700})
+        other = BookSubmission.objects.create(
+            month=self.month, participant=self.reader, title="Unrelated historical book", author="Writer",
+            book_format="ebook", completed_on=self.submission.completed_on,
+            submitted_pages=80, approved_pages=80, status="approved", is_removed=True,
+        )
+        theme = MonthTheme.objects.create(
+            month=self.month, name="Unfinalized percentage claim", starts_on=self.month.starts_on,
+            ends_on=self.month.ends_on, bonus_rule="percentage", bonus_percentage=50,
+        )
+        unearned = ThemeClaim.objects.create(submission=other, theme=theme, status="approved")
+        ImmersiveRequest.objects.create(
+            submission=other, requester=self.reader_user, captured_percent=10,
+            status="approved", reviewed_by=self.host_user, reviewed_at=timezone.now(),
+        )
+        deactivate_participation(
+            enrollment=self.enrollment, actor=self.host_user, reason="removed",
+            ordinary_staff_removal=True,
+        )
+        self.assertEqual(credit(), earned)
+        self.assertEqual(self.score(), score)
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status=status)
+        self.month.refresh_from_db()
+        other.refresh_from_db()
+
+        def recover(submission, removed):
+            action = "submission.soft_remove" if removed else "submission.restore"
+            set_submission_removed(
+                submission=submission, removed=removed, recovery_request=self.request(action=action, target=submission),
+                preview_token=None if removed else preview_submission_restoration(submission=submission, actor=self.root)[1],
+            )
+
+        recover(other, False)
+        self.assertEqual(credit(), earned)
+        expected = dict(score, base_pages=1180, total_pages=1780)
+        self.assertEqual(self.score(), expected)
+        unearned.refresh_from_db()
+        self.assertFalse(unearned.award_finalized)
+        self.assertFalse(provenance.filter(submission=other).exists())
+        self.assertTrue(self.submission.personal_tbr_matches.filter(is_qualifying=True).exists())
+        self.assertTrue(self.submission.botm_matches.filter(is_qualifying=True).exists())
+        self.assertTrue(BotmCompletionAward.objects.get(month=self.month).is_qualifying)
+        self.assertTrue(PersonalTBRCompletionAward.objects.get(month=self.month).is_qualifying)
+
+        recover(self.submission, True)
+        self.assertFalse(self.submission.personal_tbr_matches.filter(is_qualifying=True).exists())
+        self.assertFalse(BotmCompletionAward.objects.get(month=self.month).is_qualifying)
+        self.assertFalse(PersonalTBRCompletionAward.objects.get(month=self.month).is_qualifying)
+        immersive.refresh_from_db()
+        self.assertFalse(immersive.is_active)
+        recover(self.submission, False)
+        self.assertEqual(credit(), earned)
+        self.assertEqual(self.score(), expected)
+        synchronize_tbr(self.submission)
+        synchronize_botm_reader(month=self.month, participant=self.reader)
+        self.assertEqual(credit(), earned)
+
+        botm.is_retired = True
+        botm.save(update_fields=["is_retired"])
+        synchronize_botm_reader(month=self.month, participant=self.reader)
+        self.assertFalse(self.submission.botm_matches.filter(is_qualifying=True).exists())
+        self.assertFalse(BotmCompletionAward.objects.get(month=self.month).is_qualifying)
+        self.assertFalse(HardcoverSyncOutbox.objects.exists())
+
+    def test_historical_restore_does_not_create_new_catalog_credit(self):
+        self.month.tbr_enabled = True
+        self.month.tbr_book_bonus_pages = 20
+        self.month.save(update_fields=["tbr_enabled", "tbr_book_bonus_pages"])
+        tbr = PersonalTBR.objects.create(enrollment=self.enrollment)
+        PersonalTBRBook.objects.create(
+            personal_tbr=tbr, position=1, catalog_book=self.catalog,
+            title_snapshot=self.submission.title, author_snapshot=self.submission.author,
+        )
+        PersonalTBR.objects.filter(pk=tbr.pk).update(confirmed_at=timezone.now())
+        BotmBook.objects.create(
+            month=self.month, position=1, catalog_book=self.catalog,
+            title_snapshot=self.submission.title, author_snapshot=self.submission.author,
+            page_count_snapshot=300, bonus_pages=25,
+        )
+        BookSubmission.objects.filter(pk=self.submission.pk).update(is_removed=True)
+        ChallengeMonth.objects.filter(pk=self.month.pk).update(status="completed")
+        self.month.refresh_from_db()
+        self.submission.refresh_from_db()
+        set_submission_removed(
+            submission=self.submission, removed=False,
+            recovery_request=self.request(action="submission.restore", target=self.submission),
+            preview_token=preview_submission_restoration(submission=self.submission, actor=self.root)[1],
+        )
+        self.assertFalse(self.submission.botm_matches.exists())
+        self.assertFalse(self.submission.personal_tbr_matches.exists())
+        self.assertFalse(BotmCompletionAward.objects.filter(month=self.month).exists())
+        self.assertEqual(self.score(), {"base_pages": 300, "modifier_pages": 50, "total_pages": 350})

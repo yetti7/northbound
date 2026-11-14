@@ -1,1 +1,1 @@
-<div class="theme-date-option">{% include "django/forms/widgets/input_option.html" %}<small class="theme-date-note">{{ widget.window }} <span data-theme-reason aria-live="polite">{{ widget.reason }}</span></small></div>
+<div class="theme-date-option"{% if widget.hidden %} hidden{% endif %}>{% include "django/forms/widgets/input_option.html" %}<small class="theme-date-note">{{ widget.window }} <span data-theme-reason aria-live="polite">{{ widget.reason }}</span></small></div>

@@ -1,0 +1,21 @@
+{% if is_registration %}
+  {% url 'challenge-registration-action' month.group.slug month.pk registration_action as action_url %}
+  <button type="button" class="button primary" data-challenge-dialog="{{ dialog_id }}" hidden>{{ label }}</button>
+  <details data-registration-fallback><summary>{{ label }}</summary><p>{{ description }}</p>
+      <form method="post" action="{{ action_url }}">{% csrf_token %}<button class="button primary">{{ label }}</button></form>
+  </details>
+{% else %}
+  <a class="button {% if secondary %}secondary{% else %}primary{% endif %}" data-challenge-dialog="{{ dialog_id }}" href="{{ action_url }}">{{ label }}</a>
+{% endif %}
+<dialog class="challenge-action-dialog" id="{{ dialog_id }}" aria-labelledby="{{ dialog_id }}-title" aria-describedby="{{ dialog_id }}-description">
+  <h2 id="{{ dialog_id }}-title">{{ label }}?</h2>
+  <p id="{{ dialog_id }}-description">{{ description }}</p>
+  <form method="post" action="{{ action_url }}">
+    {% csrf_token %}
+    {% if confirmation %}<input type="hidden" name="transition_confirmation" value="{{ confirmation }}">{% endif %}
+    <div class="challenge-dialog-actions">
+      <button type="button" class="button secondary" data-cancel-dialog autofocus>Cancel</button>
+      <button class="button {% if label == 'Make Results Final' %}danger-button{% else %}primary{% endif %}">{{ label }}</button>
+    </div>
+  </form>
+</dialog>

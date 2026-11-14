@@ -29,10 +29,12 @@ class UnifiedSubmissionReviewTests(TestCase):
         self.login();s=self.submission(status='pending',title='An unrelated book',author='Unrelated author')
         data=self.payload(s);self.assertEqual(self.client.post(self.review_url(s),data).status_code,302)
         before=BookSubmission.objects.filter(pk=s.pk).values().get()
+        approval_audits = list(AuditEvent.objects.filter(action='submission.approved', object_id=str(s.pk)).values())
+        self.assertTrue(approval_audits)
         response=self.client.post(self.review_url(s),data)
         self.assertContains(response,'Nothing was saved')
         self.assertEqual(BookSubmission.objects.filter(pk=s.pk).values().get(),before)
-        self.assertEqual(AuditEvent.objects.filter(action='submission.approved').count(),1)
+        self.assertEqual(list(AuditEvent.objects.filter(action='submission.approved', object_id=str(s.pk)).values()), approval_audits)
 
     def test_automatic_both_domains_alternate_formats_and_translation(self):
         self.login();target=self.botm(title=self.book.title,author=self.book.author,catalog_book=self.book)
@@ -97,7 +99,7 @@ class UnifiedSubmissionReviewTests(TestCase):
         s.refresh_from_db();self.assertEqual(s.status,'pending')
         self.assertFalse(ModifierProvenance.objects.filter(submission=s).exists())
         data=self.payload(s);BookSubmission.objects.filter(pk=s.pk).update(is_removed=True)
-        self.assertContains(self.client.post(self.review_url(s),data),'Nothing was saved')
+        self.assertContains(self.client.post(self.review_url(s),data),'Nothing was saved',status_code=403)
         BookSubmission.objects.filter(pk=s.pk).update(is_removed=False)
         with patch('django.core.signing.time.time',return_value=1):data=self.payload(s)
         self.assertContains(self.client.post(self.review_url(s),data),'Nothing was saved')

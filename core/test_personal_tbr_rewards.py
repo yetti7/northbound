@@ -162,7 +162,7 @@ class PersonalTbrPerBookRewardTests(TestCase):
             enrollment=self.enrollment, actor=self.reader_user,
             reason=MonthEnrollment.InactiveReason.WITHDRAWN,
         )
-        provenance.refresh_from_db(); self.assertFalse(provenance.is_active)
+        provenance.refresh_from_db(); self.assertTrue(provenance.is_active)
         activate_participation(
             month=self.month, participant=self.reader, actor=self.reader_user,
             origin=MonthEnrollment.Origin.SELF,

@@ -3,6 +3,7 @@
 {% block title %}Submit Book · {{ month.name }} · Northbound{% endblock %}
 {% block content %}
 <div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Submit a Completed Book</h1><p class="lede">Search Hardcover, paste a Hardcover link, or enter the book manually.</p></div></div>
+{% if can_submit_photo %}{% include 'core/includes/photo_submission_type.html' %}{% endif %}
 {% include "core/includes/challenge_book_picker.html" %}
 {% if hardcover_available %}
 <section class="form-card" data-catalog-tools data-catalog-url="{% url 'submission-catalog' month.group.slug month.pk %}">

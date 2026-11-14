@@ -19,7 +19,7 @@ from .models import (
     ChallengeStaffAssignment, Membership, ModifierProvenance, MonthEnrollment,
     MonthTheme, ProgressCheckpoint, ReadingGroup, ThemeClaim,
 )
-from .participation import activate_participation, deactivate_participation
+from .participation import activate_participation, assign_participant_to_team, deactivate_participation
 from .progress_checkpoints import process_due_progress_checkpoints
 from .score_aggregation import challenge_score_totals
 
@@ -157,9 +157,15 @@ class BotmCompletionRewardTests(TestCase):
     def test_withdraw_disable_and_reenable_preserve_and_reactivate_same_award(self):
         self.qualify(1); award_pk = BotmCompletionAward.objects.get().pk; provenance_pk = self.completion_provenance().pk
         deactivate_participation(enrollment=self.enrollment, actor=self.reader_user, reason=MonthEnrollment.InactiveReason.WITHDRAWN)
-        self.assertFalse(BotmCompletionAward.objects.get(pk=award_pk).is_qualifying)
+        self.assertTrue(BotmCompletionAward.objects.get(pk=award_pk).is_qualifying)
         activate_participation(month=self.month, participant=self.reader, actor=self.reader_user, origin=MonthEnrollment.Origin.SELF)
         self.assertTrue(BotmCompletionAward.objects.get(pk=award_pk).is_qualifying)
+        self.assertTrue(ModifierProvenance.objects.get(pk=provenance_pk).is_active)
+        from .models import Team
+        assign_participant_to_team(
+            month=self.month, participant=self.reader,
+            team=Team.objects.create(month=self.month, name="Rejoined team"), actor=self.host_user,
+        )
         self.month.botm_enabled = False; self.month.save(update_fields=["botm_enabled"])
         synchronize_botm_completions_for_challenge(self.month)
         self.assertFalse(ModifierProvenance.objects.get(pk=provenance_pk).is_active)

@@ -244,3 +244,120 @@ class StaffChallengeTbrTests(TestCase):
         for invalid in (self.books(1)[1:], [{**changed[1], "position": 1}, {**changed[0], "position": 2}]):
             with self.assertRaisesMessage(ValidationError, "scoring history"):
                 self.save(invalid)
+
+    def edit_url(self, book):
+        return reverse("staff-challenge-tbr-book-edit", args=[
+            self.group.slug, self.month.pk, self.reader.pk, book.pk,
+        ])
+
+    def edit_data(self, book, **changes):
+        from .personal_tbr import staff_tbr_book_version
+
+        book.refresh_from_db()
+        return {"title": book.title_snapshot, "author": book.author_snapshot,
+                "version": staff_tbr_book_version(book), **changes}
+
+    def test_in_place_title_then_author_preserves_entry_and_scoring(self):
+        from .models import PersonalTBRBook
+
+        tbr = self.save(self.books(), complete=True)
+        book = tbr.books.first()
+        before = PersonalTBRBook.objects.values().get(pk=book.pk)
+        url = self.edit_url(book)
+        self.assertContains(self.client.get(self.url), url)
+        self.assertContains(self.client.get(url), 'value="Book 1"')
+        submission = BookSubmission.objects.create(
+            month=self.month, participant=self.reader, title="Correct title", author="Correct author",
+            book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 9, 5),
+            submitted_pages=100, approved_pages=100, final_scored_pages=100,
+            status=BookSubmission.Status.APPROVED,
+        )
+        models = (BookSubmission, PersonalTBRMatch, PersonalTBRCompletionAward, ModifierProvenance, HardcoverSyncOutbox)
+        snapshots = {model: list(model.objects.order_by("pk").values()) for model in models}
+        stale = self.edit_data(book, author="Old tab")
+        self.assertRedirects(self.client.post(url, self.edit_data(book, title="Correct title")), self.url)
+        self.assertContains(self.client.post(url, stale), "This book changed")
+        self.assertRedirects(self.client.post(url, self.edit_data(book, author="Correct author")), self.url)
+        self.assertEqual(PersonalTBRBook.objects.values().get(pk=book.pk), {
+            **before, "title_snapshot": "Correct title", "author_snapshot": "Correct author",
+            "display_title": "Correct title", "display_author": "Correct author",
+            "normalized_title": "correct title", "normalized_author": "correct author",
+        })
+        for model, snapshot in snapshots.items():
+            self.assertEqual(list(model.objects.order_by("pk").values()), snapshot)
+        self.assertEqual(BookSubmission.objects.get(pk=submission.pk).final_scored_pages, 100)
+        events = AuditEvent.objects.filter(action="challenge_tbr.book_edited", object_id=str(book.pk))
+        self.assertEqual(events.count(), 2)
+        self.assertEqual(events.first().actor, self.staff_user)
+        self.assertEqual(events.first().group, self.group)
+        self.assertIn('"author": "Correct author"', events.first().summary)
+
+    def test_history_acquired_after_opening_form_blocks_edit(self):
+        tbr = self.save(self.books(), complete=True)
+        book = tbr.books.first()
+        data = self.edit_data(book, title="Changed")
+        submission = BookSubmission.objects.create(
+            month=self.month, participant=self.reader, title=book.title_snapshot, author=book.author_snapshot,
+            book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 9, 5),
+            submitted_pages=100, approved_pages=100, status=BookSubmission.Status.APPROVED,
+        )
+        BookSubmission.objects.filter(pk=submission.pk).update(selected_tbr_book=book)
+        self.assertContains(self.client.post(self.edit_url(book), data), "Reader selection history")
+        BookSubmission.objects.filter(pk=submission.pk).update(selected_tbr_book=None)
+        synchronize_submission(submission)
+        self.assertTrue(book.matches.filter(is_qualifying=True).exists())
+        self.assertNotContains(self.client.get(self.url), self.edit_url(book))
+        self.assertContains(self.client.post(self.edit_url(book), data), "match, award, or Reader selection history")
+        book.refresh_from_db()
+        self.assertEqual(book.title_snapshot, "Book 1")
+        self.assertFalse(AuditEvent.objects.filter(action="challenge_tbr.book_edited").exists())
+
+    def test_catalog_conflict_and_duplicate_are_field_errors(self):
+        catalog = CatalogBook.objects.create(provider="hardcover", provider_book_id="edit", title="Trusted", author="Author")
+        edition = CatalogEdition.objects.create(book=catalog, provider="hardcover", provider_edition_id="edit")
+        values = self.books(2)
+        values[0].update(catalog_book=catalog, catalog_edition=edition)
+        tbr = self.save(values)
+        linked, manual = list(tbr.books.all())
+        response = self.client.post(self.edit_url(linked), self.edit_data(linked, title="Conflicting"))
+        self.assertIn("title", response.context["form"].errors)
+        self.assertRedirects(self.client.post(self.edit_url(linked), self.edit_data(linked, title="Trusted")), self.url)
+        linked.refresh_from_db()
+        self.assertEqual((linked.catalog_book_id, linked.catalog_edition_id), (catalog.pk, edition.pk))
+        response = self.client.post(self.edit_url(manual), self.edit_data(manual, title="Trusted"))
+        self.assertIn("title", response.context["form"].errors)
+
+    def test_edit_endpoint_respects_floater_team_leader_and_participating_host_scope(self):
+        book = self.save(self.books(1)).books.get()
+        url = self.edit_url(book)
+        self.staff.role = Membership.Role.MEMBER
+        self.staff.save()
+        team = Team.objects.create(month=self.month, name="Readers")
+        other = Team.objects.create(month=self.month, name="Other")
+        TeamAssignment.objects.create(month=self.month, participant=self.reader, team=team)
+        staff_team = None
+        for role, assigned, allowed in (
+            (ChallengeStaffAssignment.Role.FLOATER, None, True),
+            (ChallengeStaffAssignment.Role.TEAM_LEADER, team, True),
+            (ChallengeStaffAssignment.Role.TEAM_LEADER, other, False),
+            (ChallengeStaffAssignment.Role.HOST, None, False),
+        ):
+            with self.subTest(role=role, allowed=allowed):
+                if role != ChallengeStaffAssignment.Role.FLOATER:
+                    if staff_team is None:
+                        MonthEnrollment.objects.create(month=self.month, participant=self.staff)
+                        staff_team = TeamAssignment.objects.create(month=self.month, participant=self.staff, team=assigned)
+                    else:
+                        TeamAssignment.objects.filter(pk=staff_team.pk).update(team=assigned or other)
+                assignment = ChallengeStaffAssignment.objects.create(
+                    month=self.month, membership=self.staff, role=role, team=assigned,
+                )
+                self.assertEqual(self.client.get(url).status_code, 200 if allowed else 403)
+                self.assertEqual(self.client.post(url, self.edit_data(book)).status_code, 302 if allowed else 403)
+                assignment.delete()
+        foreign_group = ReadingGroup.objects.create(name="Other group", slug="other-tbr-group")
+        outsider = get_user_model().objects.create_user("foreign-tbr-owner")
+        Membership.objects.create(group=foreign_group, user=outsider, role=Membership.Role.OWNER)
+        for user in (outsider, self.reader_user):
+            self.client.force_login(user)
+            self.assertEqual(self.client.post(url, self.edit_data(book)).status_code, 403)

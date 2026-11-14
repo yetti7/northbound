@@ -1,8 +1,11 @@
+import json
+
+from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AuditEvent, MonthEnrollment, PersonalTBR, PersonalTBRBook
+from .models import AuditEvent, ChallengeMonth, MonthEnrollment, PersonalTBR, PersonalTBRBook, normalize_book_identity
 
 
 def _book_values(book):
@@ -165,3 +168,83 @@ def save_staff_challenge_tbr(*, enrollment, actor, books, complete=False, versio
     tbr.save(update_fields=["confirmed_at", "updated_at"])
     _record_tbr_change(tbr, actor, staff=True)
     return tbr
+
+
+def staff_tbr_book_lock_reason(book):
+    if book.matches.exists() or book.completion_award_snapshots.exists() or book.reader_selected_submissions.exists():
+        return "This book has match, award, or Reader selection history and its title and author are locked."
+    return ""
+
+
+def _staff_tbr_book_state(book):
+    return {
+        "list": book.personal_tbr_id, "entry": book.pk,
+        "list_updated": book.personal_tbr.updated_at.isoformat(),
+        "values": [getattr(book, field) for field in (
+            "position", "title_snapshot", "author_snapshot", "display_title",
+            "display_author", "catalog_book_id", "catalog_edition_id",
+        )],
+    }
+
+
+def staff_tbr_book_version(book):
+    return signing.dumps(_staff_tbr_book_state(book), salt="staff-tbr-book-edit")
+
+
+@transaction.atomic
+def edit_staff_tbr_book(*, enrollment, book_id, actor, title, author, version):
+    from django.core.exceptions import PermissionDenied
+    from .permissions import can_manage_challenge_tbr, challenge_history_locked
+
+    month = ChallengeMonth.objects.select_for_update().get(pk=enrollment.month_id)
+    enrollment = MonthEnrollment.objects.select_for_update().get(pk=enrollment.pk, month=month)
+    if not actor.is_active or not can_manage_challenge_tbr(actor, enrollment):
+        raise PermissionDenied("Challenge TBR staff authority is required.")
+    if challenge_history_locked(month) or not month.tbr_enabled:
+        raise ValidationError("This Challenge TBR cannot be edited.")
+    tbr = PersonalTBR.objects.select_for_update().filter(enrollment=enrollment).first()
+    book = PersonalTBRBook.objects.select_for_update().filter(pk=book_id, personal_tbr=tbr).first() if tbr else None
+    try:
+        expected = signing.loads(version, salt="staff-tbr-book-edit")
+    except signing.BadSignature:
+        expected = None
+    if book is None or expected != _staff_tbr_book_state(book):
+        raise ValidationError("This book changed. Reopen Edit Book before saving.")
+    if reason := staff_tbr_book_lock_reason(book):
+        raise ValidationError(reason)
+
+    title, author = title.strip(), author.strip()
+    normalized_title, normalized_author = map(normalize_book_identity, (title, author))
+    errors = {}
+    for field, value, normalized in (("title", title, normalized_title), ("author", author, normalized_author)):
+        if not normalized or len(value) > 300 or len(normalized) > 300:
+            errors[field] = f"Enter a valid book {field}."
+    if errors:
+        raise ValidationError(errors)
+    before = {"title": book.title_snapshot, "author": book.author_snapshot}
+    after = {"title": title, "author": author}
+    if before == after:
+        return False
+
+    if book.catalog_book_id:
+        for field, value in after.items():
+            if value != before[field] and normalize_book_identity(value) != normalize_book_identity(getattr(book.catalog_book, field)):
+                errors[field] = f"This {field} conflicts with the linked catalog book."
+    if tbr.books.exclude(pk=book.pk).filter(normalized_title=normalized_title, normalized_author=normalized_author).exists():
+        errors["title"] = "This title and author are already on the Personal TBR."
+    if errors:
+        raise ValidationError(errors)
+
+    updates = {}
+    for field, normalized in (("title", normalized_title), ("author", normalized_author)):
+        if before[field] != after[field]:
+            updates.update({f"{field}_snapshot": after[field], f"normalized_{field}": normalized, f"display_{field}": after[field]})
+    # The regular model save protects confirmed lists. This exception changes only book text.
+    PersonalTBRBook.objects.filter(pk=book.pk).update(**updates)
+    tbr.save(update_fields=["updated_at"])
+    AuditEvent.objects.create(
+        actor=actor, group=month.group, action="challenge_tbr.book_edited",
+        object_type="PersonalTBRBook", object_id=str(book.pk),
+        summary=json.dumps({"challenge_id": month.pk, "personal_tbr_id": tbr.pk, "before": before, "after": after}),
+    )
+    return True

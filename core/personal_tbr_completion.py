@@ -27,6 +27,7 @@ def _participant_is_eligible(month, participant, enrollment):
         and participant.is_active
         and not participant.user.is_superuser
         and enrollment.is_active
+        and not enrollment.awaiting_scoring_team
     )
 
 
@@ -86,7 +87,7 @@ def _deactivate_award(award, now):
 
 
 @transaction.atomic
-def synchronize_personal_tbr_completion_for_reader(*, month, participant, now=None):
+def synchronize_personal_tbr_completion_for_reader(*, month, participant, now=None, earned_only=False, restore_earned=False, late_award=None):
     month = ChallengeMonth.objects.select_for_update().select_related("group").get(pk=month.pk)
     participant = Membership.objects.select_for_update().select_related("user").get(pk=participant.pk)
     now = now or timezone.now()
@@ -111,15 +112,23 @@ def synchronize_personal_tbr_completion_for_reader(*, month, participant, now=No
             status=PersonalTBRMatch.Status.CONFIRMED,
             is_qualifying=True,
         ).values_list("personal_tbr_book_id", flat=True))
+    if (late_award is None and award is None and qualifying_book_ids == configured_book_ids
+            and PersonalTBRMatch.objects.filter(personal_tbr_book__personal_tbr=tbr, month=month, participant=participant,
+                status="confirmed", is_qualifying=True, decision_evidence__late_approval_completion_held=True).exists()):
+        return None
     complete = (
         tbr is not None
         and tbr.confirmed_at is not None
         and len(books) == 9
         and len(configured_book_ids) == 9
         and qualifying_book_ids == configured_book_ids
-        and _participant_is_eligible(month, participant, enrollment)
+        and ((late_award is not None and month.tbr_enabled) or (not earned_only and _participant_is_eligible(month, participant, enrollment)) or (
+            month.tbr_enabled and award is not None and (award.is_qualifying or restore_earned)
+        ))
     )
 
+    if late_award is not None and award is not None:
+        return award
     if not complete:
         if award is not None:
             _deactivate_award(award, now)
@@ -127,7 +136,9 @@ def synchronize_personal_tbr_completion_for_reader(*, month, participant, now=No
 
     fingerprint = personal_tbr_completion_set_fingerprint(books)
     if award is None:
-        effective_date = timezone.localtime(now, ZoneInfo(month.group.timezone)).date()
+        bonus_amount, effective_date = late_award if late_award is not None else (
+            month.tbr_completion_bonus_pages, timezone.localtime(now, ZoneInfo(month.group.timezone)).date(),
+        )
         try:
             with transaction.atomic():
                 award = PersonalTBRCompletionAward.objects.create(
@@ -136,7 +147,7 @@ def synchronize_personal_tbr_completion_for_reader(*, month, participant, now=No
                     participant=participant,
                     completion_set_fingerprint=fingerprint,
                     configured_book_count=9,
-                    bonus_amount_snapshot=month.tbr_completion_bonus_pages,
+                    bonus_amount_snapshot=bonus_amount,
                     qualified_at=now,
                     last_qualified_at=now,
                     effective_date=effective_date,

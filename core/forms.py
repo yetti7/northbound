@@ -401,7 +401,7 @@ class GroupCreateForm(forms.ModelForm):
         if commit:
             group.save()
             if not creator.is_superuser:
-                Membership.objects.create(group=group, user=creator, role=Membership.Role.OWNER, display_name=creator.get_full_name() or creator.username)
+                Membership.objects.create(group=group, user=creator, role=Membership.Role.OWNER, display_name=Membership.compatibility_display_name(creator))
         return group
 
 
@@ -499,7 +499,19 @@ class GroupAccessCodeForm(forms.Form):
         return group
 
 
-class ChallengeMonthForm(forms.ModelForm):
+class RegistrationScheduleValidationMixin:
+    def clean(self):
+        cleaned = super().clean()
+        for toggle, timestamp in (
+            ("auto_open_registration", "registration_opens_at"),
+            ("auto_close_registration", "registration_closes_at"),
+        ):
+            if cleaned.get(toggle) and not cleaned.get(timestamp) and timestamp not in self.errors:
+                self.add_error(timestamp, "Choose a date and time for this automatic action.")
+        return cleaned
+
+
+class ChallengeMonthForm(RegistrationScheduleValidationMixin, forms.ModelForm):
     class Meta:
         model = ChallengeMonth
         fields = (
@@ -519,15 +531,15 @@ class ChallengeMonthForm(forms.ModelForm):
         labels = {
             "name": "Challenge Title",
             "registration_opens_at": "Registration Opens",
-            "auto_open_registration": "Open registration automatically",
+            "auto_open_registration": "Automatically open registration",
             "registration_closes_at": "Registration Closes",
-            "auto_close_registration": "Close registration automatically",
+            "auto_close_registration": "Automatically close registration",
             "starts_at": "Challenge Starts",
-            "auto_start_challenge": "Move Challenge to Active automatically",
-            "ends_at": "Challenge Ends",
-            "auto_end_challenge": "Move Challenge to Finalizing automatically",
-            "final_announcement_at": "Final Announcement",
-            "auto_complete_challenge": "Mark Challenge Completed at this time",
+            "auto_start_challenge": "Automatically start challenge",
+            "ends_at": "Submissions Close",
+            "auto_end_challenge": "Automatically end submissions",
+            "final_announcement_at": "Final Results Announcement",
+            "auto_complete_challenge": "Automatically finalize results",
         }
         widgets = {
             "description": forms.Textarea(attrs={"rows": 4}),
@@ -550,7 +562,7 @@ class ChallengeMonthForm(forms.ModelForm):
         for field_name in schedule_fields:
             self.fields[field_name].input_formats = ["%Y-%m-%dT%H:%M"]
         if not (self.instance and self.instance.pk):
-            for field_name in ("registration_opens_at", "registration_closes_at", "starts_at", "ends_at"):
+            for field_name in ("starts_at", "ends_at"):
                 self.fields[field_name].required = True
         if self.instance and self.instance.pk and self.instance.status == ChallengeMonth.Status.ARCHIVED:
             for field in self.fields.values():
@@ -571,7 +583,7 @@ class ChallengeCreateForm(forms.Form):
         self.fields["hosts"].queryset = group.memberships.filter(
             is_active=True,
             user__is_superuser=False,
-        ).order_by("display_name", "pk")
+        ).order_by("user__username", "pk")
 
     def save(self, *, created_by):
         with transaction.atomic():
@@ -649,7 +661,7 @@ class ChallengeBotmSettingsForm(forms.ModelForm):
         }
 
 
-class ChallengeScheduleForm(forms.ModelForm):
+class ChallengeScheduleForm(RegistrationScheduleValidationMixin, forms.ModelForm):
     class Meta:
         model = ChallengeMonth
         fields = (
@@ -666,15 +678,15 @@ class ChallengeScheduleForm(forms.ModelForm):
         )
         labels = {
             "registration_opens_at": "Registration Opens",
-            "auto_open_registration": "Open registration automatically",
+            "auto_open_registration": "Automatically open registration",
             "registration_closes_at": "Registration Closes",
-            "auto_close_registration": "Close registration automatically",
+            "auto_close_registration": "Automatically close registration",
             "starts_at": "Challenge Starts",
-            "auto_start_challenge": "Move Challenge to Active automatically",
-            "ends_at": "Challenge Ends",
-            "auto_end_challenge": "Move Challenge to Finalizing automatically",
-            "final_announcement_at": "Final Announcement",
-            "auto_complete_challenge": "Mark Challenge Completed at this time",
+            "auto_start_challenge": "Automatically start challenge",
+            "ends_at": "Submissions Close",
+            "auto_end_challenge": "Automatically end submissions",
+            "final_announcement_at": "Final Results Announcement",
+            "auto_complete_challenge": "Automatically finalize results",
         }
         widgets = {
             field_name: MidnightDateTimeInput()
@@ -698,7 +710,7 @@ class ChallengeScheduleForm(forms.ModelForm):
         ):
             self.fields[field_name].input_formats = ["%Y-%m-%dT%H:%M"]
         if self.instance and self.instance.pk:
-            for timestamp_field in ("registration_opens_at", "registration_closes_at", "starts_at", "ends_at"):
+            for timestamp_field in ("starts_at", "ends_at"):
                 if getattr(self.instance, timestamp_field) is None:
                     self.fields[timestamp_field].required = True
         if self.instance and self.instance.pk and self.instance.status == ChallengeMonth.Status.ARCHIVED:
@@ -902,15 +914,18 @@ class ChallengeRegistrationForm(forms.Form):
             self.profile.discord_username = value
             self.profile.save(update_fields=["discord_username"])
 
+    def answer_value(self, question):
+        value = self.cleaned_data.get(f"question_{question.pk}", "")
+        if question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER:
+            return format(value, "f") if value is not None else ""
+        return value
+
     def save_answers(self, enrollment):
         for question in self.questions:
-            value = self.cleaned_data.get(f"question_{question.pk}", "")
-            if question.question_type == ChallengeSignupQuestion.QuestionType.NUMBER:
-                value = format(value, "f") if value is not None else ""
             ChallengeSignupAnswer.objects.update_or_create(
                 enrollment=enrollment,
                 question=question,
-                defaults={"value": value},
+                defaults={"value": self.answer_value(question)},
             )
 
 
@@ -1046,6 +1061,12 @@ PersonalTbrRegistrationBookFormSet = formset_factory(
 )
 
 
+class StaffTbrBookEditForm(forms.Form):
+    title = forms.CharField(label="Book title", max_length=300)
+    author = forms.CharField(label="Book author", max_length=300)
+    version = forms.CharField(widget=forms.HiddenInput)
+
+
 class StaffChallengeTbrBookForm(PersonalTbrRegistrationBookForm):
     existing_selection = forms.CharField(required=False, widget=forms.HiddenInput())
 
@@ -1063,6 +1084,8 @@ class StaffChallengeTbrBookForm(PersonalTbrRegistrationBookForm):
                 book = PersonalTBRBook.objects.get(pk=data["book"], personal_tbr__enrollment_id=self.enrollment_id)
             except (signing.BadSignature, KeyError, TypeError, PersonalTBRBook.DoesNotExist):
                 raise forms.ValidationError("The saved selection has changed. Reload this TBR.")
+            if any(cleaned.get(field) != getattr(book, field) for field in ("title_snapshot", "author_snapshot")):
+                raise forms.ValidationError("Use Edit Book to correct the title or author of an existing selection.")
             if all(cleaned.get(field) == getattr(book, field) for field in (
                 "title_snapshot", "author_snapshot", "page_count_snapshot",
             )):
@@ -1261,7 +1284,7 @@ class GameRewardApplyForm(forms.Form):
                 team_id__in=host_teams, ended_at__isnull=True,
             ).values("participant_id"))
             teams = teams.filter(pk__in=host_teams)
-        self.fields["target_participant"].queryset = participants.order_by("display_name", "pk")
+        self.fields["target_participant"].queryset = participants.order_by("user__username", "pk")
         self.fields["target_team"].queryset = teams.order_by("name", "pk")
 
     def clean_amount(self):
@@ -1434,7 +1457,6 @@ class TeamForm(forms.ModelForm):
 
 class MemberCreateForm(forms.Form):
     username = forms.CharField(max_length=150)
-    display_name = forms.CharField(label="Display Name", max_length=100)
     email = forms.EmailField(required=False)
     role = forms.ChoiceField(choices=Membership.Role.choices, initial=Membership.Role.MEMBER)
     temporary_password = forms.CharField(label="Temporary Password", widget=forms.PasswordInput, min_length=12)
@@ -1462,7 +1484,7 @@ class MemberCreateForm(forms.Form):
         return Membership.objects.create(
             group=group,
             user=user,
-            display_name=self.cleaned_data["display_name"],
+            display_name=Membership.compatibility_display_name(user),
             role=self.cleaned_data["role"],
         )
 
@@ -1511,11 +1533,15 @@ class TeamAssignmentForm(forms.ModelForm):
         model = TeamAssignment
         fields = ("participant", "team")
 
-    def __init__(self, *args, month, **kwargs):
+    def __init__(self, *args, month, actor=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.month = month
         assigned_ids = month.team_assignments.filter(ended_at__isnull=True).values_list("participant_id", flat=True)
-        self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).exclude(pk__in=assigned_ids)
+        self.fields["participant"].queryset = month.group.memberships.filter(is_active=True, user__is_superuser=False).filter(pk__in=month.enrollments.filter(is_active=True).values("participant_id")).exclude(pk__in=assigned_ids)
+        if actor is not None:
+            from .permissions import restricted_host_team_ids
+            if restricted_host_team_ids(actor, month) is not None:
+                self.fields["participant"].queryset = self.fields["participant"].queryset.exclude(user=actor)
         self.fields["team"].queryset = month.teams.filter(is_archived=False)
 
     def clean(self):
@@ -1581,6 +1607,7 @@ class MonthEnrollmentForm(forms.Form):
                 participant=participant,
                 team=team,
                 actor=enrolled_by,
+                allow_enrollment=True,
             )
         else:
             enrollment, _, _ = activate_participation(
@@ -1640,7 +1667,7 @@ class MembershipRoleForm(forms.ModelForm):
 
 
 class ThemeEligibilityWidget(forms.CheckboxSelectMultiple):
-    """Keep every offered Theme visible with its inclusive date window."""
+    """Hide unavailable Themes while retaining historical claim context."""
     option_template_name = 'core/widgets/theme_option.html'
 
     def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
@@ -1652,9 +1679,15 @@ class ThemeEligibilityWidget(forms.CheckboxSelectMultiple):
             option['window'] = f'{theme.starts_on:%b %d, %Y} – {theme.ends_on:%b %d, %Y}, inclusive'
             completed = getattr(self, 'completed_on', None)
             eligible = completed and theme.starts_on.isoformat() <= completed <= theme.ends_on.isoformat()
+            historical = theme.pk in getattr(self, 'historical_theme_ids', set())
+            if historical:
+                option['attrs']['data-theme-historical'] = 'true'
+            option['hidden'] = not eligible and not historical
             if not eligible:
-                option['attrs']['disabled'] = True
-                option['reason'] = 'Unavailable for this completion date.' if completed else 'Choose a completion date first.'
+                if not (selected and historical):
+                    option['attrs']['disabled'] = True
+                option['reason'] = ('Existing claim: unavailable for this completion date. Change the date or explicitly remove the claim before saving.'
+                                    if historical else 'Choose a completion date first.' if not completed else 'Unavailable for this completion date.')
         return option
 
 
@@ -1697,8 +1730,13 @@ class BookSubmissionForm(forms.ModelForm):
                     widget=forms.Textarea(attrs={"rows": 2, "data-theme-response": theme.pk}),
                 )
 
+        from .prompt_reservations import configure_form
+        configure_form(self)
+
     def clean(self):
         cleaned = super().clean()
+        from .prompt_reservations import validate_form
+        validate_form(self, cleaned)
         themes = list(cleaned.get("themes") or [])
         completed_on = cleaned.get("completed_on")
         if completed_on:
@@ -1812,6 +1850,7 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         self.initial['submitted_pages'] = self.original_pages
         self.initial['manual_page_override'] = False
         claims = {claim.theme_id: claim for claim in submission.theme_claims.select_related('theme')}
+        self.fields['themes'].widget.historical_theme_ids = set(claims)
         from django.db.models import Q
         themes = self.month.themes.filter(Q(is_active=True, is_visible=True) | Q(pk__in=claims)).distinct()
         self.fields['themes'].queryset = themes
@@ -1833,6 +1872,8 @@ class SubmissionCorrectionForm(BookSubmissionForm):
 
     def clean(self):
         cleaned = forms.ModelForm.clean(self)
+        from .prompt_reservations import validate_form
+        validate_form(self, cleaned)
         completed = cleaned.get('completed_on')
         if completed and self.month.starts_on and self.month.ends_on and not self.month.starts_on <= completed <= self.month.ends_on:
             self.add_error('completed_on', 'Completion date must fall inside the challenge month.')
@@ -1871,6 +1912,10 @@ class SubmissionCorrectionForm(BookSubmissionForm):
                     or set(values['theme_ids']) != self.original_theme_ids):
                 raise forms.ValidationError('Associate Only cannot be combined with other corrections.')
             values = {key: values[key] for key in ('catalog_edition_id', 'association_mode')}
+        from .prompt_reservations import form_selections
+        values.update({kind+'_prompt_id':pk for kind,pk in form_selections(self).items()})
+        decisions={kind:self.cleaned_data['prompt_decision_'+kind] for kind in ('bingo','scavenger') if self.cleaned_data.get('prompt_decision_'+kind)}
+        if decisions:values['prompt_decisions']=decisions
         return values
 
     def save(self, *args, **kwargs):

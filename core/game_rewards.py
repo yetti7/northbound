@@ -51,6 +51,7 @@ def _eligible_readers(month):
         MonthEnrollment.objects.select_for_update().filter(
             month=month,
             is_active=True,
+            awaiting_scoring_team=False,
             participant__is_active=True,
             participant__user__is_superuser=False,
         ).values_list("participant_id", flat=True)
@@ -106,7 +107,7 @@ def _resolve_recipients(*, month, target_type, target_participant, target_team):
         if target_participant.group_id != month.group_id:
             raise ValidationError("The target Reader does not belong to the Game's Group.")
         recipients = list(eligible.filter(pk=target_participant.pk).order_by("pk"))
-        target_label = target_participant.display_name
+        target_label = target_participant.user.username
     elif target_type == GameRewardApplication.TargetType.TEAM:
         if target_team is None or target_participant is not None:
             raise ValidationError("Team rewards require exactly one Team target.")

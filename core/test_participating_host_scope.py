@@ -158,7 +158,7 @@ class ParticipatingHostScopeTests(TestCase):
         self.assertEqual(self.client.post(url).status_code, 403)
         self.client.force_login(self.root)
         self.assertEqual(self.client.post(url, {
-            "reason": "Restore operational role", "confirmation": f"{self.host.display_name} — {self.month.name}",
+            "reason": "Restore operational role", "confirmation": f"{self.host.user.username} — {self.month.name}",
         }).status_code, 302)
         self.enrollment.refresh_from_db()
         self.assertTrue(self.enrollment.host_scope_restored)
@@ -277,13 +277,13 @@ class ParticipatingHostScopeTests(TestCase):
                 self.host.save(update_fields=["role", "permission_overrides"])
                 self.client.force_login(self.host.user)
                 directory = self.client.get(directory_url, {"show_average": "1"})
-                self.assertContains(directory, self.reader.display_name)
+                self.assertContains(directory, self.reader.user.username)
                 self.assertContains(directory, permissions_url)
                 self.assertNotContains(directory, "9876")
                 row = next(item for item in directory.context["participants"] if item.pk == self.reader.pk)
                 self.assertIsNone(row.planning)
                 profile = self.client.get(profile_url, {"show_discord": "1"})
-                self.assertContains(profile, self.reader.display_name)
+                self.assertContains(profile, self.reader.user.username)
                 self.assertNotContains(profile, "private-team-b-reader")
                 self.assertNotContains(profile, "Verified Pages")
                 self.assertNotContains(profile, "Approved Books")
@@ -305,7 +305,7 @@ class ParticipatingHostScopeTests(TestCase):
 
     def test_restoration_service_checks_reason_and_locked_confirmation(self):
         MonthEnrollment.objects.filter(pk=self.enrollment.pk).update(is_active=False, inactive_reason="removed")
-        label = f"{self.host.display_name} — {self.month.name}"
+        label = f"{self.host.user.username} — {self.month.name}"
         operation = RecoveryRequest(
             actor=self.root, tier=2, action="enrollment.host_scope_restored", target_type="MonthEnrollment",
             target_id=str(self.enrollment.pk), target_label=label, reason="Restore operational scope",

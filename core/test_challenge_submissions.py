@@ -30,15 +30,17 @@ class ChallengeSubmissionTableTests(TestCase):
     def ids(self, response):
         return [x.pk for x in response.context['submission_page']]
 
-    def test_search_all_rows_and_three_fields_before_pagination(self):
+    def test_search_title_and_current_username_before_pagination(self):
         books = self.populate()
         oldest = books[0]
         oldest.title = 'Unique distant title'; oldest.save(update_fields=['title'])
         self.assertNotIn(oldest.pk, self.ids(self.get()))
         self.assertEqual(self.ids(self.get(submission_q='DISTANT')), [oldest.pk])
-        for query in (self.reader.user.username, self.reader.display_name):
-            result = self.get(submission_q=query)
-            self.assertEqual(result.context['submission_page'].paginator.count, 55)
+        result = self.get(submission_q=self.reader.user.username)
+        self.assertEqual(result.context['submission_page'].paginator.count, 55)
+        self.reader.display_name = 'Obsolete alias unique to this membership'
+        self.reader.save(update_fields=['display_name'])
+        self.assertEqual(self.ids(self.get(submission_q=self.reader.display_name)), [])
         self.assertContains(self.get(submission_q='nonexistent'), 'No submissions match')
 
     def test_status_filters_use_removal_flag(self):
@@ -56,6 +58,20 @@ class ChallengeSubmissionTableTests(TestCase):
                 self.assertContains(response, reverse('submission-manage', args=[self.month.group.slug, self.month.pk, item.pk]))
                 self.assertNotContains(response, reverse('submission-edit', args=[self.month.group.slug, self.month.pk, item.pk]))
                 self.assertContains(response,'Permanently Delete')
+
+    def test_voided_book_is_searchable_and_stale_score_is_not_rendered(self):
+        voided, active = self.populate(2)
+        BookSubmission.objects.filter(pk=voided.pk).update(is_removed=True, final_scored_pages=517)
+        response = self.get()
+        self.assertContains(response, '<s class="voided-submission-title">Book 000</s>', html=True)
+        self.assertContains(response, 'Excluded from totals', count=1)
+        self.assertNotContains(response, '>517<')
+        self.assertContains(response, 'Book 001')
+        self.assertContains(response, 'class="voided-submission-title"', count=1)
+        self.assertEqual(self.ids(self.get(submission_q=voided.title)), [voided.pk])
+        self.assertEqual(self.ids(self.get(submission_status="approved")), [active.pk])
+        voided.refresh_from_db()
+        self.assertEqual(voided.final_scored_pages, 517)
 
     def test_sizes_boundaries_and_stable_ordering(self):
         books = self.populate(105)
@@ -84,7 +100,7 @@ class ChallengeSubmissionTableTests(TestCase):
         full = self.client.get(self.url)
         self.assertContains(full, 'data-submission-filters')
         self.assertContains(full, 'challenge_submissions.js')
-        for label in ('Reader','Book','Base Pages','Bonus Pages','Total Pages','Status','Actions'):
+        for label in ('Reader','Submission','Base Pages','Bonus Pages','Total Pages','Status','Actions'):
             self.assertContains(full, f'<th>{label}</th>', html=True)
 
     def test_no_cross_challenge_or_group_exposure(self):
@@ -130,9 +146,9 @@ class ChallengeSubmissionTableTests(TestCase):
 
     def test_scoped_pending_badge_and_accessible_full_reader_name(self):
         item = self.submission(status='pending')
-        name = 'A very long Reader display name that should remain accessible'
-        self.reader.display_name = name
-        self.reader.save(update_fields=['display_name'])
+        name = 'a-very-long-reader-username-that-should-remain-accessible'
+        self.reader.user.username = name
+        self.reader.user.save(update_fields=['username'])
         response = self.get()
         self.assertContains(response, 'class="pill status-warning"')
         self.assertContains(response, 'class="submission-reader-name"')

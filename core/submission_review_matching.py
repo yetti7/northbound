@@ -14,9 +14,11 @@ SALT = 'northbound.unified-review.v1'
 def matching_cards(submission):
     cards = []
     enrolled = MonthEnrollment.objects.filter(month=submission.month,participant=submission.participant,is_active=True).exists()
-    if submission.participant.user.is_superuser or submission.is_removed or not submission.participant.is_active or not submission.participant.user.is_active or not enrolled:
+    if submission.late_approval_evidence or submission.participant.user.is_superuser or submission.is_removed or not submission.participant.is_active or not submission.participant.user.is_active or not enrolled:
         return cards
     for domain, model, field in [('botm',BotmMatch,'botm_book'),('tbr',PersonalTBRMatch,'personal_tbr_book')]:
+        from .prompt_reservations import has_bingo_selection
+        if domain == 'tbr' and has_bingo_selection(submission):continue
         if not getattr(submission.month, 'botm_enabled' if domain == 'botm' else 'tbr_enabled'):
             continue
         books = (BotmBook.objects.filter(month=submission.month,is_retired=False) if domain == 'botm' else
@@ -69,12 +71,20 @@ def matching_cards(submission):
 
 
 def review_state(submission):
-    data = {'submission':BookSubmission.objects.filter(pk=submission.pk).values().get(),
+    from .late_approval import enrollment_for, matching_configuration
+    enrollment = enrollment_for(submission)
+    from .prompt_reservations import prompt_state
+    data = {'prompt_reservations':prompt_state(submission), 'submission':BookSubmission.objects.filter(pk=submission.pk).values().get(),
             'claims':list(submission.theme_claims.order_by('pk').values()),
             'botm':list(submission.botm_matches.order_by('pk').values()),
             'tbr':list(submission.personal_tbr_matches.order_by('pk').values()),
             'cards':[(c['domain'],c['entry'].pk,c['state'],c['stamp']) for c in matching_cards(submission)],
-            'lifecycle':submission.month.status}
+            'lifecycle':submission.month.status,
+            'enrollment': (enrollment.is_active, enrollment.awaiting_scoring_team, enrollment.inactivated_at,
+                           enrollment.inactive_reason, enrollment.credited_team_id) if enrollment else None,
+            'periods': list(enrollment.participation_periods.order_by('pk').values()) if enrollment else [],
+            'teams': list(submission.participant.team_assignments.filter(month=submission.month).order_by('pk').values()),
+            'bonus_evidence': matching_configuration(submission) if enrollment and not enrollment.is_active else None}
     return hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest()
 
 
@@ -94,12 +104,19 @@ class MatchingReviewForm(forms.Form):
             if not any(c['domain']==domain and c['state']=='suggested' for c in cards):
                 self.fields.pop('confirm_'+domain)
 
+        from .prompt_reservations import reservations_ready
+        from .prompt_configuration import automation_excluded
+        if reservations_ready() and not automation_excluded(submission.month):
+            for claim in submission.prompt_claims.filter(is_current=True,category__enabled=True).select_related('category'):
+                if not claim.earning_evidence:
+                    self.fields['prompt_'+claim.category.kind]=forms.ChoiceField(required=False,choices=[('', 'Leave unchanged'),('qualified','Confirm qualification'),('rejected','Reject qualification')],label=claim.category.get_kind_display()+' qualification')
+
 
 @transaction.atomic
-def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations):
+def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations, prompt_decisions=None):
     from .permissions import can_review_submission
     ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
-    current=BookSubmission.objects.select_for_update().select_related('month','participant__user','catalog_book','catalog_edition').get(pk=submission.pk)
+    current=BookSubmission.objects.select_for_update(of=('self',)).select_related('month','participant__user','catalog_book','catalog_edition').get(pk=submission.pk)
     if not can_review_submission(actor,current) or current.is_removed or current.month.status not in {'active','finalizing'}:
         raise PermissionDenied('This submission can no longer be reviewed.')
     try:
@@ -122,4 +139,16 @@ def apply_unified_review(submission, claims, actor, reviewed_at, *, version, con
         model,field=(BotmMatch,'botm_book') if domain=='botm' else (PersonalTBRMatch,'personal_tbr_book')
         match=model.objects.get(submission=current,**{field:candidates[0]['entry']})
         suggestions[domain]={'match_id':match.pk,'fingerprint':match.suggestion_fingerprint}
-    return review_submission_with_matches(submission,claims,actor,reviewed_at,suggestions=suggestions)
+    # An independent prompt decision must not reapprove a departed Reader's
+    # already-approved book or rewrite its existing review attribution.
+    unchanged_book=all(getattr(current,key)==getattr(submission,key) for key in ('status','approved_pages','verification_url','review_notes'))
+    existing_themes=dict(current.theme_claims.values_list('pk','status'))
+    unchanged_themes=all(existing_themes.get(claim.pk)==claim.status for claim in claims)
+    if prompt_decisions and current.status=='approved' and unchanged_book and unchanged_themes and not confirmations:
+        result=current
+    else:
+        result=review_submission_with_matches(submission,claims,actor,reviewed_at,suggestions=suggestions)
+    from .prompt_scoring import review_prompts
+    review_prompts(result,actor,prompt_decisions or {})
+    result.refresh_from_db()
+    return result

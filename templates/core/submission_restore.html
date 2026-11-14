@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Restore Submission · Northbound{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+  <div class="page-heading"><h1>Restore Submission</h1></div>
+  <section class="card submission-compact-summary">
+    <h2>{% include "core/includes/submission_title.html" %}</h2>
+    <p>{{ submission.participant.user.username }}</p>
+    <p><span class="pill status-warning">Voided</span></p>
+    <p>Previous approval status: {{ submission.get_status_display }}</p>
+    {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+    {% if eligible %}
+      <p>Restoring an Approved submission can immediately affect scoring, qualifications, and Challenge standings.</p>
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="confirmation" value="{{ confirmation }}">
+        <p><label for="restore-reason">Restoration reason (optional)</label><textarea id="restore-reason" name="reason" rows="3">{{ reason }}</textarea></p>
+        <div class="submission-editor-actions">
+          <button class="button primary" type="submit">Restore Submission</button>
+          <a class="button secondary" href="{{ cancel_url }}">Cancel</a>
+        </div>
+      </form>
+    {% else %}
+      <p>Ordinary restoration is unavailable for this Reader’s enrollment or team history.</p>
+      <a class="button secondary" href="{{ cancel_url }}">Cancel</a>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

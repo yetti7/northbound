@@ -133,7 +133,7 @@ def _simulate(month_id, actor_id):
         ids = _candidate_ids(month)
         submissions = list(BookSubmission.objects.filter(pk__in=ids).select_related('participant').order_by('pk'))
         affected = [{'submission_id': item.pk, 'participant_id': item.participant_id,
-                     'reader': item.participant.display_name, 'title': item.title,
+                     'reader': item.participant.user.username, 'title': item.title,
                      'completed_on': item.completed_on} for item in submissions]
         reader_ids = sorted({item.participant_id for item in submissions})
         def completed(reader_id):

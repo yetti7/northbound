@@ -6,13 +6,20 @@
   const clearPreview = () => {
     document.querySelector('[data-correction-preview]')?.setAttribute('hidden', '');
     form.elements.preview_token.value = '';
-    form.elements.confirm_approved.checked = false;
+    if (form.elements.confirm_approved) form.elements.confirm_approved.checked = false;
     if (form.elements.confirm_work) form.elements.confirm_work.checked = false;
-    form.querySelector('[data-correction-submit]').textContent = 'Preview Changes';
+    form.querySelector('[data-correction-submit]').textContent = form.hasAttribute('data-compact-editor') ? 'Save' : 'Preview Changes';
   };
   form.addEventListener('input', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
   form.addEventListener('change', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
   if (!panel) return;
+  function updateAssociationControls() {
+    const changed = Boolean(form.elements.edition.value && form.elements.edition.value !== panel.dataset.currentEdition);
+    const options = form.querySelector('[data-association-options]');
+    const override = form.querySelector('[data-manual-override]');
+    if (options) options.hidden = !changed;
+    if (override) override.hidden = !changed;
+  }
   const results = panel.querySelector('[data-association-results]');
   const status = panel.querySelector('[data-association-status]');
   const selection = panel.querySelector('[data-association-selection]');
@@ -51,6 +58,7 @@
         const chosen = await request('edition', {book_id: work.book_id, edition_id: edition.edition_id});
         if (!chosen) return;
         form.elements.edition.value = chosen.edition_pk; clearPreview(); results.replaceChildren();
+        updateAssociationControls();
         form.elements.association_mode.focus({preventScroll: true});
         const book = chosen.selected, scoring = chosen.scoring;
         const duration = book.audio_seconds ? ` Listening duration: ${(book.audio_seconds / 3600).toFixed(1)} hours (reference only).` : '';
@@ -62,6 +70,11 @@
   }
   panel.querySelector('[data-association-keep]').addEventListener('click', () => {
     ++generation; controller?.abort(); form.elements.edition.value = panel.dataset.currentEdition;
+    if (form.hasAttribute('data-compact-editor')) {
+      form.elements.association_mode.value = 'update';
+      form.elements.manual_page_override.checked = false;
+    }
+    updateAssociationControls();
     clearPreview(); results.replaceChildren(); selection.textContent = 'Current association retained.'; status.textContent = '';
   });
   panel.querySelector('[data-association-search]').addEventListener('click', search);

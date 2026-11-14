@@ -1,0 +1,9 @@
+<section class="card group-branding-image"><h2>{{ card.label }}</h2>
+<div class="group-art-preview{% if card.kind == 'banner' %} is-banner{% endif %}"><img src="{{ card.preview }}" alt="{{ card.label }} preview" data-branding-preview="{{ card.kind }}" data-fallback="{{ card.fallback }}" data-fallback-label="{{ card.fallback_label }}" data-source-label="{{ card.source }}" data-community-image{% if not card.preview %} hidden{% endif %}></div>
+<p class="muted" data-branding-source="{{ card.kind }}">{{ card.source }}</p>
+{% if editable %}<label for="id_{{ card.kind }}">{% if card.preview %}Replace Image{% else %}Upload Image{% endif %}</label>
+<input type="file" name="{{ card.kind }}" id="id_{{ card.kind }}" accept="image/png,image/jpeg,image/webp" aria-describedby="{{ card.kind }}-help{% if card.field.errors %} {{ card.kind }}-errors{% endif %}"{% if card.field.errors %} aria-invalid="true"{% endif %}>
+{% if card.field.errors %}<div id="{{ card.kind }}-errors" role="alert">{{ card.field.errors }}</div>{% endif %}
+<p class="muted" id="{{ card.kind }}-help">{{ card.field.help_text }}</p>
+{% if card.stored %}<label class="group-image-remove"><input type="checkbox" name="{{ card.kind }}-clear" value="on"{% if card.remove %} checked{% endif %}> Remove Image <span class="muted">(current override only; saved removal restores inherited artwork when available)</span></label>{% endif %}
+{% endif %}</section>

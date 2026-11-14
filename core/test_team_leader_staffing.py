@@ -101,7 +101,7 @@ class TeamLeaderStaffingTests(TestCase):
         self.assertEqual(event.actor, self.host_user)
         self.assertIn(self.month.name, event.summary)
         self.assertIn(self.team_one.name, event.summary)
-        self.assertIn(self.reader_one.display_name, event.summary)
+        self.assertIn(self.reader_one.user.username, event.summary)
 
     def test_multiple_leaders_different_teams_and_host_plus_team_leader_are_supported(self):
         first = self.create_leader(self.reader_one)
@@ -296,11 +296,11 @@ class TeamLeaderStaffingTests(TestCase):
 
         self.client.force_login(self.host_user)
         host_view = self.client.get(team_page)
-        self.assertContains(host_view, "Team Leader: Reader One")
+        self.assertContains(host_view, "Team Leader: leader-reader-one")
         self.assertNotContains(host_view, "Reader Two")
         self.assertContains(host_view, "Manage Team Leaders")
 
         self.client.force_login(self.reader_two_user)
         reader_view = self.client.get(team_page)
-        self.assertContains(reader_view, "Team Leader: Reader One")
+        self.assertContains(reader_view, "Team Leader: leader-reader-one")
         self.assertNotContains(reader_view, "Manage Team Leaders")

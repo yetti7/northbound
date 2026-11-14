@@ -8,11 +8,13 @@
   <link rel="icon" type="image/png" sizes="32x32" href="{% static 'branding/favicon-32.png' %}?v=2">
   <link rel="apple-touch-icon" sizes="180x180" href="{% static 'branding/apple-touch-icon.png' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/app.css' %}?v=3">
-  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=43">
+  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=49">
   <link rel="stylesheet" href="{% static 'css/navigation.css' %}">
   <link rel="stylesheet" href="{% static 'css/profile.css' %}">
   <script src="{% static 'js/book_covers.js' %}?v=1"></script>
   <script src="{% static 'js/app.js' %}?v=12" defer></script>
+{% block extra_head %}{% endblock %}
+<link rel="stylesheet" href="{% static 'css/community_branding.css' %}"><script src="{% static 'js/community_branding.js' %}" defer></script>
 </head>
 <body>
   {% if development_banner_enabled %}<div class="development-banner status-warning" role="note"><strong>DEVELOPMENT</strong> — Test environment</div>{% endif %}
@@ -23,6 +25,7 @@
       <img class="brand-icon" src="{% static 'branding/northbound-icon-512.png' %}?v=2" alt="Northbound">
     </a>
     {% if user.is_authenticated %}
+      {% include "core/includes/global_search.html" %}
       <nav>
         {% if needs_attention.available %}<a class="needs-attention-link" href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
         <details class="account-menu">
@@ -39,6 +42,7 @@
               <a href="{% url 'account' %}">My Account</a>
               <a href="{% url 'my-stats' %}">My Stats</a>
             {% endif %}
+            <a href="{% url 'recap-dashboard' %}">Chronicle</a>
             <button class="menu-action" type="button" data-theme-toggle><span data-theme-icon>☾</span> Light / Dark</button>
             <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="menu-action">Sign Out</button></form>
           </div>
@@ -47,7 +51,7 @@
     {% endif %}
   </header>
   <main class="page-shell">
-    {% if logical_parent_url %}<a class="back-button contextual-back" href="{{ logical_parent_url }}"><span aria-hidden="true">←</span> {{ logical_parent_label|default:"Back" }}</a>{% endif %}
+    {% include "core/includes/page_return.html" with destination=logical_parent_url label=logical_parent_label only %}
     {% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}
     {% block content %}{% endblock %}
   </main>

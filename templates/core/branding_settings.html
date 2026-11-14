@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Branding · {{ team.name|default:month.name|default:group.name }}{% endblock %}
+{% block content %}<div class="branding-settings-page"><div class="page-heading"><div><p class="eyebrow">{% if team %}Team Settings{% elif month %}Challenge Settings{% else %}Group Settings{% endif %}</p><h1>Branding · {{ team.name|default:month.name|default:group.name }}</h1><p>Optional community artwork. Northbound remains the application identity.</p></div></div>
+{% if month %}<p class="notice neutral">Display mode is inherited from {{ group.name }}: {{ group.get_branding_mode_display }}. {% if team %}Missing Team artwork inherits Challenge, then Group artwork. Removing an override restores inheritance.{% else %}Missing Challenge artwork uses available Group branding.{% endif %}</p>{% endif %}
+{% if not editable %}<p class="notice neutral">Read-only. Artwork changes are unavailable for your role or this Challenge lifecycle stage.</p>{% endif %}
+{% if editable %}<form method="post" enctype="multipart/form-data" class="stacked-form" data-branding-form>{% csrf_token %}{{ form.non_field_errors }}{% endif %}
+<div class="group-branding-edit-grid">
+{% for card in artwork_cards %}{% include 'core/includes/branding_artwork_card.html' %}{% endfor %}
+</div>
+<p class="muted">These previews show stored or inherited assets, including banners in Logo Only mode. Display mode controls presentation elsewhere; it never deletes artwork.</p>
+{% if editable %}<div class="action-row"><button class="button primary">Save Branding</button><a class="button secondary" href="{% if team %}{% url 'team-detail' group.slug month.pk team.pk %}{% else %}{% url 'challenge-settings' group.slug month.pk %}{% endif %}">Cancel</a></div></form>{% endif %}
+</div>{% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/branding_form.js' %}" defer></script>{% endblock %}

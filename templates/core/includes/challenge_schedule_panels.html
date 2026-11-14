@@ -1,0 +1,31 @@
+<div class="card-grid schedule-settings-grid">
+  <section class="card schedule-setting-card" aria-labelledby="registration-schedule-title">
+    <h2 id="registration-schedule-title">Registration Schedule</h2>
+    <p>Choose when readers can sign up for your challenge.</p>
+    <p><span class="pill status-badge {% if registration_available %}status-success{% else %}status-neutral{% endif %}">Registration: {% if registration_available %}Open{% else %}Closed{% endif %}</span></p>
+    <div class="schedule-field">{{ form.registration_opens_at.label_tag }}{{ form.registration_opens_at }}{{ form.registration_opens_at.errors }}
+      <label class="schedule-toggle">{{ form.auto_open_registration }} {{ form.auto_open_registration.label }}</label>{{ form.auto_open_registration.errors }}</div>
+    <div class="schedule-field">{{ form.registration_closes_at.label_tag }}{{ form.registration_closes_at }}{{ form.registration_closes_at.errors }}
+      <label class="schedule-toggle">{{ form.auto_close_registration }} {{ form.auto_close_registration.label }}</label>{{ form.auto_close_registration.errors }}</div>
+    <p>Open or close registration in <a href="{% url 'challenge-settings' month.group.slug month.pk %}">Challenge Settings</a>.</p>
+  </section>
+  <section class="card schedule-setting-card" aria-labelledby="challenge-schedule-title">
+    <h2 id="challenge-schedule-title">Challenge Schedule</h2>
+    <p>Choose when readers can submit books and when results become final.</p>
+    <p><span class="pill status-badge {% if month.status == 'active' %}status-success{% else %}status-info{% endif %}">{{ schedule_status }}</span></p>
+    <div class="schedule-field">{{ form.starts_at.label_tag }}{{ form.starts_at }}{{ form.starts_at.errors }}
+      <label class="schedule-toggle">{{ form.auto_start_challenge }} {{ form.auto_start_challenge.label }}</label>{{ form.auto_start_challenge.errors }}</div>
+    <div class="schedule-field">{{ form.ends_at.label_tag }}{{ form.ends_at }}{{ form.ends_at.errors }}
+      <label class="schedule-toggle">{{ form.auto_end_challenge }} {{ form.auto_end_challenge.label }}</label>{{ form.auto_end_challenge.errors }}</div>
+    <div class="schedule-field">{{ form.final_announcement_at.label_tag }}{{ form.final_announcement_at }}{{ form.final_announcement_at.errors }}
+      <label class="schedule-toggle">{{ form.auto_complete_challenge }} {{ form.auto_complete_challenge.label }}</label>{{ form.auto_complete_challenge.errors }}</div>
+    {% if held_schedule_actions %}<p>Automatic actions paused: {{ held_schedule_actions|join:", " }}. Confirm each action in <a href="{% url 'challenge-settings' month.group.slug month.pk %}">Challenge Lifecycle</a> or edit its schedule.</p>{% endif %}
+  </section>
+</div>
+{% if schedule_confirmation %}
+  <section class="card" aria-labelledby="confirm-schedule-title">
+    <h2 id="confirm-schedule-title">Make Results Final?</h2>
+    <p>Saving this schedule will make results final immediately. Ordinary submission and scoring changes will be locked.</p>
+    <input type="hidden" name="confirm_schedule" value="{{ schedule_confirmation }}">
+  </section>
+{% endif %}

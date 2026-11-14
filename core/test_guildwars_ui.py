@@ -17,7 +17,7 @@ class ThemeEligibilityTests(TestCase):
         return MonthTheme.objects.create(month=self.month, name='First week',
             starts_on=date(2026, 11, 1), ends_on=date(2026, 11, 7), bonus_pages=25)
 
-    def test_visible_windows_and_disabled_options_without_javascript(self):
+    def test_eligible_windows_visible_and_unavailable_options_hidden_without_javascript(self):
         theme = self.theme()
         for completed, disabled in [('2026-11-01', False), ('2026-11-07', False), ('2026-11-08', True), ('', True)]:
             form = BookSubmissionForm(self.payload(completed_on=completed), month=self.month)
@@ -26,6 +26,7 @@ class ThemeEligibilityTests(TestCase):
             self.assertIn('Nov 07, 2026', html)
             self.assertIn('data-theme-start="2026-11-01"', html)
             self.assertEqual('disabled' in html, disabled)
+            self.assertEqual('class="theme-date-option" hidden' in html, disabled)
 
     def test_forged_ineligible_selection_is_rejected_server_side(self):
         theme = self.theme()
@@ -55,5 +56,19 @@ class ThemeEligibilityTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         data['themes'] = [theme.pk]
         form = SubmissionCorrectionForm(data, instance=copy(item), month=self.month)
+        self.assertFalse(form.is_valid())
+        self.assertIn('themes', form.errors)
+
+    def test_editing_retains_out_of_window_historical_claim_context(self):
+        theme = self.theme()
+        item = BookSubmission.objects.create(month=self.month, participant=self.reader, title='Original', author='Author',
+            book_format='ebook', completed_on=date(2026,11,3), submitted_pages=100, approved_pages=100, status='approved')
+        ThemeClaim.objects.create(submission=item, theme=theme, status='approved', approved_bonus_pages=25)
+        data = dict(title=item.title, author=item.author, completed_on='2026-11-08', submitted_pages=100, themes=[theme.pk])
+        form = SubmissionCorrectionForm(data, instance=copy(item), month=self.month)
+        html = str(form['themes'])
+        self.assertNotIn('class="theme-date-option" hidden', html)
+        self.assertIn('data-theme-historical="true"', html)
+        self.assertIn('Existing claim: unavailable', html)
         self.assertFalse(form.is_valid())
         self.assertIn('themes', form.errors)
