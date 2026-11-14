@@ -11,6 +11,8 @@ from django.core.exceptions import PermissionDenied
 from .models import ReadingGroup, ChallengeMonth, AuditEvent, Membership, Team, ChallengeStaffAssignment
 from .permissions import membership_for, can_manage_months, can_operate_challenge, can_view_challenge, challenge_history_locked, is_challenge_host
 
+BRANDING_MODE_LABELS = {"logo": "Compact Header", "banner": "Banner Header"}
+
 MAX_BYTES = 5 * 1024 * 1024
 MAX_PIXELS = 16_000_000
 
@@ -104,6 +106,11 @@ class BrandingForm(forms.ModelForm):
     class Meta:
         model = ReadingGroup
         fields = ['branding_mode', 'logo', 'banner']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if 'branding_mode' in self.fields:
+            self.fields['branding_mode'].choices = list(BRANDING_MODE_LABELS.items())
 
     def clean_logo(self):
         value = self.cleaned_data.get('logo')
