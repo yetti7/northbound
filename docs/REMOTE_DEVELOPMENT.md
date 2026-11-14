@@ -320,3 +320,49 @@ manual dispatch on main would still validate, publish SHA and `latest` tags.
 PR validation and its non-publishing image build remain unchanged. The existing
 manual-dispatch-on-dev exclusion also remains. No production workflow file was
 modified. This proposal requires separate owner approval before application.
+
+## Advanced branding preferences (Issue #3)
+
+Migration `core.0078_advanced_branding_preferences` adds independent preferences to
+Groups, Challenges and Teams: `gradient_enabled=False`, `gradient_coverage=75` and
+`gradient_darkness=85`. Team also has `hide_inherited_logo=False`. Sliders accept
+integer percentages from 0 through 100, validated by forms and model validators.
+Existing records retain their exact legacy gradients while customization is off;
+no artwork, stored display modes, scoring, lifecycle or historical audits change.
+
+With customization enabled, coverage is the percentage of banner width receiving
+a left-to-right gradient, fading to transparent at that percentage. Zero coverage
+means no overlay; 100 covers the full width. Darkness is opacity at the left edge,
+from transparent (0) to opaque (100). This does not crop, reposition or modify an
+image. Very low values can reduce text contrast. Preferences belong to the displayed
+entity and do not follow inherited artwork. Compact Header still hides banners.
+Restore Defaults changes only the three gradient controls (off / 75 / 85); save to
+apply. It does not clear artwork or reset Hide Inherited Logo.
+
+Hide Inherited Logo suppresses parent logos only on Team headers, cards and editor
+Header Preview; a valid custom Team logo still wins. A Team with its own available
+banner, suppression enabled and no available custom logo qualifies for showcase.
+Its All Teams card omits all dimming, overriding custom gradients; the name stays
+below artwork. Its detail/preview retains a localized readable overlay unless a
+custom gradient is enabled. Wrapped and Reader Rumble explicitly retain their
+previous logo behavior. Saved-header previews share the actual header templates;
+existing local artwork upload/removal previews remain available.
+
+For the authorized development migration, first validate the current Compose stack,
+image and mounts, save a consistent SQLite backup using SQLite's backup API, and
+review `migrate core 0078 --plan`. Rehearse on a disposable backup copy. Stop only
+`northbound-dev` during source/schema cutover, so reloading workers cannot query
+columns before they exist. Sync reviewed source, then use the same Dev Compose
+file list with `run --rm --no-deps --entrypoint python web manage.py migrate core
+0078 --noinput`; this bypasses normal startup. Restart the existing container after
+success. Never run these commands against production. Confirm HTTP health, disabled
+integrations, new defaults, migration state, unchanged prior-column row digests,
+media hashes and database integrity.
+
+Pre-Issue-3 Dev source, configuration and consistent database backup are stored in
+`/srv/docker/northbound-dev/rollback-branding3-5389f8d`. Because the migration is
+additive, the previous source can run with the extra columns still present: stop
+Dev, restore its four source directories from that private `source.tar`, then start
+Dev and verify health. Leave the new columns in place for this source-only rollback;
+do not reverse the migration or replace the database casually. A database restore
+would discard any subsequent Dev changes and requires a separately reviewed plan.

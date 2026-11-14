@@ -185,6 +185,9 @@ from .branding_files import branding_path
 
 
 class ReadingGroup(models.Model):
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
     branding_mode = models.CharField(max_length=16, choices=[("logo", "Logo Only"), ("banner", "Logo + Banner")], default="logo")
@@ -459,6 +462,9 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
     prompt_automation_excluded = models.BooleanField(default=False, editable=False)
 
     logo = models.ImageField(upload_to=branding_path, blank=True)
@@ -918,6 +924,10 @@ class MonthTheme(models.Model):
 
 
 class Team(models.Model):
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    hide_inherited_logo = models.BooleanField(default=False)
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="teams")

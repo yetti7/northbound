@@ -1,0 +1,15 @@
+<section class="card banner-appearance" data-banner-appearance>
+<h2>Banner Appearance</h2>
+<p class="muted">Appearance belongs to this {% if team %}Team{% elif month %}Challenge{% else %}Group{% endif %}, even when banner artwork is inherited. Compact Header mode keeps banners hidden.</p>
+<fieldset{% if not editable %} disabled{% endif %}>
+<legend class="sr-only">Banner appearance preferences</legend>
+{% if team %}<label class="group-image-remove" for="{{ form.hide_inherited_logo.id_for_label }}">{{ form.hide_inherited_logo }} Hide Inherited Logo</label>{{ form.hide_inherited_logo.errors }}<p class="muted">Hide Group and Challenge logos on this Team’s header and cards. A custom Team logo still displays. No artwork is deleted.</p>{% endif %}
+<label class="group-image-remove" for="{{ form.gradient_enabled.id_for_label }}">{{ form.gradient_enabled }} Use Gradient Overlay</label>{{ form.gradient_enabled.errors }}
+<p class="muted" data-appearance-status aria-live="polite">{% if form.gradient_enabled.value %}Customized gradient enabled.{% else %}Legacy appearance active. Slider values apply only when enabled.{% endif %}</p>
+<div class="banner-appearance-slider"><label for="{{ form.gradient_coverage.id_for_label }}">Gradient Coverage: <output for="{{ form.gradient_coverage.id_for_label }}" data-appearance-value="gradient_coverage">{{ form.gradient_coverage.value|default_if_none:75 }}%</output></label>{{ form.gradient_coverage }}{{ form.gradient_coverage.errors }}<p class="muted">0–100% of the banner width, fading from the left edge to transparent. Does not crop or reposition artwork.</p></div>
+<div class="banner-appearance-slider"><label for="{{ form.gradient_darkness.id_for_label }}">Darkness Intensity: <output for="{{ form.gradient_darkness.id_for_label }}" data-appearance-value="gradient_darkness">{{ form.gradient_darkness.value|default_if_none:85 }}%</output></label>{{ form.gradient_darkness }}{{ form.gradient_darkness.errors }}<p class="muted">0–100% opacity at the darkest edge. Low coverage or darkness may reduce text readability.</p></div>
+{% if editable %}<button type="button" class="button secondary" data-appearance-defaults>Restore Defaults</button>{% endif %}
+<p class="muted">Defaults: customization off, coverage 75%, darkness 85%. {% if editable %}Save Branding to apply changes. Restore Defaults changes only gradient settings.{% endif %}</p>
+{% if team %}<p class="muted">On All Teams cards, a custom Team banner with Hide Inherited Logo enabled and no custom logo displays at full brightness, overriding gradient preferences. Team headers keep a readable overlay.</p>{% endif %}
+</fieldset>
+</section>

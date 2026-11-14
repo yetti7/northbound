@@ -13,6 +13,8 @@ from .permissions import membership_for, can_manage_months, can_operate_challeng
 
 BRANDING_MODE_LABELS = {"logo": "Compact Header", "banner": "Banner Header"}
 
+APPEARANCE_FIELDS = ["gradient_enabled", "gradient_coverage", "gradient_darkness"]
+
 MAX_BYTES = 5 * 1024 * 1024
 MAX_PIXELS = 16_000_000
 
@@ -103,14 +105,32 @@ class BrandingForm(forms.ModelForm):
     logo = forms.FileField(required=False, help_text='Recommended: 1000 × 1000 px. Transparent PNG preferred; keep the original logo proportions. PNG, JPEG, or WebP, up to 5 MB.', widget=BrandingFileInput(attrs={'accept':'image/png,image/jpeg,image/webp'}))
     banner = forms.FileField(required=False, help_text='Recommended: 1920 × 480 px (4:1). Keep important content near the center and away from edges; banners may crop on narrow screens. PNG, JPEG, or WebP, up to 5 MB. Images: at most 6000 px per side and 16 million pixels.', widget=BrandingFileInput(attrs={'accept':'image/png,image/jpeg,image/webp'}))
 
+    gradient_enabled = forms.BooleanField(required=False, label='Use Gradient Overlay')
+    gradient_coverage = forms.IntegerField(min_value=0, max_value=100, initial=75,
+        label='Gradient Coverage', widget=forms.NumberInput(attrs={'type': 'range', 'step': 1, 'data-default': 75}))
+    gradient_darkness = forms.IntegerField(min_value=0, max_value=100, initial=85,
+        label='Darkness Intensity', widget=forms.NumberInput(attrs={'type': 'range', 'step': 1, 'data-default': 85}))
+
     class Meta:
         model = ReadingGroup
-        fields = ['branding_mode', 'logo', 'banner']
+        fields = ['branding_mode', 'logo', 'banner', *APPEARANCE_FIELDS]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.is_bound:
+            self.data = self.data.copy()
+            for name in ('gradient_coverage', 'gradient_darkness'):
+                self.data.setdefault(name, getattr(self.instance, name))
         if 'branding_mode' in self.fields:
             self.fields['branding_mode'].choices = list(BRANDING_MODE_LABELS.items())
+
+    def clean_gradient_coverage(self):
+        value = self.cleaned_data['gradient_coverage']
+        return self.instance.gradient_coverage if value is None else value
+
+    def clean_gradient_darkness(self):
+        value = self.cleaned_data['gradient_darkness']
+        return self.instance.gradient_darkness if value is None else value
 
     def clean_logo(self):
         value = self.cleaned_data.get('logo')
@@ -124,13 +144,15 @@ class BrandingForm(forms.ModelForm):
 class ChallengeBrandingForm(BrandingForm):
     class Meta:
         model = ChallengeMonth
-        fields = ['logo', 'banner']
+        fields = ['logo', 'banner', *APPEARANCE_FIELDS]
 
 
 class TeamBrandingForm(BrandingForm):
+    hide_inherited_logo = forms.BooleanField(required=False, label="Hide Inherited Logo")
+
     class Meta:
         model = Team
-        fields = ['logo', 'banner']
+        fields = ['logo', 'banner', 'hide_inherited_logo', *APPEARANCE_FIELDS]
 
 
 def branding_form_class(target):
@@ -187,9 +209,9 @@ def community_branding(viewer, group, month=None):
         return {}
     if month and (month.group_id != group.pk or not can_view_challenge(viewer, month)):
         return {}
-    result = {'group_name':group.name, 'group_logo':_asset(group.logo)}
+    result = {'group_name':group.name, 'group_logo':_asset(group.logo), 'group_appearance': banner_appearance(group)}
     if month:
-        result.update(challenge_name=month.name, challenge_logo=_asset(month.logo))
+        result.update(challenge_name=month.name, challenge_logo=_asset(month.logo), challenge_appearance=banner_appearance(month))
     if group.branding_mode == 'banner':
         result['group_banner'] = _asset(group.banner)
         if month:
@@ -207,30 +229,44 @@ def recap_branding(viewer, group_id=None, challenge_id=None):
     return {}
 
 
-def team_branding(viewer, team):
+def team_branding(viewer, team, *, presentation=True):
     """Read-only per-asset inheritance; no copying or competition permission changes."""
-    return _team_branding_assets(team, community_branding(viewer, team.month.group, team.month))
+    return _team_branding_assets(team, community_branding(viewer, team.month.group, team.month), presentation=presentation)
 
 
-def _team_branding_assets(team, community):
+def _team_branding_assets(team, community, *, presentation=True):
     result = dict(community)
     if not result:
         return {}
     result.update(team_name=team.name, team_logo=_asset(team.logo))
-    result['effective_logo'] = result['team_logo'] or result.get('challenge_logo') or result.get('group_logo') or ''
+    inherited_logo = '' if presentation and team.hide_inherited_logo else result.get('challenge_logo') or result.get('group_logo') or ''
+    result['effective_logo'] = result['team_logo'] or inherited_logo
     result['effective_banner'] = ''
     if team.month.group.branding_mode == 'banner':
         result['team_banner'] = _asset(team.banner)
         result['effective_banner'] = result['team_banner'] or result.get('challenge_banner') or result.get('group_banner') or ''
+    if presentation:
+        result['appearance'] = banner_appearance(team)
+        result['showcase'] = bool(result.get('team_banner') and team.hide_inherited_logo and not result['team_logo'])
     return result
 
 
-def team_branding_many(viewer, teams):
+def team_branding_many(viewer, teams, *, presentation=True):
     """Reuse one authorized community context per Challenge for a Team listing."""
     communities = {}
     result = {}
     for team in teams:
         if team.month_id not in communities:
             communities[team.month_id] = community_branding(viewer, team.month.group, team.month)
-        result[team.pk] = _team_branding_assets(team, communities[team.month_id])
+        result[team.pk] = _team_branding_assets(team, communities[team.month_id], presentation=presentation)
     return result
+
+
+def banner_appearance(target):
+    """Preferences belong to the displayed entity, independently of artwork origin."""
+    if not target.gradient_enabled:
+        return {}
+    # Integer model/form validation bounds these; clamp defensively for CSS output.
+    coverage = max(0, min(100, int(target.gradient_coverage)))
+    darkness = max(0, min(100, int(target.gradient_darkness)))
+    return {'custom': True, 'style': f'--branding-coverage:{coverage}%;--branding-darkness:{darkness / 100:.2f}'}
