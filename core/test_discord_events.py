@@ -207,7 +207,7 @@ class DiscordEventsTests(TestCase):
         self.activate('community');self.month.discord_community_opt_in=True;self.month.save()
         self.month.transition_to('finalizing');self.month.transition_to('completed');self.month.transition_to('completed')
         self.month.transition_to('finalizing',confirm_reversal=True,confirm_completed_recovery=True)
-        self.assertEqual(list(DiscordEventDelivery.objects.values_list('category',flat=True)),['challenge_close','challenge_complete','results'])
+        self.assertEqual(list(DiscordEventDelivery.objects.values_list('category',flat=True)),['challenge_close','challenge_complete'])
         self.assertFalse(DiscordEventDelivery.objects.filter(destination='moderator').exists())
 
     def test_registration_distinct_from_lifecycle_and_no_overdue_flood(self):
@@ -229,9 +229,23 @@ class DiscordEventsTests(TestCase):
         self.assertEqual(community_embeds(self.other,['active']),[])
         self.month.transition_to('finalizing');self.assertEqual(community_embeds(self.group,['results']),[])
         self.month.transition_to('completed');text=json.dumps(community_embeds(self.group,['results','participation']))
-        self.assertIn('Published Results',text);self.assertIn('registered Readers',text);self.assertNotIn('approved_pages',text)
+        self.assertEqual(text,'[]');self.assertNotIn('approved_pages',text)
         with override_settings(NORTHBOUND_URL='http://192.168.0.11:8061'):
             self.assertNotIn('192.168',json.dumps(community_embeds(self.group,['results'])))
+
+    def test_metadata_exception_does_not_grant_statistics_or_results_audience_access(self):
+        from .discord_community import results_visible, participation_visible
+        self.activate('community');self.month.discord_community_opt_in=True
+        self.month.team_standings_visibility='everybody';self.month.reader_scores_visibility='everybody';self.month.save()
+        self.book()
+        for status in ['active','finalizing','completed','archived']:
+            if self.month.status!=status:self.month.transition_to(status)
+            self.assertFalse(results_visible(self.month));self.assertFalse(participation_visible(self.month))
+            self.assertEqual(community_embeds(self.group,['participation','results']),[])
+            text=json.dumps(community_embeds(self.group,['dates','participation','results']))
+            self.assertIn(self.month.name,text);self.assertNotIn('registered Readers',text);self.assertNotIn('Final standings',text)
+        self.assertFalse(DiscordEventDelivery.objects.filter(category='results').exists())
+        self.assertTrue(DiscordEventDelivery.objects.filter(category='challenge_complete').exists())
 
     def test_community_drafts_and_inactive_groups_fail_closed(self):
         self.activate('community');self.month.discord_community_opt_in=True;self.month.save()

@@ -3,7 +3,7 @@
 {{ destination.schedule_form.non_field_errors }}
 <fieldset{% if not editable %} disabled{% endif %}>
 <legend>Notification Preferences</legend>
-<p class="muted">Scheduled report categories. {% if destination.key == 'community' %}Only opted-in Challenges and publicly shareable information are included. Restricted participation and unpublished results are omitted.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
+<p class="muted">Scheduled report categories. {% if destination.key == 'community' %}Only opted-in Challenges and publicly shareable information are included. Participation and results require visibility authorization for the Discord audience and are currently omitted, including after completion.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
 <div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>
 <h3>Immediate Notifications</h3><input type="hidden" name="immediate_controls" value="1">
 <label for="{{ destination.schedule_form.immediate_enabled.id_for_label }}">{{ destination.schedule_form.immediate_enabled }} Enable immediate notifications</label>{{ destination.schedule_form.immediate_enabled.errors }}

@@ -647,10 +647,12 @@ remain disabled. No production, image, workflow or Stage C change was made.
 
 Stage C supersedes the earlier policy-deferred Community category descriptions.
 The approved opt-in policy permits non-Draft Challenge identity, dates and
-registration metadata for the configured Community audience. Existing membership
-requirements on links remain; Drafts, restricted participation and unpublished
-results are excluded. Participation counts and final-results notices are limited
-to the existing Completed/Archived release boundary. See
+registration metadata for the configured Community audience. This is an explicit
+metadata exception; existing membership requirements on links remain. Participation
+and results require authorization for the Discord audience, not merely member
+visibility. Current rules do not authorize unauthenticated recipients, even after
+completion or with Everybody standings, so participation/results are omitted.
+Drafts are always excluded; opt-in completion lifecycle notices remain permitted. See
 [DISCORD_EVENTS.md](DISCORD_EVENTS.md) for authoritative producer boundaries,
 retry/uncertainty semantics, privacy rules and the exact controlled-test procedure.
 

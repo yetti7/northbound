@@ -12,10 +12,20 @@ def community_eligible(month):
         and month.status in {'upcoming','active','finalizing','completed','archived'})
 
 
+def participation_visible(month):
+    # Discord recipients have no authenticated Northbound identity. The metadata
+    # exception does not grant them membership or statistics permissions.
+    from django.contrib.auth.models import AnonymousUser
+    from .permissions import can_view_challenge, can_view_challenge_card_statistics
+    audience = AnonymousUser()
+    return community_eligible(month) and can_view_challenge(audience, month) and can_view_challenge_card_statistics(audience, month)
+
+
 def results_visible(month):
-    # Completed/Archived results are released to every Group member by the
-    # existing competition permission function. Never publish live scores.
-    return community_eligible(month) and month.status in {'completed','archived'}
+    from django.contrib.auth.models import AnonymousUser
+    from .permissions import can_view_challenge, can_view_team_standings
+    audience = AnonymousUser()
+    return community_eligible(month) and month.status in {'completed','archived'} and can_view_challenge(audience, month) and can_view_team_standings(audience, month)
 
 
 def community_embeds(group, categories, *, send_empty=False):
@@ -32,9 +42,8 @@ def community_embeds(group, categories, *, send_empty=False):
             fields.append({'name':'Registration','value':'Open' if month.registration_is_open else 'Closed','inline':False})
         if 'dates' in selected and month.starts_on and month.ends_on:
             fields.append({'name':'Challenge Dates','value':f'{month.starts_on:%b %d, %Y} – {month.ends_on:%b %d, %Y}','inline':False})
-        # This is the exact release boundary of can_view_challenge_card_statistics;
-        # active/upcoming roster counts are restricted and never projected.
-        if 'participation' in selected and month.status in {'completed','archived'}:
+        # Completion releases member access, not access for arbitrary Discord recipients.
+        if 'participation' in selected and participation_visible(month):
             fields.append({'name':'Participation','value':f'{month.enrollments.count()} registered Readers','inline':False})
         if 'results' in selected and results_visible(month):
             fields.append({'name':'Published Results','value':'Final standings are available in Northbound.','inline':False})

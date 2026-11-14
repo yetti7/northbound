@@ -71,12 +71,16 @@ make non-Draft Challenges visible to every active Group member; Drafts remain
 private. Only opted-in, non-Draft Challenges in the same active Group are eligible.
 This sharing opt-in does not create anonymous web visibility: direct links still
 require the existing authenticated Group membership. Active/Upcoming identity,
-dates and registration use this approved metadata boundary. Participation is limited to Completed/Archived aggregate
-registration counts, matching existing Challenge card-statistics release rules.
-Final-results notices/links require Completed/Archived, when existing permissions
-release standings to every Group member. No live scores, individual Reader names,
-moderation data, hidden standings or unpublished results are included. Private/LAN
-application URLs are omitted, including in development. No public route is added.
+dates and registration use this approved metadata exception. It does not authorize
+participation, individual activity, standings or results for arbitrary Discord
+recipients. Those fields use existing permissions with an unauthenticated audience
+because no recipient identity/membership can be verified. Current Northbound rules
+deny that audience, including Completed/Archived and “Everybody” standings; those
+categories are therefore omitted. Saved selections are retained without granting
+access. Results events are neither enqueued nor delivered while unauthorized.
+Completion lifecycle announcements remain permitted basic metadata. No live scores,
+Reader names or moderation data are included. Private/LAN application URLs are
+omitted, including in development. No public route or visibility rule is added.
 All six scheduled Community categories and manual Current Status use the same
 projection; omitted categories cannot leak through other fields.
 

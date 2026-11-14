@@ -33,7 +33,7 @@ def enqueue(*, month, categories, source_kind, source_id, review_category='', pa
     """
     from .models import DiscordReportSchedule, DiscordEventDelivery, TeamAssignment
     from .discord_notifications import destination_fields
-    from .discord_community import community_eligible
+    from .discord_community import community_eligible, results_visible
     assert transaction.get_connection().in_atomic_block
     destination = 'moderator' if review_category else 'community'
     schedule = DiscordReportSchedule.objects.select_related('configuration__group').filter(
@@ -45,7 +45,7 @@ def enqueue(*, month, categories, source_kind, source_id, review_category='', pa
     enabled, secret = destination_fields(destination)
     if not category or not month.group.is_active or not getattr(config, enabled) or not getattr(config, secret):
         return None
-    if destination == 'community' and not community_eligible(month):
+    if destination == 'community' and (not community_eligible(month) or (category=='results' and not results_visible(month))):
         return None
     now = timezone.now()
     team_id = None
@@ -258,6 +258,10 @@ def event_payload(row):
     month = row.challenge
     stamp = row.created_at.isoformat()
     if row.destination=='community':
+        from django.core.exceptions import ValidationError
+        from .discord_community import results_visible
+        if row.category=='results' and not results_visible(month):
+            raise ValidationError('Results are not authorized for the Discord audience.')
         titles={'registration_open':'Registration Is Open!','registration_close':'Registration Closed',
             'challenge_start':'Challenge Begins!','challenge_close':'Challenge Submissions Closed',
             'challenge_complete':'Challenge Complete!','results':'Final Results'}
