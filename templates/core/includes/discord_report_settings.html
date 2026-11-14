@@ -1,0 +1,33 @@
+{% load tz %}
+<div class="discord-report-settings" data-discord-report>
+{% if editable %}<form method="post" class="stacked-form" data-report-form>{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="preferences">{% endif %}
+{{ destination.schedule_form.non_field_errors }}
+<fieldset{% if not editable %} disabled{% endif %}>
+<legend>Notification Preferences</legend>
+<h4>Scheduled Reports</h4>
+{% if destination.unavailable_categories %}<p class="notice neutral">Challenge categories are unavailable until a public-sharing policy is approved. A Challenge opt-in is necessary but does not override privacy restrictions.</p><div class="discord-category-list">{% for key,label in destination.unavailable_categories %}<label><input type="checkbox" disabled> {{ label }} — unavailable</label>{% endfor %}</div>{% else %}<p>Include only the selected review categories. Totals count review tasks, not unique books.</p><div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>{% endif %}
+<h4>Immediate Notifications — Coming in Stage C</h4>
+<label><input type="checkbox" disabled> Enable immediate notifications — not available yet</label><p class="muted">Planned preferences can be saved below, but no events are detected or delivered in Stage B.</p>
+<div class="discord-category-list">{{ destination.schedule_form.immediate_categories }}{{ destination.schedule_form.immediate_categories.errors }}</div>
+{% if destination.key == 'community' %}<p class="muted">Public-safe participation milestones are also deferred until their privacy and event rules are defined.</p>{% endif %}
+<h3>Scheduling</h3>
+<p><strong>Group timezone:</strong> {{ destination.schedule_status.timezone }}. <a href="{% url 'group-edit' group.slug %}">Group Settings</a> controls the timezone for both destinations and existing Group displays.</p>
+<label for="{{ destination.schedule_form.scheduled_enabled.id_for_label }}">{{ destination.schedule_form.scheduled_enabled }} Enable scheduled reports</label>{{ destination.schedule_form.scheduled_enabled.errors }}
+<div data-frequency-controls{% if not destination.schedule_form.scheduled_enabled.value %} hidden{% endif %}>
+<p>{{ destination.schedule_form.frequency.label_tag }}{{ destination.schedule_form.frequency }}{{ destination.schedule_form.frequency.errors }}</p>
+<div data-fixed-times{% if destination.schedule_form.frequency.value != 'daily' and destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.times.label_tag }}{{ destination.schedule_form.times }}{{ destination.schedule_form.times.errors }}<span class="muted" id="{{ destination.schedule_form.times.auto_id }}_helptext">{{ destination.schedule_form.times.help_text }}</span></p></div>
+<div data-weekdays{% if destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.weekdays.label_tag }}</p><div class="discord-category-list">{{ destination.schedule_form.weekdays }}{{ destination.schedule_form.weekdays.errors }}</div></div>
+<label for="{{ destination.schedule_form.send_empty.id_for_label }}">{{ destination.schedule_form.send_empty }} {{ destination.schedule_form.send_empty.label }}</label>
+<p class="muted">Default off. Community reports currently have no eligible Challenge content; only an explicitly enabled empty report can send the neutral public card.</p>
+{% if destination.schedule_form.retire_legacy %}<p>{{ destination.schedule_form.retire_legacy }} {{ destination.schedule_form.retire_legacy.label }}{{ destination.schedule_form.retire_legacy.errors }}</p>{% endif %}
+<p class="muted">Intervals use consistent UTC boundaries. Daily, Weekly and Custom Times use the Group's local clock. Spring-forward missing times are skipped; repeated fall-back times run once. Missed reports are not replayed.</p>
+</div>
+</fieldset>
+{% if editable %}<div class="action-row"><button class="button primary">Save {{ destination.label }} Preferences</button></div></form>{% endif %}
+<div class="discord-schedule-status"><h4>Scheduled Delivery Status</h4>
+{% if destination.schedule_status.error %}<p class="notice">{{ destination.schedule_status.error }}</p>{% endif %}
+<p>{{ destination.schedule_status.readiness }}</p>
+<dl class="details"><dt>Latest scheduled result</dt><dd>{{ destination.schedule_status.outcome_label }}</dd><dt>Scheduled reporting</dt><dd>{{ destination.schedule_status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Frequency</dt><dd>{{ destination.schedule_status.frequency }}</dd><dt>Timezone</dt><dd>{{ destination.schedule_status.timezone }}</dd><dt>Scheduler</dt><dd>{{ destination.schedule_status.operational }}</dd>
+{% timezone destination.schedule_status.display_timezone %}<dt>Last scheduled attempt</dt><dd>{{ destination.schedule_status.last_attempt|date:"M j, Y H:i T"|default:"None" }}</dd><dt>Last accepted by Discord</dt><dd>{{ destination.schedule_status.last_sent|date:"M j, Y H:i T"|default:"None" }}</dd><dt>Last failure</dt><dd>{% if destination.schedule_status.last_failure %}{{ destination.schedule_status.last_failure|date:"M j, Y H:i T" }} · {{ destination.schedule_status.failure_label }}{% else %}None{% endif %}</dd><dt>Next scheduled slot</dt><dd>{{ destination.schedule_status.next_run|date:"M j, Y H:i T"|default:"Not scheduled" }}</dd>{% endtimezone %}
+</dl><p class="muted">A configured time is not proof that the scheduler is active or that Discord accepted delivery. Current Status remains manual and does not advance this schedule.</p></div>
+</div>

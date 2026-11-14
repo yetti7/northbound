@@ -273,6 +273,59 @@ class DiscordManualDelivery(models.Model):
         ordering = ["-attempted_at", "-pk"]
 
 
+class DiscordReportSchedule(models.Model):
+    class Frequency(models.TextChoices):
+        DISABLED = "disabled", "Disabled"
+        HALF_HOUR = "30m", "Every 30 minutes"
+        HOUR = "1h", "Every hour"
+        SIX_HOURS = "6h", "Every 6 hours"
+        TWELVE_HOURS = "12h", "Every 12 hours"
+        DAILY = "daily", "Daily"
+        WEEKLY = "weekly", "Weekly"
+        CUSTOM = "custom", "Custom Times"
+
+    configuration = models.ForeignKey(GroupDiscordNotification, on_delete=models.CASCADE, related_name="report_schedules")
+    destination = models.CharField(max_length=16, choices=DiscordManualDelivery.Destination.choices)
+    frequency = models.CharField(max_length=16, choices=Frequency.choices, default="disabled")
+    categories = models.JSONField(default=list, blank=True)
+    times = models.JSONField(default=list, blank=True)
+    weekdays = models.JSONField(default=list, blank=True)
+    send_empty = models.BooleanField(default=False)
+    immediate_categories = models.JSONField(default=list, blank=True)
+    configured_at = models.DateTimeField(default=timezone.now)
+    timezone_name = models.CharField(max_length=64, blank=True)
+    revision = models.PositiveIntegerField(default=0)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_outcome = models.CharField(max_length=24, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_failure_category = models.CharField(max_length=32, blank=True)
+    cooldown_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["configuration", "destination"], name="unique_discord_report_destination")]
+
+
+class DiscordReportDelivery(models.Model):
+    schedule = models.ForeignKey(DiscordReportSchedule, on_delete=models.CASCADE, related_name="deliveries")
+    slot_key = models.CharField(max_length=160)
+    scheduled_for = models.DateTimeField()
+    attempted_at = models.DateTimeField(default=timezone.now)
+    outcome = models.CharField(max_length=24, default="claimed")
+    failure_category = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["schedule", "slot_key"], name="unique_discord_report_slot")]
+        ordering = ["-attempted_at", "-pk"]
+
+
+class DiscordSchedulerHeartbeat(models.Model):
+    name = models.CharField(max_length=32, primary_key=True, default="discord")
+    last_seen = models.DateTimeField(default=timezone.now)
+    daemon = models.BooleanField(default=False)
+
+
 class HardcoverConnection(models.Model):
     group = models.OneToOneField(ReadingGroup, on_delete=models.CASCADE, related_name="hardcover_connection")
     encrypted_token = models.TextField()
@@ -488,6 +541,7 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    discord_community_opt_in = models.BooleanField(default=False)
     gradient_enabled = models.BooleanField(default=False)
     gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
     gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])

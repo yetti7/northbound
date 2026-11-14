@@ -11,7 +11,8 @@ from django.views.decorators.http import require_http_methods
 from .discord_notifications import DiscordNotificationForm, configure_notifications, destination_fields
 from .discord_manual import (DESTINATIONS, ACTIONS, FAILURES, destination_diagnostics,
     manual_request_token, read_manual_request, deliver_manual)
-from .models import GroupDiscordNotification, ReadingGroup
+from .models import GroupDiscordNotification, ReadingGroup, DiscordReportSchedule
+from .discord_scheduling import ReportScheduleForm, configure_report_schedule, schedule_diagnostics, COMMUNITY_CATEGORIES
 from .permissions import can_configure_discord_notifications, can_view_discord_notifications
 
 
@@ -31,7 +32,7 @@ def discord_notification_settings(request, group_slug):
     config = GroupDiscordNotification.objects.filter(group=group).first()
     selected = request.POST.get('destination', 'moderator') if request.method == 'POST' else None
     action = request.POST.get('action', 'save') if request.method == 'POST' else None
-    if request.method == 'POST' and (selected not in DESTINATIONS or action not in {'save', *ACTIONS}):
+    if request.method == 'POST' and (selected not in DESTINATIONS or action not in {'save', 'preferences', *ACTIONS}):
         messages.error(request, 'Choose a valid destination and message action.')
         return redirect('group-discord-notifications', group_slug=group.slug)
     if request.method == 'POST' and action in ACTIONS:
@@ -50,12 +51,19 @@ def discord_notification_settings(request, group_slug):
             else:
                 messages.error(request, f'{DESTINATIONS[selected]}: ' + FAILURES.get(attempt.failure_category, FAILURES['delivery_failed']))
         return redirect('group-discord-notifications', group_slug=group.slug)
+    invalid_preferences = None
+    if request.method == 'POST' and action == 'preferences':
+        invalid_preferences, saved = configure_report_schedule(group=group, actor=request.user,
+            destination=selected, data=request.POST)
+        if invalid_preferences.is_valid():
+            messages.success(request, 'Notification preferences saved. Recurring service activation is separate; immediate notifications remain inactive.')
+            return redirect('group-discord-notifications', group_slug=group.slug)
     destinations = []
     for destination, label in DESTINATIONS.items():
         enabled_field, _ = destination_fields(destination)
-        form = DiscordNotificationForm(request.POST if request.method == 'POST' and selected == destination else None,
+        form = DiscordNotificationForm(request.POST if request.method == 'POST' and action == 'save' and selected == destination else None,
             initial={'enabled': bool(config and getattr(config, enabled_field))}, auto_id=destination+'_%s') if editable else None
-        if request.method == 'POST' and selected == destination and form.is_valid():
+        if request.method == 'POST' and action == 'save' and selected == destination and form.is_valid():
             try:
                 configure_notifications(group=group, actor=request.user, destination=destination,
                     enabled=form.cleaned_data['enabled'], webhook_url=form.cleaned_data['webhook_url'],
@@ -65,8 +73,13 @@ def discord_notification_settings(request, group_slug):
             else:
                 messages.success(request, f'{label}: settings saved. No message was sent.')
                 return redirect('group-discord-notifications', group_slug=group.slug)
+        report = DiscordReportSchedule.objects.filter(configuration=config,destination=destination).first() if config else None
+        report_form = invalid_preferences if selected==destination and invalid_preferences else ReportScheduleForm(
+            group=group,destination=destination,schedule=report,legacy_enabled=bool(config and config.enabled))
         destinations.append({'key': destination, 'label': label, 'form': form,
             'status': destination_diagnostics(config, destination, group=group),
+            'schedule_form': report_form, 'schedule_status': schedule_diagnostics(report,group=group),
+            'unavailable_categories': COMMUNITY_CATEGORIES if destination=='community' else [],
             'actions': [{'key': action_key, 'label': action_label, 'token': manual_request_token(
                 actor=request.user, group=group, destination=destination, action=action_key)}
                 for action_key, action_label in ACTIONS.items()] if editable else []})

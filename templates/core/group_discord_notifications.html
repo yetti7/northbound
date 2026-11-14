@@ -1,15 +1,16 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load static %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/discord_settings.css' %}">{% endblock %}
 {% block title %}Discord Notifications · {{ group.name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">Configure separate public and private destinations. Use the message buttons to send manual messages. Saving these settings does not enable automatic notifications.</p></div></div>
+<div class="page-heading"><div><p class="eyebrow"><a href="{% url 'group-detail' group.slug %}">{{ group.name }}</a></p><h1>Discord Notifications</h1><p class="lede">Configure separate public and private destinations. Use the message buttons to send manual messages. Webhook settings and manual actions are separate from scheduled reports. Scheduled delivery requires an activated Discord scheduling service.</p></div></div>
 {% if not editable %}<p class="notice neutral">Moderators have read-only access. A Group Owner or Platform Administrator can configure destinations and send messages.</p>{% endif %}
 {% for destination in destinations %}
 <section class="card page-section" aria-labelledby="{{ destination.key }}-heading">
-<h2 id="{{ destination.key }}-heading">{{ destination.label }}</h2>
+<h2 id="{{ destination.key }}-heading">{{ destination.label }}</h2><h3>Webhook Configuration</h3>
 <p>{% if destination.key == 'community' %}For a public community channel. Test messages identify this Group. Current Status is a branded community card; Challenge details, participation, results and moderation data are excluded.{% else %}For a private moderator channel. Current Status groups book, Theme, Immersive, Bingo, Scavenger Hunt and Photo review tasks by Challenge and Team, without personal or book details.{% endif %}</p>
-<dl class="details"><dt>Manual messages</dt><dd>{{ destination.status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Webhook</dt><dd>{{ destination.status.configured|yesno:"Saved securely,Not configured" }}</dd><dt>Latest manual result</dt><dd>{{ destination.status.last_result }}</dd>{% if destination.status.last_action %}<dt>Last action</dt><dd>{{ destination.status.last_action }}</dd>{% endif %}<dt>Last manual attempt</dt><dd>{{ destination.status.last_attempt|default:"None" }}</dd></dl><p class="muted">Delivery results describe past attempts and may refer to an earlier webhook configuration.</p>
+<dl class="details"><dt>Destination</dt><dd>{{ destination.status.enabled|yesno:"Enabled,Disabled" }}</dd><dt>Webhook</dt><dd>{{ destination.status.configured|yesno:"Saved securely,Not configured" }}</dd><dt>Latest manual result</dt><dd>{{ destination.status.last_result }}</dd>{% if destination.status.last_action %}<dt>Last action</dt><dd>{{ destination.status.last_action }}</dd>{% endif %}<dt>Last manual attempt</dt><dd>{{ destination.status.last_attempt|default:"None" }}</dd></dl><p class="muted">Delivery results describe past attempts and may refer to an earlier webhook configuration.</p>
 <ul>{% for notice in destination.status.notices %}<li>{{ notice }}</li>{% endfor %}</ul>
-<details><summary>Automatic delivery status</summary><p>{{ destination.status.scheduler }}</p>{% if destination.key == 'moderator' %}<p>Existing hourly review digest: {{ destination.status.legacy_digest_enabled|yesno:"enabled,disabled" }}. Manual actions do not change its schedule or delivery history.</p>{% else %}<p>Automatic community announcements are not enabled.</p>{% endif %}</details>
+<details><summary>Legacy hourly digest status</summary><p>{{ destination.status.scheduler }}</p>{% if destination.key == 'moderator' %}<p>Existing hourly review digest: {{ destination.status.legacy_digest_enabled|yesno:"enabled,disabled" }}. Manual actions do not change its schedule or delivery history.</p>{% else %}<p>Automatic community announcements are not enabled.</p>{% endif %}</details>
 {% if editable %}
 <form method="post" class="stacked-form">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="save">
 {{ destination.form.as_p }}
@@ -18,7 +19,10 @@
 </form>
 <div class="action-row">{% for action in destination.actions %}<form method="post">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="{{ action.key }}"><input type="hidden" name="request_token" value="{{ action.token }}"><button class="button secondary" aria-label="Send {{ action.label }} to {{ destination.label }}">Send {{ action.label }}</button></form>{% endfor %}</div>
 {% endif %}
+{% include 'core/includes/discord_report_settings.html' %}
 </section>
 {% endfor %}
 <a class="button secondary" href="{{ logical_parent_url }}">Back to Group Settings</a>
 {% endblock %}
+
+{% block extra_scripts %}<script src="{% static 'js/discord_scheduling.js' %}" defer></script>{% endblock %}

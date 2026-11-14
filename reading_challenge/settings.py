@@ -225,3 +225,6 @@ if not DEBUG:
 # Separate opt-in: neither ordinary scheduling nor a restored database enables delivery.
 NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED = env_bool("NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED", False)
 NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT = env_bool("NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT", False)
+
+# Separate from lifecycle scheduling; explicit activation is required.
+NORTHBOUND_DISCORD_SCHEDULER_ENABLED = env_bool("NORTHBOUND_DISCORD_SCHEDULER_ENABLED", False)

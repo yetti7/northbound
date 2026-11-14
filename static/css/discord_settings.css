@@ -1,0 +1,12 @@
+.discord-report-settings{border-top:1px solid var(--border);margin-top:1.5rem;padding-top:1rem;min-width:0}
+.discord-report-settings [hidden]{display:none!important}
+.discord-report-settings fieldset{border:0;margin:0;padding:0;min-width:0}
+.discord-report-settings legend{font-size:1.15rem;font-weight:700;margin:0 0 .75rem}
+.discord-category-list{margin:.75rem 0;overflow-wrap:anywhere}
+.discord-category-list>div{display:grid;gap:.5rem;grid-template-columns:repeat(2,minmax(0,1fr))}
+.discord-category-list label{display:flex;align-items:center;gap:.6rem;min-height:44px}
+.discord-report-settings input[type=checkbox]{width:auto;min-width:18px;flex-shrink:0}
+.discord-report-settings select,.discord-report-settings textarea{max-width:100%;width:100%}
+.discord-report-settings .action-row{margin:1rem 0;flex-wrap:wrap}
+.discord-schedule-status{margin-top:1rem;overflow-wrap:anywhere}
+@media(max-width:640px){.discord-category-list>div{grid-template-columns:minmax(0,1fr)}}

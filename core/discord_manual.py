@@ -13,7 +13,7 @@ from django.views.decorators.debug import sensitive_variables
 
 from . import discord_notifications as discord
 from .integrations.secrets import decrypt_token, TokenDecryptionError
-from .models import DiscordManualDelivery, GroupDiscordNotification, ReadingGroup
+from .models import DiscordManualDelivery, GroupDiscordNotification, ReadingGroup, DiscordReportSchedule
 from .permissions import can_configure_discord_notifications
 
 DESTINATIONS = dict(DiscordManualDelivery.Destination.choices)
@@ -92,6 +92,7 @@ def destination_diagnostics(config, destination, *, group):
         _, failure = _webhook(config, destination)
         if failure: notices.append(FAILURES[failure])
     cooling = DiscordManualDelivery.objects.filter(group=group, destination=destination, retry_at__gt=timezone.now()).exists()
+    cooling = cooling or DiscordReportSchedule.objects.filter(configuration__group=group, destination=destination, cooldown_until__gt=timezone.now()).exists()
     if cooling: notices.append(FAILURES['rate_limited'])
     if not notices: notices.append('Ready for manual testing. A saved URL is not proof of successful Discord delivery.')
     latest = DiscordManualDelivery.objects.filter(group=group, destination=destination).first()
@@ -148,7 +149,8 @@ def deliver_manual(*, group, actor, destination, action, request_id):
             return DiscordManualDelivery.objects.get(request_id=request_id), False
         config = GroupDiscordNotification.objects.filter(group=group).first()
         failure = _blocking_reason(config, destination)
-        if not failure and DiscordManualDelivery.objects.filter(group=group, destination=destination, retry_at__gt=timezone.now()).exists():
+        if not failure and (DiscordManualDelivery.objects.filter(group=group, destination=destination, retry_at__gt=timezone.now()).exists()
+                or DiscordReportSchedule.objects.filter(configuration__group=group,destination=destination,cooldown_until__gt=timezone.now()).exists()):
             failure = 'rate_limited'
         url = ''
         if not failure: url, failure = _webhook(config, destination)

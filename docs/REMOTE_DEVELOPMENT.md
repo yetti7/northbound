@@ -474,3 +474,115 @@ Dev actions (Community Test/Status, Moderator Test/Status) each sent one embed i
 one message and received HTTP 204. Existing records across 63 tables and all 40
 media files were preserved; four manual outcome rows were added intentionally.
 Health remained HTTP 200 and the scheduler/legacy digests remained disabled.
+
+## Discord Stage B: isolated scheduled reports (not activated)
+
+Migration `core.0080_discord_report_schedules` adds:
+
+- `DiscordReportSchedule`: one optional preference/cursor row per existing
+  configuration and destination. Frequency defaults to disabled; empty reports
+  default off. Planned immediate categories are preferences only, with no active
+  enable flag or event hooks.
+- `DiscordReportDelivery`: persistent unique schedule/slot claims and sanitized
+  outcomes, independent of manual and legacy hourly history.
+- `DiscordSchedulerHeartbeat`: a recent-check indication, not an inferred promise
+  from a configured frequency.
+- `ChallengeMonth.discord_community_opt_in=False` for existing and new Challenges,
+  exposed through the already-authorized General Settings editor. It neither
+  changes visibility nor publishes historical announcements.
+
+Existing ciphertext, manual history and hourly digest fields/receipts are preserved.
+An Owner explicitly switching an already-enabled legacy hourly digest to a new
+Moderator schedule must select its retirement checkbox. This changes only the old
+`enabled` flag, retaining its ciphertext and history; otherwise the new schedule is
+rejected, preventing duplicate legacy/new reports. There is no automatic migration
+or backfill of schedules. Source/schema rollback can leave the additive schema
+in place; restore the pre-Stage-B source while keeping the new worker unactivated.
+The private configuration/source/consistent SQLite backup is
+`/srv/docker/northbound-dev/rollback-discord-stageb-1fd6500`.
+
+Supported frequencies are Disabled, 30 minutes, hourly, 6 hours, 12 hours, daily,
+weekly and Custom Times. Intervals align to Unix UTC boundaries, independent of the
+server/Group clock. Fixed schedules use the existing IANA Group timezone. Daily
+requires one time, Weekly one weekday and time; Custom Times applies its sorted,
+unique HH:MM list to all selected weekdays. Duplicate or malformed times, invalid
+weekdays/categories and invalid IANA timezones are rejected server-side. Group
+Settings remains the timezone editor, affecting both destinations and existing
+Group displays. Changing it resets future scheduling instead of replaying old slots.
+
+Spring-forward nonexistent times are skipped; fall-back repeated times use the
+first occurrence only. Local date/time slot keys prevent repeated-hour duplicates.
+A dedicated processor checks every 30 seconds by default (15–60 seconds configurable),
+so normal precision is roughly 30 seconds plus current processing/transport time.
+Slots more than 90 seconds late are skipped, with one missed receipt rather than a
+catch-up flood. Restarts/configuration changes schedule future slots. Claims commit
+before network I/O, and are never automatically retried, including uncertain crashes
+or partial multi-message delivery. Rate limits retain cooldowns; manual and scheduled
+paths respect the same destination's cooldown without sharing delivery claims.
+Webhook replacement/configuration changes during preparation stop the old attempt;
+future slots use current settings. An in-flight HTTP request cannot be recalled.
+
+Moderator reports filter the six existing review categories before calculating
+Team/Challenge/Group task totals. Unselected/empty sections disappear; task eligibility,
+Team attribution and scoring remain unchanged. Empty checks send nothing by default;
+when explicitly enabled they send the existing All Caught Up card. Manual Current
+Status remains independent and shows the complete current dashboard.
+
+Community Challenge, registration, date, participation and results categories remain
+unavailable pending an approved public-sharing policy. They are visible with an
+explanation and are rejected if forged in a request. Challenge opt-in is necessary,
+but never sufficient to bypass that policy. Community schedules with empty reports
+off send nothing; explicitly enabled empty reports can send only the existing neutral
+public card. No restricted Challenge data is queried or published. Immediate category
+preferences are labeled Coming in Stage C; event detection, outbox/retries and event
+delivery remain unimplemented. Unvalidated participation-milestone events are unavailable.
+
+### Dedicated entry point and future activation
+
+`run_discord_scheduler` imports no lifecycle processor. It neither transitions
+Challenges nor changes submissions, scores or unrelated jobs. This command is
+implemented but **no recurring service is enabled**:
+
+```sh
+# Read-only inspection is safe with all scheduling gates closed.
+nbdev 'docker exec northbound-dev python manage.py run_discord_scheduler --once --dry-run'
+```
+
+Dry run creates no heartbeat, receipt or delivery. Normal execution refuses to run
+unless `NORTHBOUND_DISCORD_SCHEDULER_ENABLED=1`, whose default is false. The settings
+page distinguishes configuration readiness, recent worker heartbeat (90-second
+freshness), accepted delivery and unknown/failed/skipped outcomes. One-time checks
+are identified separately from recent daemon activity. Manual actions never move
+scheduled cursors or mark reports delivered.
+
+**Activation requires separate authorization.** The concrete steps would be:
+
+1. Add `NORTHBOUND_DISCORD_SCHEDULER_ENABLED: "1"` only to the Dev Compose environment
+   and recreate only Dev so both the app and worker see it. Preserve the two already
+   approved manual Discord gates at 1 and `NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED=0`.
+2. An Owner configures each intended destination, category set, cadence and optional
+   empty-report preference; leaves legacy hourly digests disabled; and confirms the
+   Group timezone. Community content remains restricted as described above.
+3. Start/supervise only `docker exec northbound-dev python manage.py
+   run_discord_scheduler --interval 30` as a dedicated foreground worker, for example
+   through a separately reviewed service unit. No such service/unit has been created
+   or started by this task. Do not enable `run_challenge_scheduler` for Discord.
+4. Verify heartbeat, next slots, privacy and actual accepted delivery after that
+   authorization. No repeated real messages are authorized or sent in Stage B.
+
+To stop future scheduled delivery, disable the dedicated worker/gate or a destination's
+schedule; preserve history. Ordinary source synchronization must not replace approved
+Dev environment values with repository defaults. Production remains outside this scope.
+
+Stage B validation covered 112 focused Django cases across scheduling and regression
+runs, plus the JavaScript visibility checks. Read-only Owner/Moderator renders for
+all eight frequencies and validation errors passed at 375/440/1280px (54 page
+combinations, each containing both destinations). Native frequency changes showed
+only applicable time/day controls; Moderator fields stayed disabled. The migration
+rehearsal and Dev cutover preserved all pre-existing row values across 63 tables,
+webhook ciphertext, manual/legacy histories and 40 media files. This task initiated no real Discord
+sends. Concurrent manual activity was preserved separately. Schedules, report
+receipts and heartbeat remain empty, every
+Challenge opt-in remains false, both recurring scheduler gates are off, and health
+is HTTP 200. Moderator empty-state wording explicitly scopes itself to selected
+report categories; manual dashboards continue to describe the full queue.

@@ -176,11 +176,13 @@ def community_status_embed(group, timestamp):
     return value
 
 
-def moderator_status_embeds(group, timestamp):
-    summary = discord.group_pending_review_counts(group)
+def moderator_status_embeds(group, timestamp, *, summary=None, selected_only=False):
+    if summary is None:
+        summary = discord.group_pending_review_counts(group)
     if not summary['total']:
+        scope = ' in the selected report categories' if selected_only else ''
         value = embed(group=group, title='✅ All Caught Up!',
-            description=f'There are currently no pending reviews for **{clip(name(group.name, markdown=True), 1000)}**.',
+            description=f'There are currently no pending reviews{scope} for **{clip(name(group.name, markdown=True), 1000)}**.',
             color=SUCCESS_COLOR, timestamp=timestamp)
         link = link_field('View Northbound', application_url('group-detail', [group.slug]))
         if link:
@@ -200,7 +202,8 @@ def moderator_status_embeds(group, timestamp):
         description = (f'**{clip(name(row["challenge_name"], markdown=True), 1000)}**\nItems awaiting moderator attention.\n'
             f'**Pending Review Tasks (Group): {summary["total"]}**\n'
             f'Pending Review Tasks (Challenge): {row["total"]}\n'
-            'A book may need multiple reviews; these totals count tasks, not unique submissions.')
+            'A book may need multiple reviews; these totals count tasks, not unique submissions.'
+            + ('\nSelected report categories only.' if selected_only else ''))
         value = embed(group=group, title='📚 Northbound — Pending Reviews', description=description,
             color=MODERATOR_COLOR, timestamp=timestamp)
         link = link_field('Open Review Queue', application_url('review-queue', [group.slug, row['challenge_id']]))

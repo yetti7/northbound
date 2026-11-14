@@ -34,7 +34,7 @@ def validate_webhook(value):
 
 
 class DiscordNotificationForm(forms.Form):
-    enabled = forms.BooleanField(required=False, label='Enable manual messages')
+    enabled = forms.BooleanField(required=False, label='Enable destination')
     webhook_url = forms.CharField(required=False, max_length=2048, strip=True,
         widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
         label='New Discord webhook URL', help_text='Leave blank to keep the saved webhook. It is never displayed.')
