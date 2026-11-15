@@ -4088,6 +4088,12 @@ def submission_remove(request, group_slug, month_pk, pk):
         try:
             submission.save(update_fields=["is_removed", "removed_at", "removed_by", "removal_reason"])
         except ValidationError as exc:
+            if request.GET.get('workspace')=='1':
+                return render(request,'core/confirm_remove.html',{'title':f'Void Submission: {submission.title}?',
+                    'action_label':'Void Submission','eyebrow':'Submission management','workspace_state_action':True,
+                    'description':'The submission remains unchanged. Review the reason before trying again.',
+                    'reason':request.POST.get('reason',''),'error':'Nothing was saved. '+' '.join(exc.messages),
+                    'cancel_url':_workspace_url(request,submission)},status=400)
             messages.error(request, "Nothing was saved. " + " ".join(exc.messages))
             return redirect(submission.month)
         if submission.participation_period_id:
@@ -4100,8 +4106,11 @@ def submission_remove(request, group_slug, month_pk, pk):
             refresh_submission_score(submission)
         AuditEvent.objects.create(actor=request.user, group=submission.month.group, action="submission.removed", object_type="BookSubmission", object_id=str(submission.pk), summary=f"Removed {submission.title} by {submission.participant.user.username}. Reason: {submission.removal_reason or 'Not provided'}")
         messages.success(request, "Submission voided and removed from active totals. Its audit record was preserved.")
+        if request.GET.get("workspace")=="1":
+            from .submission_workspace import state_return_url
+            return redirect(state_return_url(request,submission))
         return redirect(submission.month)
-    return render(request, "core/confirm_remove.html", {"title": f"Void Submission: {submission.title}?", "action_label": "Void Submission", "eyebrow": "Submission management", "description": "The entry will disappear from active totals but remain recoverable in the database audit history.", "cancel_url": submission.month.get_absolute_url()})
+    return render(request, "core/confirm_remove.html", {"title": f"Void Submission: {submission.title}?", "action_label": "Void Submission", "eyebrow": "Submission management", "description": "The entry will disappear from active totals but remain recoverable in the database audit history.", "workspace_state_action": request.GET.get("workspace")=="1", "cancel_url": _workspace_url(request,submission) if request.GET.get("workspace")=="1" else submission.month.get_absolute_url()})
 
 
 @login_required
@@ -4136,14 +4145,20 @@ def submission_restore(request, group_slug, month_pk, pk):
         else:
             submission.refresh_from_db()
             messages.success(request, "Submission restored.")
+            if request.GET.get("workspace")=="1":
+                from .submission_workspace import state_return_url
+                return redirect(state_return_url(request,submission))
             if submission_timeline(request.user, submission) is not None:
                 return redirect("submission-history", group_slug=group_slug, month_pk=month_pk, pk=pk)
             return redirect(fallback)
+    if request.GET.get('workspace')=='1':
+        from .submission_workspace import state_return_url
+        fallback=state_return_url(request,submission)
     eligible = ordinary_restore_preserves_attribution(submission)
     return render(request, "core/submission_restore.html", {
         "submission": submission, "cancel_url": fallback, "eligible": eligible,
         "confirmation": staff_restore_confirmation(submission, request.user),
-        "reason": reason, "error": error,
+        "reason": reason, "error": error, "workspace_state_action":request.GET.get("workspace")=="1",
     }, status=400 if error else 200)
 
 
@@ -6580,6 +6595,8 @@ def botm_match_review(request, group_slug, month_pk, pk, decision):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, f"BOTM match {decision}ed.")
+    if request.POST.get('workspace_return')=='1':
+        return redirect(_workspace_url(request,match.submission,'qualifications'))
     return redirect("botm-match-list", group_slug=group_slug, month_pk=month_pk)
 
 
@@ -6631,6 +6648,8 @@ def personal_tbr_match_review(request, group_slug, month_pk, pk, decision):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, f"Personal TBR match {decision}ed.")
+    if request.POST.get('workspace_return')=='1':
+        return redirect(_workspace_url(request,match.submission,'qualifications'))
     return redirect("personal-tbr-match-list", group_slug=group_slug, month_pk=month_pk)
 
 
@@ -6949,6 +6968,16 @@ def review_queue(request, group_slug, month_pk):
         "prompt_report_available": prompt_report_available, "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
 
 
+def _workspace_render(request,template,context,section):
+    from .submission_workspace import render_workspace
+    return render_workspace(request,template,context,section)
+
+
+def _workspace_url(request,submission,section='overview'):
+    from .submission_workspace import section_url
+    return section_url(request,submission,section)
+
+
 def _annotate_submission_edit(user, submissions):
     from .permissions import can_edit_submission
     from .immersive_ui import _readable
@@ -7029,7 +7058,7 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
         return HttpResponseForbidden('You no longer have permission to edit this submission, or the Challenge is read-only.')
     if request.method not in {'GET', 'POST'}:
         return HttpResponse('Use GET or POST.', status=405)
-    destination = _submission_edit_destination(request.user, submission)
+    destination = _workspace_url(request,submission,'edit')
     initial = {'version': correction_version(submission, request.user)} if request.method == 'GET' else None
     # Retain a separate display object: ModelForm validation mutates its instance.
     from copy import copy
@@ -7100,7 +7129,7 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
             if preview is None:
                 messages.success(request, 'Submission corrections saved. Scores and applicable bonuses are up to date.'
                     if corrected.status == 'approved' else 'Submission corrections saved. The submission is pending review.')
-                return redirect(_submission_edit_destination(request.user, corrected))
+                return redirect(_workspace_url(request,corrected,'edit'))
     if request.method == 'POST' and 'version' in form.errors:
         form.errors.pop('version')
         form.add_error(None, 'The edit session is unavailable. Reload the submission before editing again.')
@@ -7115,27 +7144,28 @@ def submission_edit(request, group_slug, month_pk, pk, workflow='advanced'):
         responses = [(field.name.removeprefix('theme_response_'), field) for field in form.visible_fields()
                      if field.name.startswith('theme_response_') and not field.field.disabled]
         errors = set(form.errors)
-        return render(request, 'core/submission_editor.html', {
+        return _workspace_render(request, 'core/submission_editor.html', {
             'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
             'operation': operation, 'preview_effects': preview_effects(preview) if preview else [],
             'preview_editions': preview_editions(preview) if preview else [],
-            'cancel_url': reverse('submission-manage', args=[group_slug, month_pk, pk]),
-            'edit_url': request.path, 'reload_required': reload_required,
+            'cancel_url': _workspace_url(request,submission),
+            'edit_url': _workspace_url(request,submission,'edit'), 'reload_required': reload_required,
             'association_changed': association_changed,
-            'book_open': association_changed or bool(errors & {'title', 'author', 'edition', 'association_mode'}),
-            'pages_open': bool(errors & {'submitted_pages', 'completed_on', 'manual_page_override'}),
+            'book_open': request.method == 'GET' or association_changed or bool(errors & {'title', 'author', 'edition', 'association_mode'}),
+            'pages_open': request.method == 'GET' or bool(errors & {'submitted_pages', 'completed_on', 'manual_page_override'}),
             'themes_open': bool(errors & {'themes', 'confirm_theme_removal'}) or any(key.startswith('theme_response_') for key in errors),
             'theme_responses': responses, 'original_themes': sorted(form.original_theme_ids),
-        })
-    return render(request, 'core/submission_edit.html', {
+        }, 'edit')
+    return _workspace_render(request, 'core/submission_edit.html', {
         'submission': submission, 'month': submission.month, 'form': form, 'preview': preview,
         'operation': operation, 'workflow': workflow, 'show_association': workflow != 'pages',
         'preview_effects': preview_effects(preview) if preview else [],
         'preview_editions': preview_editions(preview) if preview else [],
         'cancel_url': destination, 'reload_required': reload_required,
-        'edit_url': request.path,
+        'edit_url': request.get_full_path(),
         'cover_url': submission.catalog_book.cover_url if submission.catalog_book_id else '',
-    })
+        'post_url': request.get_full_path(),
+    }, 'edit')
 
 
 @login_required
@@ -7150,15 +7180,18 @@ def submission_manage(request, group_slug, month_pk, pk):
         return HttpResponseForbidden('Submission correction permission is required.')
     if request.method != 'GET':
         return HttpResponse('Use GET.', status=405)
-    _annotate_submission_edit(request.user, [submission])
-    return render(request, 'core/submission_manage.html', {
-        'submission': submission, 'month': submission.month, 'editable': editable, 'administrative_credit': administrative_credit,
-        'timeline': submission_timeline(request.user, submission),
-        'can_adjudicate': editable and can_review_submission(request.user, submission),
-        'botm_qualified': submission.botm_matches.filter(status='confirmed', is_qualifying=True).exists(),
-        'tbr_qualified': submission.personal_tbr_matches.filter(status='confirmed', is_qualifying=True).exists(),
-        'matches': submission.personal_tbr_matches.select_related('personal_tbr_book'),
-    })
+    section=request.GET.get('section','overview')
+    if section not in {'overview','edit','qualifications','review','history'}:
+        return HttpResponse('Choose a submission management section.',status=400)
+    if section=='edit' and editable:
+        return submission_edit(request,group_slug,month_pk,pk,workflow='editor')
+    if section=='review' and can_review_submission(request.user,submission) and not submission.is_removed and submission.month.status in REVIEWABLE_MONTH_STATUSES:
+        return submission_review(request,group_slug,month_pk,pk)
+    _annotate_submission_edit(request.user,[submission])
+    template={'overview':'core/submission_manage.html','qualifications':'core/submission_qualifications.html',
+              'history':'core/submission_workspace_history.html'}.get(section,'core/submission_workspace_unavailable.html')
+    return _workspace_render(request,template,{'submission':submission,'month':submission.month,
+        'section_label':{'edit':'Edit Book','review':'Review & Scoring'}.get(section)},section)
 
 
 @login_required
@@ -7188,6 +7221,10 @@ def submission_history(request, group_slug, month_pk, pk):
         raise PermissionDenied
     if request.method != "GET":
         return HttpResponse("Use GET.", status=405)
+    from .submission_workspace import can_enter
+    if can_enter(request.user,submission):
+        return _workspace_render(request,'core/submission_workspace_history.html',
+            {'submission':submission,'month':submission.month,'timeline':timeline},'history')
     return render(request, "core/submission_activity.html", {
         "submission": submission, "month": submission.month, "timeline": timeline,
     })
@@ -7223,7 +7260,7 @@ def submission_review(request, group_slug, month_pk, pk):
             messages.error(request, 'The qualification request could not be decided. Nothing was saved. '+explanation)
         else:
             messages.success(request, 'Qualification decision saved. Book details and approved pages were preserved.')
-        return redirect('submission-review', group_slug=group_slug, month_pk=month_pk, pk=pk)
+        return redirect(_workspace_url(request,submission,'qualifications'))
     reader_requests = []
     for domain, (model, field) in reader_service.DOMAINS.items():
         for match in model.objects.filter(submission=submission, status='pending_review').select_related(field):
@@ -7271,10 +7308,12 @@ def submission_review(request, group_slug, month_pk, pk):
                 messages.success(request, "Review saved.")
                 for hold in getattr(reviewed, "late_approval_holds", ()):
                     messages.warning(request, hold)
-                return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
+                if request.POST.get('workspace_return')=='1':
+                    return redirect(_workspace_url(request,reviewed,'review'))
+                return redirect('review-queue',group_slug=group_slug,month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
     _annotate_submission_edit(request.user, [submission])
-    return render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []})
+    return _workspace_render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []}, 'review')
 
 
 @login_required
@@ -7476,6 +7515,15 @@ def submission_credit(request, group_slug, month_pk, pk):
     sections=[]
     for kind,label in [('botm','Book of the Month'),('tbr','Personal TBR')]:
         form=CreditForm(request.POST if domain==kind else None,submission=submission,domain=kind,prefix=kind)
+        # GET-only convenience: preselect an existing scoped relationship and
+        # operation. The unchanged POST service still requires preview/confirmation.
+        if request.method=='GET' and request.GET.get('domain')==kind:
+            entry=request.GET.get('entry','')
+            operation=request.GET.get('operation','')
+            if entry.isdecimal() and form.fields['entry'].queryset.filter(pk=entry).exists():
+                form.initial['entry']=entry
+            if operation in {'assign','reverse','restore'}:
+                form.initial['operation']=operation
         impact=None
         if request.method=='POST' and domain==kind and form.is_valid():
             try:
@@ -7485,7 +7533,7 @@ def submission_credit(request, group_slug, month_pk, pk):
                         raise ValidationError('Confirm the preview before applying this correction.')
                     apply_credit(submission=submission,actor=request.user,token=form.cleaned_data['preview_token'],**operation)
                     messages.success(request,'Challenge credit corrected. Book identity and approved pages were preserved.')
-                    return redirect('submission-credit',group_slug=group_slug,month_pk=month_pk,pk=pk)
+                    return redirect(_workspace_url(request,submission,'qualifications'))
                 if request.POST.get('action')!='preview':
                     raise ValidationError('Preview this correction before applying it.')
                 impact,token=preview_credit(submission=submission,actor=request.user,**operation)
@@ -7505,5 +7553,5 @@ def submission_credit(request, group_slug, month_pk, pk):
                'bonus':sum(ModifierProvenance.objects.filter(source_type='botm_book' if kind=='botm' else 'tbr_book',
                    source_reference=('botm_match:' if kind=='botm' else 'personal_tbr_match:')+str(m.pk),is_active=True).values_list('amount',flat=True))} for m in matches]
         from .administrative_matching import _summary
-        sections.append({'domain':kind,'title':label,'form':form,'impact':impact,'matches':rows,'totals':_summary(submission)})
-    return render(request,'core/submission_credit.html',{'submission':submission,'month':submission.month,'sections':sections})
+        sections.append({'domain':kind,'title':label,'enabled':getattr(submission.month,'botm_enabled' if kind=='botm' else 'tbr_enabled'),'form':form,'impact':impact,'matches':rows,'totals':_summary(submission)})
+    return _workspace_render(request,'core/submission_credit.html',{'submission':submission,'month':submission.month,'sections':sections},'qualifications')
