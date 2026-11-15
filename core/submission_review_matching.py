@@ -121,6 +121,8 @@ class MatchingReviewForm(forms.Form):
 @transaction.atomic
 def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations, prompt_decisions=None):
     from .permissions import can_review_submission
+    from django.contrib.auth import get_user_model
+    actor = get_user_model().objects.get(pk=actor.pk)
     ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     current=BookSubmission.objects.select_for_update(of=('self',)).select_related('month','participant__user','catalog_book','catalog_edition').get(pk=submission.pk)
     if not can_review_submission(actor,current) or current.is_removed or current.month.status not in {'active','finalizing'}:
@@ -131,6 +133,8 @@ def apply_unified_review(submission, claims, actor, reviewed_at, *, version, con
         raise ValidationError('This review expired. Reload the page before reviewing again.') from None
     if expected != {'actor':actor.pk,'submission':current.pk,'state':review_state(current)}:
         raise ValidationError('This submission or its matching information changed. Reload before reviewing again.')
+    if current.status == 'approved' and (confirmations or prompt_decisions):
+        raise ValidationError('Use Qualifications for qualification decisions, or the signed Edit Book preview for approved scoring corrections.')
     if confirmations and submission.status != 'approved':
         raise ValidationError('Matching confirmation requires approving the book. Clear the confirmations for another decision.')
     cards=matching_cards(current);suggestions={}

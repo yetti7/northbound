@@ -386,7 +386,29 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
         if not match or not selection['fingerprint'] or selection['fingerprint'] != match.suggestion_fingerprint:
             raise ValidationError('The suggestion is unavailable or stale.')
         prepared.append((match,selection['fingerprint']))
-    result = apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
+    if current.status == BookSubmission.Status.APPROVED:
+        # Approved book scoring is corrected only through the signed correction
+        # service. Even a notes-only review must not resynchronize scoring.
+        statuses = dict(current.theme_claims.values_list('pk', 'status'))
+        if (submission.status != current.status
+                or submission.approved_pages != current.approved_pages
+                or any(statuses.get(claim.pk) != claim.status for claim in reviewed_claims)):
+            raise ValidationError('Approved scoring changes require the signed Edit Book correction preview.')
+        changed = any(getattr(current, field) != getattr(submission, field)
+                      for field in ('verification_url', 'review_notes'))
+        if changed:
+            current.verification_url = submission.verification_url
+            current.review_notes = submission.review_notes
+            current.reviewed_by = reviewer
+            current.reviewed_at = reviewed_at
+            current.full_clean()
+            current.save(update_fields=['verification_url', 'review_notes', 'reviewed_by', 'reviewed_at'])
+            AuditEvent.objects.create(actor=reviewer, group=current.month.group,
+                object_type='BookSubmission', object_id=str(current.pk),
+                action='submission.review_changed', summary='Updated review notes or verification link; scoring preserved.')
+        result = current
+    else:
+        result = apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
     for match,stamp in prepared:
         match.refresh_from_db()
         if match.status=='confirmed' and match.method!='manual_review':

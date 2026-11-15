@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -21,7 +21,7 @@ from .models import (
 )
 
 
-class ThemeReviewIntegrationTests(TestCase):
+class ThemeReviewIntegrationTests(TransactionTestCase):
     def setUp(self):
         User = get_user_model()
         self.host_user = User.objects.create_user("theme-review-host", password="test-password")
@@ -65,6 +65,17 @@ class ThemeReviewIntegrationTests(TestCase):
         )
 
     def review(self, submission_status, claim_statuses, *, approved_pages=200):
+        self.submission.refresh_from_db()
+        current = dict(self.submission.theme_claims.values_list('pk', 'status'))
+        if self.submission.status == 'approved' and (approved_pages != self.submission.approved_pages or current != claim_statuses):
+            # Approved Theme changes now use the existing signed correction path.
+            from .submission_corrections import correction_version, preview_correction, apply_previewed_correction
+            changes = {'page_count': approved_pages, 'theme_ids': [claim.theme_id for claim in self.submission.theme_claims.all() if claim_statuses[claim.pk] == 'approved']}
+            version = correction_version(self.submission, self.host_user)
+            preview = preview_correction(submission=self.submission, actor=self.host_user, changes=changes, version=version)
+            apply_previewed_correction(submission=self.submission, actor=self.host_user, changes=changes, version=version, preview_token=preview['token'], confirm_approved=True)
+            self.submission.refresh_from_db()
+            return
         url = reverse("submission-review", kwargs={
             "group_slug": self.group.slug,
             "month_pk": self.month.pk,
@@ -178,21 +189,20 @@ class ThemeReviewIntegrationTests(TestCase):
         self.assertTrue(self.source(second_claim).is_active)
         self.assertEqual((self.submission.bonus_pages, self.submission.final_scored_pages), (40, 240))
 
-    def test_parent_rejection_requires_explicit_claim_reapproval_and_preserves_history(self):
+    def test_approved_parent_rejection_is_blocked_and_history_preserved(self):
         self.review(BookSubmission.Status.APPROVED, {self.claim.pk: ThemeClaim.Status.APPROVED})
         source_pk = self.source().pk
-        self.review(BookSubmission.Status.REJECTED, {self.claim.pk: ThemeClaim.Status.APPROVED})
-        self.claim.refresh_from_db()
-        self.assertEqual(self.claim.status, ThemeClaim.Status.REJECTED)
-        self.assertEqual(self.claim.approved_bonus_pages, 0)
-        self.assertEqual((self.source().pk, self.source().amount, self.source().is_active), (source_pk, 25, False))
-        self.assertEqual((self.submission.approved_pages, self.submission.bonus_pages, self.submission.final_scored_pages), (200, 0, None))
-
-        self.review(BookSubmission.Status.APPROVED, {self.claim.pk: ThemeClaim.Status.REJECTED})
-        self.assertEqual((self.submission.bonus_pages, self.submission.final_scored_pages), (0, 200))
-        self.review(BookSubmission.Status.APPROVED, {self.claim.pk: ThemeClaim.Status.APPROVED})
-        self.assertEqual((self.source().amount, self.source().is_active), (25, True))
-        self.assertEqual((self.submission.bonus_pages, self.submission.final_scored_pages), (25, 225))
+        url = reverse('submission-review', args=[self.group.slug, self.month.pk, self.submission.pk])
+        page = self.client.get(url)
+        response = self.client.post(url, {'matching_version': page.context['matching_form']['matching_version'].value(),
+            'status': 'rejected', 'approved_pages': 200, 'verification_url': '', 'review_notes': '',
+            'claims-TOTAL_FORMS':'1','claims-INITIAL_FORMS':'1',
+            'claims-0-id':self.claim.pk,'claims-0-status':'approved'})
+        self.assertContains(response, 'signed Edit Book correction preview')
+        self.submission.refresh_from_db();self.claim.refresh_from_db()
+        self.assertEqual(self.submission.status, 'approved')
+        self.assertEqual(self.claim.status, 'approved')
+        self.assertEqual((self.source().pk,self.source().amount,self.source().is_active),(source_pk,25,True))
 
     def test_removed_submission_and_checkpoint_history_survive_review_transitions(self):
         self.review(BookSubmission.Status.APPROVED, {self.claim.pk: ThemeClaim.Status.APPROVED})

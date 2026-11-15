@@ -121,12 +121,12 @@ class SubmissionWorkspaceTests(TransactionTestCase):
         self.assertNotContains(response,'name="request_version"')
         self.assertEqual(self.client.post(self.route('submission-review',s),{}).status_code,403)
 
-    def test_leader_has_scoped_book_actions_but_no_exceptional_credit_expansion(self):
+    def test_leader_has_scoped_book_and_credit_actions(self):
         s=self.submission();self.login('team_leader')
         response=self.client.get(self.route('submission-manage',s)+'?section=qualifications')
         self.assertEqual(response.status_code,200)
-        self.assertNotContains(response,'Exceptional Credit Correction')
-        self.assertEqual(self.client.post(self.route('submission-credit',s),{}).status_code,403)
+        self.assertContains(response,'Exceptional Credit Override')
+        self.assertEqual(self.client.get(self.route('submission-credit',s)).status_code,200)
         TeamAssignment.objects.filter(participant=self.reader,month=self.month).update(ended_at=timezone.now())
         self.assertEqual(self.client.get(self.route('submission-manage',s)).status_code,403)
         self.assertEqual(self.client.get(self.route('submission-editor',s)).status_code,403)
@@ -212,15 +212,16 @@ class SubmissionWorkspaceTests(TransactionTestCase):
         self.client.post(self.route('submission-review',s),{'action':'reader-qualification-review','domain':'tbr','match_id':match.pk,'request_version':state,'decision':'confirmed'})
         self.assertEqual(after,self.state())
 
-    def test_review_policy_for_approved_pages_remains_existing_behavior(self):
+    def test_review_approved_pages_require_signed_correction(self):
         s=self.submission();self.login()
         response=self.client.get(self.route('submission-manage',s)+'?section=review')
         self.assertContains(response,'use <a href=')
         self.assertContains(response,'Save Review')
         token=response.context['matching_form']['matching_version'].value()
         response=self.client.post(self.route('submission-review',s),{'matching_version':token,'status':'approved','approved_pages':401,'verification_url':'','review_notes':'Existing review policy'})
-        self.assertEqual(response.status_code,302)
-        s.refresh_from_db();self.assertEqual(s.approved_pages,401)
+        self.assertEqual(response.status_code,200)
+        self.assertContains(response,'signed Edit Book correction preview')
+        s.refresh_from_db();self.assertEqual(s.approved_pages,350)
         self.assertFalse(AuditEvent.objects.filter(action='submission.corrected').exists())
 
     def test_workspace_void_and_restore_keep_separate_confirmation_routes(self):

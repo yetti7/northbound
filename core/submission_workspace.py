@@ -4,7 +4,7 @@ from urllib.parse import urlencode, urlsplit, parse_qsl
 from django.shortcuts import render
 from django.urls import reverse, resolve
 from .models import BookSubmission, MonthEnrollment, TeamAssignment, BotmMatch, PersonalTBRMatch
-from .permissions import can_edit_submission, can_review_submission, can_operate_challenge, host_scope_allows_reader
+from .permissions import can_edit_submission, can_review_submission
 from .administrative_matching import can_manage_credit
 from .navigation_context import contextual_url, unpack
 
@@ -77,7 +77,7 @@ def workspace_context(request,submission,section):
     for domain,label,model,field in [('botm','Book of the Month',BotmMatch,'botm_book'),('tbr','Personal TBR',PersonalTBRMatch,'personal_tbr_book')]:
         matches=list(model.objects.filter(submission=submission).select_related(field,'reviewer'))
         rows=[]
-        can_adjudicate=review and active and (domain=='tbr' or (can_operate_challenge(actor,month) and host_scope_allows_reader(actor,month,submission.participant_id)))
+        can_adjudicate=review and active
         for match in matches:
             book=getattr(match,field);requested=bool(request_data(match));card=card_map.get((domain,book.pk))
             row={'match':match,'entry':book,'requested':requested,'card':card,'withdrawn':bool(match.decision_evidence.get('reader_withdrawal'))}

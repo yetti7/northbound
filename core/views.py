@@ -6577,10 +6577,8 @@ def botm_match_review(request, group_slug, month_pk, pk, decision):
         month_id=month_pk,
         month__group__slug=group_slug,
     )
-    if not can_operate_challenge(request.user, match.month):
-        return HttpResponseForbidden("Only a current Host or Platform Owner may adjudicate BOTM matches.")
-    if not host_scope_allows_reader(request.user, match.month, match.participant_id):
-        return HttpResponseForbidden("This BOTM match is outside your Host team authority.")
+    if not can_review_submission(request.user, match.submission):
+        return HttpResponseForbidden("Current submission review scope is required for this BOTM match.")
     if request.method != "POST":
         return HttpResponseForbidden("A POST request is required.")
     status = {
@@ -6596,6 +6594,8 @@ def botm_match_review(request, group_slug, month_pk, pk, decision):
     else:
         messages.success(request, f"BOTM match {decision}ed.")
     if request.POST.get('workspace_return')=='1':
+        return redirect(_workspace_url(request,match.submission,'qualifications'))
+    if not can_operate_challenge(request.user, match.month):
         return redirect(_workspace_url(request,match.submission,'qualifications'))
     return redirect("botm-match-list", group_slug=group_slug, month_pk=month_pk)
 
@@ -7282,6 +7282,14 @@ def submission_review(request, group_slug, month_pk, pk):
             # as held. Their form validation must not prevent base approval.
             claims = claims.filter(theme__starts_on__lte=submission.completed_on, theme__ends_on__gte=submission.completed_on)
     claim_formset = ClaimFormSet(request.POST or None, instance=submission, queryset=claims, prefix="claims")
+    if submission.status == BookSubmission.Status.APPROVED:
+        for field in ('status', 'approved_pages'):
+            form.fields[field].disabled = True
+        for claim_form in claim_formset.forms:
+            claim_form.fields['status'].disabled = True
+        for field in list(matching_form.fields):
+            if field != 'matching_version':
+                matching_form.fields.pop(field)
     claims_are_valid = claim_formset.is_valid() if claims.exists() else True
     if request.method == "POST":
         form_valid = form.is_valid()
@@ -7292,6 +7300,13 @@ def submission_review(request, group_slug, month_pk, pk):
         if forbidden:
             matching_form.add_error(None, 'This relationship cannot be confirmed here. Nothing was saved. You can approve the book without this credit.')
             matching_valid = False
+        if submission.status == BookSubmission.Status.APPROVED:
+            forged = (request.POST.get('status', submission.status) != submission.status
+                or request.POST.get('approved_pages', str(submission.approved_pages)) != str(submission.approved_pages)
+                or any(request.POST.get(f'{claim_form.prefix}-status', claim_form.instance.status) != claim_form.instance.status for claim_form in claim_formset.forms))
+            if forged:
+                form.add_error(None, 'Approved scoring changes require the signed Edit Book correction preview. Nothing was saved.')
+                form_valid = False
         if form_valid and matching_valid and claims_are_valid:
             try:
                 with transaction.atomic():

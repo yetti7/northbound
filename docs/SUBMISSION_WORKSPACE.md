@@ -61,8 +61,8 @@ works without JavaScript. Focus indicators and wrapping section navigation suppo
 
 submission_workspace.py composes existing can_edit_submission,
 can_review_submission, can_manage_credit and Immersive predicates for presentation.
-There are no role/scope changes. In particular Team Leaders/Floaters gain no
-exceptional credit access in this phase. Participating Host restrictions, Team
+Phase 7C delegates exceptional credit to the existing scoped review roles; see
+SUBMISSION_PERMISSIONS.md. Team and Challenge boundaries remain unchanged. Participating Host restrictions, Team
 transfers, departed Reader checks and ordinary self-approval remain in existing
 services. Immersive's independent-review requirement remains separate.
 
@@ -72,16 +72,14 @@ Scoped Reader history remains the existing simpler page. Staff who can read
 history but do not pass the existing Manage guard retain that authorized legacy
 history page rather than receiving new management access.
 
-Known policy inconsistency, intentionally unchanged: existing ordinary Review can
-change approved pages without the correction editor's impact-preview sequence.
-The workspace directs approved book corrections to Edit Book and preserves its
-preview safeguards; it does not silently change the Review policy or route book
-corrections through Review. Changing that policy requires a separate decision.
+Phase 7C closes the former approved-page Review bypass. Already-approved pages,
+status and Themes are read-only in Review. Scoring corrections use the existing
+signed Edit Book preview; qualification decisions use their existing separate
+services. Notes-only reviews preserve saved scoring without resynchronization.
 
 No scoring, matching, bonus, frozen-award, audit, outbox or lifecycle calculation is
 changed. No model migration, dependency, image rebuild, worker or Discord
-activation is required. Phase 7C permissions and subsequent Discord work remain
-outside this implementation.
+activation is required. Subsequent Discord work remains outside this implementation.
 
 ## Phase 7B acceptance evidence
 
