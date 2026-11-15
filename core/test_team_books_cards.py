@@ -46,12 +46,12 @@ class TeamBooksCardsTests(TestCase):
     def test_reference_link_is_conditional_and_uses_existing_external_conventions(self):
         BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(reference_url='https://books.example.com/title?a=1&b=2')
         html=self.gallery(self.page())
-        self.assertIn('href="https://books.example.com/title?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Alpha Early</a>',html)
+        self.assertIn('href="https://books.example.com/title?a=1&amp;b=2" target="_blank" rel="noopener noreferrer"><span class="team-book-title-text">Alpha Early</span></a>',html)
         self.assertNotIn('>Alpha Late</a>',html)
         self.assertNotIn(reverse('team-book-detail',args=[self.group.slug,self.month.pk,self.team.pk,self.alpha_submission.pk]),html)
         for bad in ('javascript:alert(1)','data:text/html,unsafe','//untrusted.example/book','not a URL'):
             BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(reference_url=bad)
-            html=self.gallery(self.page());self.assertIn('<h3>Alpha Early</h3>',html);self.assertNotIn('href="'+bad,html)
+            html=self.gallery(self.page());self.assertIn('<h3><span class="team-book-title-text">Alpha Early</span></h3>',html);self.assertNotIn('href="'+bad,html)
 
     def test_cover_and_existing_fallback_are_preserved(self):
         catalog=CatalogBook.objects.create(provider='hardcover',provider_book_id='team-gallery',title='Catalog identity',author='Catalog author',cover_url='https://images.example.com/cover.jpg')
@@ -86,3 +86,20 @@ class TeamBooksCardsTests(TestCase):
         response=self.client.get(reverse('team-book-detail',args=[self.group.slug,self.month.pk,self.team.pk,self.alpha_submission.pk]))
         self.assertContains(response,'<time');self.assertContains(response,'Approved')
         self.assertNotContains(response,'css/team_books.css')
+
+    def test_polished_structure_full_title_disclosure_and_combined_metadata(self):
+        title='A complete title with many words '*8
+        BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(title=title,approved_pages=369)
+        html=self.gallery(self.page())
+        self.assertIn('class="team-book-info"',html)
+        self.assertIn('class="team-book-identity"',html)
+        self.assertIn('<span class="team-book-title-text">'+title+'</span>',html)
+        self.assertIn('<summary>Full title<span class="sr-only"> for '+title+'</span></summary><p>'+title+'</p>',html)
+        self.assertIn('369 pages</span> · <span class="team-book-reader">'+self.alpha_user.username+'</span>',html)
+        self.assertNotIn('<time',html);self.assertNotIn('class="pill"',html)
+
+    def test_absent_reader_omits_separator_and_keeps_page_fallback(self):
+        values={'title':'Unlinked full title','author':'Writer','status':'pending','submitted_pages':None,'participant__user__username':''}
+        html=render_to_string('core/includes/team_book_card.html',{'book':values,'month':self.month,'compact':True})
+        self.assertIn('Pages unavailable',html);self.assertNotIn(' · ',html)
+        self.assertIn('<summary>Full title',html);self.assertNotIn('<a ',html)

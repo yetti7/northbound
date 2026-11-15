@@ -2,12 +2,14 @@
 {% timezone month.group.timezone %}
 <article class="card team-book-card">
   {% include "core/includes/book_cover.html" with image_url=book.catalog_book__cover_url title=book.title %}
-  <div>
+  <div{% if compact %} class="team-book-info"{% endif %}>
     {% if compact %}{% with pages=book|recorded_pages reference=book.reference_url|safe_reference_url %}
-    <h3>{% if reference %}<a href="{{ reference }}" target="_blank" rel="noopener noreferrer">{{ book.title }}</a>{% else %}{{ book.title }}{% endif %}</h3>
-    <p class="team-book-author">{{ book.author|default:"Author unavailable" }}</p>
-    <p>{% if pages != None %}{{ pages }} page{{ pages|pluralize }}{% else %}Pages unavailable{% endif %}</p>
-    <p class="team-book-reader">{{ book.participant__user__username }}</p>
+    <div class="team-book-identity">
+      <h3>{% if reference %}<a href="{{ reference }}" target="_blank" rel="noopener noreferrer"><span class="team-book-title-text">{{ book.title }}</span></a>{% else %}<span class="team-book-title-text">{{ book.title }}</span>{% endif %}</h3>
+      <p class="team-book-author">{{ book.author|default:"Author unavailable" }}</p>
+      <details class="team-book-title-access"><summary>Full title<span class="sr-only"> for {{ book.title }}</span></summary><p>{{ book.title }}</p></details>
+    </div>
+    <p class="team-book-metadata"><span>{% if pages != None %}{{ pages }} page{{ pages|pluralize }}{% else %}Pages unavailable{% endif %}</span>{% if book.participant__user__username %} · <span class="team-book-reader">{{ book.participant__user__username }}</span>{% endif %}</p>
     {% endwith %}{% else %}
     <h3>{% if linked %}<a {% url 'team-book-detail' month.group.slug month.pk team.pk book.pk as contextual_link %}href="{% navigation_url contextual_link %}">{{ book.title }}</a>{% else %}{{ book.title }}{% endif %}</h3>
     <p>{{ book.author }}</p>
