@@ -77,7 +77,7 @@ def image_asset(upload, kind):
             upload.seek(0)
             with Image.open(upload) as original:
                 image = ImageOps.exif_transpose(original).convert('RGBA')
-                image.thumbnail((800, 800) if kind == 'logo' else (1600, 600))
+                image.thumbnail({'logo': (800, 800), 'cover': (800, 1200)}.get(kind, (1600, 600)))
                 output = BytesIO()
                 image.save(output, format='PNG', optimize=True)
         return ContentFile(output.getvalue(), name='artwork.png')

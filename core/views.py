@@ -4907,6 +4907,9 @@ def month_detail(request, group_slug, pk):
         enrollment__participant=membership,
         confirmed_at__isnull=False,
     ).first() if membership and month.tbr_enabled else None
+    has_saved_draft_tbr = bool(membership and month.tbr_enabled and not personal_tbr and PersonalTBR.objects.filter(
+        enrollment__month=month, enrollment__participant=membership,
+        confirmed_at__isnull=True, books__isnull=False).exists())
     personal_tbr_reader = build_personal_tbr_reader_presentation(
         personal_tbr=personal_tbr,
     ) if personal_tbr else None
@@ -4983,7 +4986,7 @@ def month_detail(request, group_slug, pk):
         "game_more_count": game_more_count,
         "botm_preview": botm_preview,
         "botm_reader": botm_reader,
-        "personal_tbr": personal_tbr,
+        "personal_tbr": personal_tbr, "has_saved_draft_tbr": has_saved_draft_tbr,
         "personal_tbr_reader": personal_tbr_reader,
         "active_team_count": month.teams.filter(is_archived=False).count(),
         "visible_submissions": visible_submissions,
@@ -6345,10 +6348,12 @@ def personal_tbr_detail(request, group_slug, month_pk):
         PersonalTBR.objects.select_related("enrollment"),
         enrollment__month=month,
         enrollment__participant=membership,
-        confirmed_at__isnull=False,
     )
     presentation = build_personal_tbr_reader_presentation(personal_tbr=personal_tbr)
     _annotate_metadata_refresh(request.user, presentation["books"])
+    from .personal_tbr_covers import can_manage as can_manage_cover
+    for book in presentation['books']:
+        book.can_manage_cover = can_manage_cover(request.user,book)
     return render(request, "core/personal_tbr_detail.html", {
         "month": month,
         "personal_tbr": personal_tbr,

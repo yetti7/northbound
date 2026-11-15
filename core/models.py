@@ -1164,6 +1164,11 @@ class PersonalTBR(models.Model):
         return f"{self.enrollment} — Personal TBR"
 
 
+def personal_tbr_cover_path(instance, filename):
+    # Uploaded names are never used as paths. image_asset normalizes to PNG.
+    return f'tbr-covers/{instance.personal_tbr_id}/{uuid.uuid4().hex}.png'
+
+
 class PersonalTBRBook(models.Model):
     personal_tbr = models.ForeignKey(PersonalTBR, on_delete=models.CASCADE, related_name="books")
     position = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(9)])
@@ -1186,6 +1191,7 @@ class PersonalTBRBook(models.Model):
     display_cover_url = models.URLField(max_length=1000, null=True, blank=True)
     display_page_count = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     display_refreshed_at = models.DateTimeField(null=True, blank=True)
+    custom_cover = models.ImageField(upload_to=personal_tbr_cover_path, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property
@@ -1198,7 +1204,9 @@ class PersonalTBRBook(models.Model):
 
     @property
     def effective_display_cover_url(self):
-        return self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url
+        from .branding import _asset
+        return (_asset(self.custom_cover)
+                or (self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url))
 
     @property
     def effective_display_page_count(self):
