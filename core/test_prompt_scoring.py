@@ -175,9 +175,10 @@ class PromptScoringTests(TransactionTestCase):
         book=BookSubmission.objects.latest('pk');self.assertEqual(book.status,'approved');self.assertIn(book.pk,list(pending_submission_ids(self.month).values_list('submission_id',flat=True)))
         self.client.force_login(self.actor)
         url=reverse('submission-review',args=[self.group.slug,self.month.pk,book.pk]);response=self.client.get(url)
-        self.assertContains(response,'name="prompt_bingo"')
-        data={'status':'approved','approved_pages':368,'matching_version':response.context['matching_form']['matching_version'].value(),'prompt_bingo':'qualified'}
-        response=self.client.post(url,data);self.assertEqual(response.status_code,302)
+        self.assertNotContains(response,'name="prompt_bingo"')
+        self.assertContains(response,'signed correction preview')
+        # Already-approved books use the independent prompt qualification service.
+        self.review(book,bingo='qualified')
         self.assertEqual(book.prompt_claims.get().state,'qualified')
         self.assertNotIn(book.pk,list(pending_submission_ids(self.month).values_list('submission_id',flat=True)))
 
@@ -349,7 +350,10 @@ class HistoricalPromptTests(TransactionTestCase):
         from .submission_review_matching import apply_unified_review,review_token
         book=self.reserved();self.depart();book=self.approve(book)
         original=(book.reviewed_by_id,book.reviewed_at,book.approved_pages)
-        result=apply_unified_review(book,[],self.owner,timezone.now(),version=review_token(book,self.owner),confirmations=[],prompt_decisions={'bingo':'qualified'})
+        with self.assertRaisesMessage(ValidationError, 'Use Qualifications'):
+            apply_unified_review(book,[],self.owner,timezone.now(),version=review_token(book,self.owner),confirmations=[],prompt_decisions={'bingo':'qualified'})
+        review_prompts(book,self.owner,{'bingo':'qualified'})
+        book.refresh_from_db();result=book
         self.assertEqual(result.final_scored_pages,425)
         self.assertEqual((result.reviewed_by_id,result.reviewed_at,result.approved_pages),original)
         self.assertEqual(PromptCompletion.objects.get().bonus_amount_snapshot,100)

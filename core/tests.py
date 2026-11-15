@@ -921,6 +921,10 @@ class SubmissionWorkflowTests(TestCase):
         self.client.force_login(self.mod)
         response = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}))
         self.assertContains(response, 'href="https://example.com/books/linked-edition" target="_blank" rel="noopener noreferrer"')
+        # Unsafe legacy values must not become clickable links.
+        BookSubmission.objects.filter(pk=submission.pk).update(reference_url='javascript:alert(1)')
+        response = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}))
+        self.assertNotContains(response, 'href="javascript:')
 
     def test_start_date_cannot_be_after_completion_date(self):
         self.client.force_login(self.reader)
@@ -956,7 +960,7 @@ class SubmissionWorkflowTests(TestCase):
         self.client.force_login(self.mod)
         response = self.client.get(reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         self.assertContains(response, "Submission pending")
-        self.assertContains(response, "Open Review")
+        self.assertContains(response, "Review &amp; Scoring")
         self.assertNotContains(response, "Back to Month")
 
     def test_submission_and_review_forms_use_standard_action_hierarchy(self):
@@ -976,9 +980,9 @@ class SubmissionWorkflowTests(TestCase):
 
         self.client.force_login(self.mod)
         review_response = self.client.get(reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk}))
-        self.assertContains(review_response, "Submitted Book")
+        self.assertContains(review_response, "Submission Management")
         self.assertContains(review_response, "Approve Book")
-        self.assertContains(review_response, "modifier =")
+        self.assertContains(review_response, "bonus pages =")
 
     def test_cached_catalog_edition_is_snapshotted_onto_submission(self):
         book = CatalogBook.objects.create(provider="hardcover", provider_book_id="446680", title="Carl's Doomsday Scenario", author="Matt Dinniman", source_url="https://hardcover.app/books/carls-doomsday-scenario")
@@ -1098,7 +1102,7 @@ class ThemeScoringTests(TestCase):
         self.assertEqual(claim.response, "Carl")
         self.assertEqual(claim.status, ThemeClaim.Status.PENDING)
 
-    def test_claim_review_recalculates_bonus_without_changing_base_pages(self):
+    def test_approved_theme_change_requires_signed_correction(self):
         submission = BookSubmission.objects.create(month=self.month, participant=self.participant, title="Reviewed Theme Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 15), submitted_pages=320, approved_pages=300, status=BookSubmission.Status.APPROVED)
         claim = ThemeClaim.objects.create(submission=submission, theme=self.prompted, response="Carl")
         self.client.force_login(self.moderator)
@@ -1116,13 +1120,15 @@ class ThemeScoringTests(TestCase):
             "claims-0-submission": str(submission.pk),
             "claims-0-status": ThemeClaim.Status.APPROVED,
         })
-        self.assertRedirects(response, reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
+        self.assertContains(response, "signed Edit Book correction preview")
         submission.refresh_from_db()
         claim.refresh_from_db()
         self.assertEqual(submission.approved_pages, 300)
-        self.assertEqual(submission.bonus_pages, 50)
-        self.assertEqual(submission.final_scored_pages, 350)
-        self.assertEqual(claim.approved_bonus_pages, 50)
+        self.assertEqual(submission.bonus_pages, 0)
+        self.assertEqual(submission.final_scored_pages, 300)
+        self.assertEqual(claim.approved_bonus_pages, 0)
+        self.assertEqual(claim.status, ThemeClaim.Status.PENDING)
+        self.assertEqual(submission.status, BookSubmission.Status.APPROVED)
 
     def test_rejected_submission_clears_bonus_but_preserves_approved_base_record(self):
         submission = BookSubmission.objects.create(month=self.month, participant=self.participant, title="Rejected Theme Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 15), submitted_pages=320, approved_pages=300, status=BookSubmission.Status.APPROVED)

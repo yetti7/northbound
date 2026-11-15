@@ -160,8 +160,8 @@ class StandaloneScoreConsumerTests(TestCase):
             "month_pk": self.month.pk,
             "pk": self.submission.pk,
         }))
-        # UI.3 names all awarded score components modifiers, with a bold total.
-        self.assertContains(review, "<dd>100 base + 20 modifier = <strong>120 total</strong></dd>", html=True)
+        # Workspace scoring is saved submission-specific credit, excluding standalone awards.
+        self.assertContains(review, "<p>100 approved base pages + 20 bonus pages = 120 scored pages</p>", html=True)
 
     def test_historical_planning_remains_base_only(self):
         historical = ChallengeMonth.objects.create(
