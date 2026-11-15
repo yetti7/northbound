@@ -96,6 +96,22 @@ class ReaderIntentForm(forms.Form):
     tbr_token = forms.CharField(required=False)
 
     def __init__(self, *args, submission, actor, **kwargs):
+        # Native selects carry the same signed evidence as the enhanced cards.
+        # Derive IDs server-side; never trust a separate unsigned option value.
+        if args and args[0] is not None:
+            data = args[0].copy()
+            for domain in ('botm', 'tbr'):
+                name = domain + '_choice'
+                if name in data:
+                    token = data[name]
+                    try:
+                        evidence = signing.loads(token, salt=SALT, max_age=1800) if token else None
+                        pk = evidence['entry']['id'] if evidence else ''
+                    except (signing.BadSignature, TypeError, KeyError):
+                        pk = 'invalid'
+                    data['selected_' + domain] = pk
+                    data[domain + '_token'] = token
+            args = (data, *args[1:])
         self.submission, self.actor = submission, actor
         super().__init__(*args, **kwargs)
         self.fields['selected_botm'].queryset = BotmBook.objects.filter(month_id=submission.month_id, is_retired=False)

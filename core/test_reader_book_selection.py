@@ -103,7 +103,7 @@ class ReaderBookSelectionTests(TestCase):
         edition=CatalogEdition.objects.create(book=other,provider='hardcover',provider_edition_id='different',page_count=100)
         token=signing.dumps({'selected':edition.pk,'scoring':edition.pk,'method':'hardcover'},salt='northbound.catalog-selection')
         response=self.client.post(self.catalog_url,dict(action='intent-preview',catalog_selection=token,**data))
-        self.assertContains(response,'appears different')
+        self.assertContains(response,'Selected book identity does not match')
         self.assertFalse(BookSubmission.objects.exists());self.assertFalse(BotmMatch.objects.exists());self.assertFalse(PersonalTBRMatch.objects.exists())
         response=self.client.post(self.url,self.payload(catalog_selection=self.token(),**data))
         self.assertEqual(response.status_code,302)

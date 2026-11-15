@@ -58,7 +58,7 @@ def _candidate_ids(month):
     from django.core.management import call_command
     output = StringIO()
     call_command('report_missing_personal_tbr_matches', group=month.group.slug,
-                 month=month.pk, stdout=output)
+                 month=month.pk, legacy_candidates=True, stdout=output)
     return [row['submission_id'] for row in json.loads(output.getvalue())['submissions']]
 
 

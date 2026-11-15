@@ -1,24 +1,31 @@
 {% if challenge_book_groups %}
 <section class="challenge-book-picker" data-challenge-book-picker data-preview-url="{% url 'submission-catalog' month.group.slug month.pk %}" aria-labelledby="challenge-books-heading">
   <h2 id="challenge-books-heading">Your Challenge Books</h2>
-  <p class="muted">Reading one of these? Select it, then find your edition on Hardcover or enter it manually.</p>
+  <p>Reading a Book of the Month or a book on your Personal TBR? Choose it here. Selection requests qualification review; it does not guarantee credit.</p>
   {% for group in challenge_book_groups %}
   <div data-selection-group="{{ group.domain }}">
+    <h3>{{ group.title }}</h3>
+    <label for="{{ group.domain }}-choice">{{ group.title }} selection</label>
+    <select id="{{ group.domain }}-choice" name="{{ group.domain }}_choice" form="submission-form" data-native-selection="{{ group.domain }}">
+      <option value="">No selection / remove selection</option>
+      {% for book in group.books %}<option value="{{ book.selection_token }}" data-entry="{{ book.pk }}" {% if book.selection_selected %}selected{% endif %} {% if book.selection_unavailable and not book.selection_selected %}disabled{% endif %}>{{ book.title_snapshot }} — {{ book.author_snapshot }}{% if book.reader_state == 'completed' %} — Already qualified{% elif book.reader_state == 'pending' %} — Awaiting review{% elif book.selection_rejected %} — Rejected{% endif %}</option>{% endfor %}
+    </select>
     <div class="challenge-book-summary" data-selection-summary hidden aria-live="polite"></div>
-    <details data-selection-options>
-      <summary>{{ group.title }} <span class="muted">({{ group.books|length }})</span></summary>
+    <details data-selection-options open>
+      <summary>Browse {{ group.title }} ({{ group.books|length }})</summary>
       <div class="challenge-book-options">
         {% for book in group.books %}
-        <button type="button" class="challenge-book-option" data-challenge-book="{{ book.pk }}" data-domain="{{ group.domain }}" data-token="{{ book.selection_token }}" data-title="{{ book.title_snapshot }}" data-author="{{ book.author_snapshot }}" data-bonus-summary="{{ book.selection_summary }}" aria-pressed="false">
+        <button type="button" class="challenge-book-option" data-challenge-book="{{ book.pk }}" data-domain="{{ group.domain }}" data-token="{{ book.selection_token }}" data-title="{{ book.title_snapshot }}" data-author="{{ book.author_snapshot }}" data-bonus-summary="{{ book.selection_summary }}" aria-pressed="false" {% if book.selection_unavailable %}disabled{% endif %}>
           {% include "core/includes/book_cover.html" with image_url=book.effective_display_cover_url title=book.effective_display_title state=book.reader_state %}
-          <span class="challenge-book-label"><span class="pill">{% if group.domain == 'botm' %}BOTM{% else %}TBR{% endif %}</span><strong>{{ book.effective_display_title }}</strong><span>{{ book.effective_display_author }}</span><span class="muted">{% if book.reader_state == 'completed' %}Qualified{% elif book.reader_state == 'pending' %}Awaiting review{% else %}Not yet qualified{% endif %}</span></span>
+          <span class="challenge-book-label"><span class="pill">{% if group.domain == 'botm' %}BOTM{% else %}TBR{% endif %}</span><strong>{{ book.effective_display_title }}</strong><span>{{ book.effective_display_author }}</span><span class="muted">{% if book.reader_state == 'completed' %}Already qualified{% elif book.reader_state == 'pending' %}Awaiting review{% elif book.selection_rejected %}Rejected{% else %}Not yet qualified{% endif %}</span></span>
         </button>
         {% endfor %}
       </div>
     </details>
   </div>
   {% endfor %}
-  <p class="muted" data-selection-feedback role="status" aria-live="polite"></p>
-  <noscript><p>Challenge book selection needs JavaScript. You can still submit using the book details below; normal matching remains available.</p></noscript>
+  <div data-selection-feedback role="status" aria-live="polite">{% include 'core/includes/qualification_feedback.html' %}</div>
+  <p><button type="submit" form="submission-form" name="action" value="qualification-preview" formnovalidate class="button secondary">Check Qualifications</button></p>
+  <noscript><p>Use the selection lists above, then Check Qualifications after entering book details. Choose No selection to remove a request. Submitting without a selection is also allowed.</p><style>.challenge-book-options{display:none}</style></noscript>
 </section>
 {% endif %}

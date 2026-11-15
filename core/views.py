@@ -6093,14 +6093,21 @@ def submission_create(request, group_slug, month_pk):
         return redirect(month)
     from .forms import ImmersiveSubmissionForm
     from .matching_intent import ReaderIntentForm
-    from .reader_book_selection import picker_groups
+    from .reader_book_selection import picker_groups, preview_selection
     instance = BookSubmission(month=month, participant=participant)
     form = ImmersiveSubmissionForm(request.POST or None, month=month, instance=instance)
     intent_form = ReaderIntentForm(request.POST or None, submission=instance, actor=request.user)
     if request.method == "POST":
         book_valid = form.is_valid()
         intent_valid = intent_form.is_valid()
-    if request.method == "POST" and book_valid and intent_valid:
+    qualification_feedback = []
+    if request.method == "POST" and intent_valid:
+        try:
+            qualification_feedback = preview_selection(data=request.POST, month=month, participant=participant, actor=request.user)
+        except ValidationError as exc:
+            intent_form.add_error(None, exc)
+            intent_valid = False
+    if request.method == "POST" and request.POST.get("action") != "qualification-preview" and "qualification-preview" not in request.GET and book_valid and intent_valid:
         with transaction.atomic():
             month = _lock_challenge_for_edit(month)
             enrollment = MonthEnrollment.objects.select_for_update().filter(
@@ -6157,11 +6164,15 @@ def submission_create(request, group_slug, month_pk):
                 messages.success(request, "Book submitted and verified through Hardcover.")
             else:
                 messages.success(request, "Book submitted for moderator review.")
+            from .reader_book_selection import saved_feedback
+            for text in saved_feedback(submission):
+                messages.info(request, text)
             return redirect(month)
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).exists()
     return render(request, "core/submission_create.html", {
         "form": form, "month": month, "can_submit_photo": can_submit_photo(request.user, month), "hardcover_available": connection, "intent_form": intent_form,
-        "challenge_book_groups": picker_groups(month=month, participant=participant, actor=request.user),
+        "qualification_feedback": qualification_feedback,
+        "challenge_book_groups": picker_groups(month=month, participant=participant, actor=request.user, data=intent_form.data),
     })
 
 
