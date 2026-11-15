@@ -4,6 +4,7 @@ No polling of historical business records and no generic save signals. Claimed
 requests become uncertain after a crash: retrying those could duplicate a post.
 """
 from contextvars import ContextVar
+from contextlib import contextmanager
 from datetime import timedelta
 from functools import wraps
 import hashlib
@@ -11,7 +12,7 @@ import inspect
 import uuid
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
@@ -100,12 +101,36 @@ def record_book_created(book):
     record_book_changes(current, {}, after, created=True)
 
 
+@contextmanager
+def observe_book_changes(book):
+    """Observe within the caller's transaction without taking ownership of it."""
+    from .models import ChallengeMonth
+    if not connection.in_atomic_block:
+        raise RuntimeError('Book observation requires a caller-owned transaction.')
+    key = ('book',book.pk)
+    if key in _active.get():
+        yield
+        return
+    ChallengeMonth.objects.select_for_update().get(pk=book.month_id)
+    _, before = book_snapshot(book.pk)
+    token = _active.set(_active.get() | {key})
+    try:
+        yield
+        # Correction previews deliberately mark their transaction for rollback.
+        # Do not query a rollback-only transaction or record simulated events.
+        if not connection.needs_rollback:
+            current, after = book_snapshot(book.pk)
+            if current:
+                record_book_changes(current, before, after)
+    finally:
+        _active.reset(token)
+
+
 def observe_book(function):
     """Explicitly attached to service entry points, never to model.save()."""
     signature = inspect.signature(function)
     @wraps(function)
     def wrapped(*args, **kwargs):
-        from .models import ChallengeMonth
         values = signature.bind(*args, **kwargs).arguments
         book = values.get('submission')
         if book is None:
@@ -113,18 +138,8 @@ def observe_book(function):
         key = ('book',book.pk)
         if key in _active.get():
             return function(*args, **kwargs)
-        with transaction.atomic():
-            ChallengeMonth.objects.select_for_update().get(pk=book.month_id)
-            _, before = book_snapshot(book.pk)
-            token = _active.set(_active.get() | {key})
-            try:
-                result = function(*args, **kwargs)
-                current, after = book_snapshot(book.pk)
-                if current:
-                    record_book_changes(current, before, after)
-                return result
-            finally:
-                _active.reset(token)
+        with transaction.atomic(), observe_book_changes(book):
+            return function(*args, **kwargs)
     return wrapped
 
 

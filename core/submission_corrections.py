@@ -1,5 +1,5 @@
 """Atomic, explicitly authorized submission corrections. No editing interface."""
-from .discord_events import observe_book
+from .discord_events import observe_book_changes
 import hashlib
 import json
 from datetime import date, datetime
@@ -315,7 +315,6 @@ def _promote_released_matches(submission, released_tbr, released_botm):
 
 
 @sensitive_variables('hardcover_token')
-@observe_book
 def correct_submission(*, submission, actor, changes, version, hardcover_token=None, _preview=False, _expected_impact=None):
     if connection.in_atomic_block:
         raise ValidationError('Begin correction outside an existing write transaction.')
@@ -333,7 +332,7 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
     if changes.get('association_mode') == 'only' and changes['catalog_edition_id'] == current.catalog_edition_id:
         raise ValidationError('Choose a different edition for Associate Only, or keep the current association.')
     edition_data = _prepare_edition(current, changes, hardcover_token)
-    with transaction.atomic():
+    with transaction.atomic(), observe_book_changes(submission):
         try: actor = get_user_model().objects.get(pk=actor.pk)
         except get_user_model().DoesNotExist: raise PermissionDenied('Correction authority is unavailable.') from None
         from .models import ChallengeMonth
