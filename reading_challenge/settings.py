@@ -106,6 +106,20 @@ TEMPLATES = [{
         "core.context_processors.logical_navigation",
     ]},
 }]
+# Explicit development opt-in; production defaults remain unchanged.
+NORTHBOUND_LIVE_SOURCE = env_bool("NORTHBOUND_LIVE_SOURCE", False)
+if NORTHBOUND_LIVE_SOURCE:
+    if not NORTHBOUND_DEVELOPMENT_BANNER or DEBUG or NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED:
+        raise ImproperlyConfigured("Live source requires the development banner, DEBUG=False and Hardcover write-back disabled.")
+    TEMPLATES[0]["APP_DIRS"] = False
+    TEMPLATES[0]["OPTIONS"]["loaders"] = [
+        "django.template.loaders.filesystem.Loader",
+        "django.template.loaders.app_directories.Loader",
+    ]
+    WHITENOISE_USE_FINDERS = True
+    WHITENOISE_AUTOREFRESH = True
+    WHITENOISE_MAX_AGE = 0
+
 WSGI_APPLICATION = "reading_challenge.wsgi.application"
 
 database_url = os.getenv("DATABASE_URL", "").strip()
@@ -211,3 +225,9 @@ if not DEBUG:
 # Separate opt-in: neither ordinary scheduling nor a restored database enables delivery.
 NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED = env_bool("NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED", False)
 NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT = env_bool("NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT", False)
+
+# Separate from lifecycle scheduling; explicit activation is required.
+NORTHBOUND_DISCORD_SCHEDULER_ENABLED = env_bool("NORTHBOUND_DISCORD_SCHEDULER_ENABLED", False)
+
+# Stage C is independently activated; saved categories never authorize a worker.
+NORTHBOUND_DISCORD_EVENTS_ENABLED = env_bool("NORTHBOUND_DISCORD_EVENTS_ENABLED", False)

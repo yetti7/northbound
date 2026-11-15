@@ -2,6 +2,7 @@
 
 No endpoints, approval, qualification, provenance or score-cache writes.
 """
+from .discord_events import observe_photo
 import json
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -66,6 +67,7 @@ def _prompt(month, participant_id, prompt_id, *, photo_id=None):
 
 
 @atomic_reservations
+@observe_photo
 def create_photo_submission(*, month_id, actor, prompt_id, reader_confirmed, discord_message_url=''):
     require_ready()
     if not actor.is_authenticated or not actor.is_active:
@@ -117,6 +119,7 @@ def create_photo_submission(*, month_id, actor, prompt_id, reader_confirmed, dis
 
 
 @atomic_reservations
+@observe_photo
 def transition_photo_reservation(*, photo_id, actor, version, status, reason=''):
     """Pending reservation release/reacquisition only; earned credit is deliberately unavailable."""
     require_ready()

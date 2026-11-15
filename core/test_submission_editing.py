@@ -67,7 +67,7 @@ class SubmissionEditingTests(TransactionTestCase):
         self.assertEqual(form['themes'].value(),[theme.pk])
         self.assertContains(response,'min="2026-11-01"')
         self.assertContains(response,'max="2026-11-30"')
-        self.assertContains(response,'Edit Submission')
+        self.assertContains(response,'Edit Book')
         self.assertContains(response,'Hardcover-provided reference:')
         self.assertContains(response,'not Hardcover-verified')
         self.assertNotIn('status',form.fields)
@@ -145,7 +145,7 @@ class SubmissionEditingTests(TransactionTestCase):
             item=self.submission(status=status)
             response=self.client.post(self.edit_url,self.payload(item,actor,title='Corrected '+status,status='approved'))
             self.assertEqual(response.status_code,302)
-            self.assertIn('/participants/',response.url)
+            self.assertIn('/manage/?section=edit',response.url)
             item.refresh_from_db()
             self.assertEqual(item.status,'approved' if status=='approved' else 'pending')
         self.assertEqual(BookSubmission.objects.count(),3)
@@ -194,7 +194,7 @@ class SubmissionEditingTests(TransactionTestCase):
         self.client.force_login(self.reader.user)
         self.assertNotContains(self.client.get(self.month.get_absolute_url()),self.edit_url)
         platform=self.actor('platform');self.client.force_login(platform)
-        self.assertContains(self.client.get(self.edit_url),'View correction audit history')
+        self.assertContains(self.client.get(self.edit_url),'section=history')
 
     def test_saved_edition_change_and_missing_pages_feedback(self):
         item=self.submission(catalog=True);actor=self.actor();self.client.force_login(actor)

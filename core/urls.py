@@ -6,7 +6,7 @@ from .branding_views import branding_settings
 from django.urls import path
 from . import global_search, views
 
-from . import immersive_ui
+from . import immersive_ui, reader_submission_views, personal_tbr_cover_views
 
 from .discord_views import discord_notification_settings
 
@@ -231,6 +231,7 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:pk>/delete/", views.team_delete, name="team-delete"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/teams/assign/", views.team_assignment_create, name="team-assignment-create"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/teams/assignments/<int:pk>/remove/", views.team_assignment_remove, name="team-assignment-remove"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/tbr/books/<int:pk>/cover/", personal_tbr_cover_views.cover_settings, name="personal-tbr-cover"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/", views.submission_create, name="submission-create"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submit/catalog/", views.submission_catalog, name="submission-catalog"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/", views.review_queue, name="review-queue"),
@@ -243,6 +244,8 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/pages/", views.submission_edit, {"workflow": "pages"}, name="submission-fix-pages"),
     path("config/submission-activity/", views.submission_activity, name="platform-submission-activity"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/activity/", views.submission_activity, name="submission-activity"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/reader/", reader_submission_views.detail, name="reader-submission"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/reader/edit/", reader_submission_views.edit, name="reader-submission-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/history/", views.submission_history, name="submission-history"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/<int:pk>/", views.submission_review, name="submission-review"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/restore/", views.submission_restore, name="submission-restore"),

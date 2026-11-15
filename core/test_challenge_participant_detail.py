@@ -157,9 +157,9 @@ class ChallengeParticipantDetailTests(TestCase):
         queue = self.get_as("host", reverse("review-queue", kwargs={
             "group_slug": self.group.slug, "month_pk": self.month.pk,
         }))
-        self.assertContains(queue, reverse("submission-review", kwargs={
+        self.assertContains(queue, reverse("submission-manage", kwargs={
             "group_slug": self.group.slug, "month_pk": self.month.pk, "pk": pending.pk,
-        }))
+        }) + '?section=review')
         self.assertContains(queue, hardcover_url)
 
     def test_progress_uses_zero_actual_denominators_without_creating_data(self):

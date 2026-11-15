@@ -50,7 +50,7 @@ def branding_choices(viewer, recap):
         # Results visibility alone is deliberately not an artwork authority.
         if floater or team.pk in current or can_view_branding_settings(viewer,team):
             eligible.append(team)
-    art = team_branding_many(viewer,eligible)
+    art = team_branding_many(viewer,eligible, presentation=False)
     options['teams'] = [{'id':str(t.pk),'name':t.name,'logo':art[t.pk]['effective_logo'],
         'banner':art[t.pk]['effective_banner']} for t in eligible]
     if eligible:

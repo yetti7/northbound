@@ -1,0 +1,26 @@
+<div class="discord-report-settings" data-discord-report>
+{% if editable %}<form method="post" class="stacked-form" data-report-form data-form-errors="{{ destination.schedule_form.errors|yesno:'true,false' }}">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="preferences">{% endif %}
+{{ destination.schedule_form.non_field_errors }}
+<fieldset{% if not editable %} disabled{% endif %}>
+<legend>{% if destination.key == 'community' %}Information Included in Scheduled Updates{% else %}Notification Preferences{% endif %}</legend>
+<p class="muted">{% if destination.key == 'community' %}Choose which details appear in scheduled Discord updates. Challenges must separately enable Discord announcements in their Challenge Settings. Only publicly shareable information is included. Categories select information, not which Challenges are included.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
+{% if destination.key == 'community' %}<p class="muted">Participation summaries, published results and standings, and immediate Published results are unavailable for the Community audience. Stored selections are preserved; these options do not produce messages.</p>{% endif %}
+<div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>
+<h3>Immediate Notifications</h3><input type="hidden" name="immediate_controls" value="1">
+<label for="{{ destination.schedule_form.immediate_enabled.id_for_label }}">{{ destination.schedule_form.immediate_enabled }} Enable immediate notifications</label>{{ destination.schedule_form.immediate_enabled.errors }}
+<p class="muted">Event announcements are separate from scheduled summaries. Saved categories require explicit activation here and a separately authorized event worker. No historical events are replayed.</p>
+<div class="discord-category-list">{{ destination.schedule_form.immediate_categories }}{{ destination.schedule_form.immediate_categories.errors }}</div>
+<h3>Scheduling</h3>
+<label for="{{ destination.schedule_form.scheduled_enabled.id_for_label }}">{{ destination.schedule_form.scheduled_enabled }} Enable scheduled reports</label>{{ destination.schedule_form.scheduled_enabled.errors }}
+<p class="muted">Group timezone: <strong>{{ destination.schedule_status.timezone }}</strong> · <a href="{% url 'group-edit' group.slug %}">Change in Group Settings</a></p>
+<div data-frequency-controls{% if not destination.schedule_form.scheduled_enabled.value %} hidden{% endif %}>
+<p>{{ destination.schedule_form.frequency.label_tag }}{{ destination.schedule_form.frequency }}{{ destination.schedule_form.frequency.errors }}</p>
+<div data-fixed-times{% if destination.schedule_form.frequency.value != 'daily' and destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.times.label_tag }}{{ destination.schedule_form.times }}{{ destination.schedule_form.times.errors }}<span class="muted" id="{{ destination.schedule_form.times.auto_id }}_helptext">{{ destination.schedule_form.times.help_text }}</span></p></div>
+<div data-weekdays{% if destination.schedule_form.frequency.value != 'weekly' and destination.schedule_form.frequency.value != 'custom' %} hidden{% endif %}><p>{{ destination.schedule_form.weekdays.label_tag }}</p><div class="discord-category-list">{{ destination.schedule_form.weekdays }}{{ destination.schedule_form.weekdays.errors }}</div></div>
+<label for="{{ destination.schedule_form.send_empty.id_for_label }}">{{ destination.schedule_form.send_empty }} {{ destination.schedule_form.send_empty.label }}</label>
+{% if destination.key == 'community' %}<p class="muted">If no selected category has eligible content, send only the neutral Community card when empty reports are enabled.</p>{% endif %}
+{% if destination.schedule_form.retire_legacy %}<p>{{ destination.schedule_form.retire_legacy }} {{ destination.schedule_form.retire_legacy.label }}{{ destination.schedule_form.retire_legacy.errors }}</p>{% endif %}
+</div>
+</fieldset>
+{% if editable %}<div class="action-row"><button class="button primary">Save {{ destination.label }} Preferences</button></div></form>{% endif %}
+</div>

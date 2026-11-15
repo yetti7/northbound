@@ -12,7 +12,7 @@ from django.utils import timezone
 from .models import (BookSubmission, BotmBook, PersonalTBRBook, BotmMatch, PersonalTBRMatch,
     BotmCompletionAward, PersonalTBRCompletionAward, ModifierProvenance, AuditEvent,
     MonthEnrollment, Membership, HardcoverSyncOutbox, ProgressCheckpointResult)
-from .permissions import membership_for, can_operate_challenge, host_scope_allows_reader, is_active_floater
+from .permissions import membership_for, is_active_floater
 from .matching_intent import eligible_entry, entry_evidence
 from .matching_resolution import identity_evidence, identity_stamp, competing
 from .submission_corrections import _reader_state, _fingerprint
@@ -21,11 +21,14 @@ SALT = 'northbound.administrative-credit-preview.v1'
 
 
 def can_manage_credit(actor, submission):
-    if not host_scope_allows_reader(actor, submission.month, submission.participant_id):
+    # Reuse live review scope; service validation still governs lifecycle/credit.
+    from .permissions import can_review_submission, restricted_host_team_ids
+    if not actor.is_authenticated or not actor.is_active:
         return False
     member = membership_for(actor, submission.month.group)
-    return bool(actor.is_authenticated and actor.is_active and (actor.is_superuser or
-        (member and member.role == Membership.Role.OWNER) or can_operate_challenge(actor, submission.month)))
+    owner = bool(member and member.role == Membership.Role.OWNER
+        and restricted_host_team_ids(actor, submission.month) is None)
+    return owner or can_review_submission(actor, submission)
 
 
 def _hash(value):

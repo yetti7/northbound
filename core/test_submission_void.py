@@ -2,7 +2,7 @@
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -239,3 +239,45 @@ class SubmissionVoidTests(TestCase):
         self.assertEqual(claim.approved_bonus_pages, 30)
         self.assertEqual(list(ProgressCheckpointResult.objects.values()), history)
         self.assertTrue(ModifierProvenance.objects.filter(submission=item).exists())
+
+
+class CorrectedSubmissionVoidTests(TransactionTestCase):
+    setUp = fixture.SubmissionHotfixTests.setUp
+    actor = editing_fixture.SubmissionEditingTests.actor
+    submission = editing_fixture.SubmissionEditingTests.submission
+    void_url = SubmissionVoidTests.void_url
+
+    def test_void_corrected_immersive_submission_removes_reader_and_team_credit(self):
+        from .immersive import configure_immersive, request_immersive, review_immersive
+        from .score_aggregation import challenge_team_totals
+        from .submission_corrections import (
+            correction_version, preview_correction, apply_previewed_correction,
+        )
+        item = self.submission(catalog=True)
+        actor = self.actor('host')
+        self.team = Team.objects.create(month=self.month, name='Credited team')
+        TeamAssignment.objects.create(month=self.month, participant=self.reader, team=self.team)
+        configure_immersive(month=self.month, actor=actor, enabled=True, percent=100)
+        claim = review_immersive(
+            request=request_immersive(submission=item, actor=self.reader.user),
+            actor=actor, decision='approved',
+        )
+        changes = {'page_count': 400}
+        version = correction_version(item, actor)
+        preview = preview_correction(submission=item, actor=actor, changes=changes, version=version)
+        item = apply_previewed_correction(
+            submission=item, actor=actor, changes=changes, version=version,
+            preview_token=preview['token'], confirm_approved=True,
+        )
+        before = challenge_score_totals(month=self.month)[self.reader.pk]['total_pages']
+        self.assertGreaterEqual(before, 800)
+        self.assertEqual(challenge_team_totals(month=self.month, team_ids=[self.team.pk])[self.team.pk], before)
+        self.client.force_login(actor)
+        self.assertEqual(self.client.post(self.void_url(item), {'reason': 'Invalid corrected submission'}).status_code, 302)
+        self.assertEqual(challenge_score_totals(month=self.month, participant_ids=[self.reader.pk])[self.reader.pk]['total_pages'], 0)
+        self.assertEqual(challenge_team_totals(month=self.month, team_ids=[self.team.pk])[self.team.pk], 0)
+        claim.refresh_from_db()
+        self.assertEqual((claim.status, claim.captured_percent), ('approved', 100))
+        self.assertTrue(AuditEvent.objects.filter(action='submission.corrected', object_id=str(item.pk)).exists())
+        self.assertTrue(AuditEvent.objects.filter(action='submission.removed', object_id=str(item.pk)).exists())
+        self.assertTrue(ModifierProvenance.objects.filter(submission=item, source_type='immersive').exists())

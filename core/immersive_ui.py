@@ -64,6 +64,9 @@ def submission_view(request, group_slug, month_pk, pk):
         except (ValidationError,DatabaseError): error='The request could not be saved. It may already exist, or eligibility may have changed. Reload before retrying.'
         else:
             messages.success(request,'Immersive request submitted for separate staff approval.')
+            from .submission_workspace import can_enter, section_url
+            if can_enter(request.user,submission):
+                return redirect(section_url(request,submission,'qualifications'))
             return redirect('submission-immersive',group_slug=group_slug,month_pk=month_pk,pk=pk)
     claims=list(submission.immersive_requests.select_related('reviewed_by','revoked_by').order_by('-requested_at','-pk'))
     reviewable=set(review_queue_requests(actor=request.user,month=submission.month).values_list('pk',flat=True))
@@ -71,8 +74,11 @@ def submission_view(request, group_slug, month_pk, pk):
         claim.can_review=claim.pk in reviewable
         claim.can_revoke=claim.status=='approved' and can_review_immersive(submission=submission,actor=request.user)
         claim.can_withdraw=claim.status=='pending' and claim.requester_id==request.user.pk and submission.month.status!='archived'
-    return render(request,'core/submission_immersive.html',{'submission':submission,'month':submission.month,
-        'claims':claims,'can_request':can_request_immersive(submission=submission,actor=request.user),'error':error})
+    context={'submission':submission,'month':submission.month,'claims':claims,'can_request':can_request_immersive(submission=submission,actor=request.user),'error':error}
+    from .submission_workspace import can_enter, render_workspace
+    if can_enter(request.user,submission):
+        return render_workspace(request,'core/submission_qualifications.html',context,'qualifications')
+    return render(request,'core/submission_immersive.html',context)
 
 
 @login_required
@@ -101,5 +107,10 @@ def action_view(request, group_slug, month_pk, pk, operation):
         except (ValidationError,DatabaseError):form.add_error(None,'The action could not be completed. Reload to check the latest request and book state before retrying.')
         else:
             messages.success(request,{'approve':'Immersive award approved.','reject':'Immersive request rejected.','withdraw':'Immersive request withdrawn.','revoke':'Immersive award revoked.'}[operation])
+            from .submission_workspace import can_enter, section_url
+            if can_enter(request.user,submission):
+                return redirect(section_url(request,submission,'qualifications'))
             return redirect('submission-immersive',group_slug=group_slug,month_pk=month_pk,pk=submission.pk)
-    return render(request,'core/immersive_action.html',{'claim':claim,'submission':submission,'month':submission.month,'form':form,'operation':operation})
+    from .submission_workspace import can_enter, section_url, operation_url
+    cancel_url=section_url(request,submission,'qualifications') if can_enter(request.user,submission) else operation_url(request,'submission-immersive',[group_slug,month_pk,submission.pk])
+    return render(request,'core/immersive_action.html',{'cancel_url':cancel_url,'claim':claim,'submission':submission,'month':submission.month,'form':form,'operation':operation})

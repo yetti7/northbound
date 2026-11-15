@@ -1,3 +1,4 @@
+from .discord_events import observe_challenge
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -129,6 +130,7 @@ def manual_registration_action(month):
 
 
 @transaction.atomic
+@observe_challenge
 def set_manual_registration(*, month_id, actor, action):
     from django.core.exceptions import PermissionDenied, ValidationError
 

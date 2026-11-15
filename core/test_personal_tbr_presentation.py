@@ -73,7 +73,7 @@ class PersonalTbrReaderPresentationTests(TestCase):
         self.client.force_login(self.reader_user)
         response = self.client.get(self.url)
         self.assertContains(response, "Personal TBR")
-        self.assertContains(response, "confirmed Challenge TBR is permanently locked")
+        self.assertContains(response, "confirmed Challenge TBR selections are permanently locked")
         self.assertContains(response, "0 / 3 completed")
         self.assertContains(response, "Reader Book 1")
         self.assertContains(response, "Reader Author 1")
@@ -138,7 +138,9 @@ class PersonalTbrReaderPresentationTests(TestCase):
         self.month.tbr_enabled = True; self.month.save(update_fields=["tbr_enabled"])
         PersonalTBR.objects.filter(pk=self.other_tbr.pk).update(confirmed_at=None)
         unconfirmed = self.client.get(self.month.get_absolute_url())
-        self.assertNotContains(unconfirmed, self.url)
+        self.assertContains(unconfirmed, self.url)
+        self.assertContains(unconfirmed, "View Saved Personal TBR / Manage Covers")
+        self.assertIsNone(unconfirmed.context["personal_tbr"])
         self.assertNotContains(unconfirmed, "Reader Book 1")
 
     def test_partial_tbr_never_advertises_full_nine_incentive(self):

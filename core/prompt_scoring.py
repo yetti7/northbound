@@ -1,4 +1,5 @@
 """Prompt qualifications use the shared modifier ledger and existing score caches."""
+from .discord_events import observe_book
 import json
 from zoneinfo import ZoneInfo
 from django.core import signing
@@ -141,6 +142,7 @@ def validate_ticket(ticket,submission,actor,selections):
 
 
 @atomic_reservations
+@observe_book
 def review_prompts(submission,actor,decisions,*,correction_authorization=None):
     if not decisions:return
     require_ready()

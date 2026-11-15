@@ -7,3 +7,22 @@ img[data-community-image][hidden]{display:none}
 
 .group-identity:not(.has-logo) .group-identity-info,.group-identity:not(.has-logo) .group-identity-actions{grid-column:1/-1}@media(min-width:641px) and (max-width:900px){.group-identity-logo{grid-row:1;max-height:160px;max-width:min(40vw,360px)}.group-identity-actions{grid-column:1/-1;justify-content:center}.group-identity-actions .button{font-size:.85rem}}
 [data-group-identity-preview] .group-identity-logo{grid-row:1}
+
+/* Opt-in preferences only: leave all legacy component gradients unchanged. */
+.group-identity.has-banner.branding-custom-gradient::before,
+.challenge-identity.has-banner.branding-custom-gradient::before,
+.team-card-identity.has-banner.branding-custom-gradient::before{
+  right:auto;width:var(--branding-coverage);
+  background:linear-gradient(90deg,rgba(12,18,36,var(--branding-darkness)),rgba(12,18,36,0));
+}
+/* Full-brightness showcase applies only where the Team name sits below artwork. */
+.team-card-identity.has-banner.is-artwork-showcase::before{display:none}
+/* Detail/preview text stays on the banner; localize its default readable overlay. */
+.team-identity.has-banner.is-artwork-showcase:not(.branding-custom-gradient)::before{
+  background:linear-gradient(0deg,rgba(12,18,36,.94),rgba(12,18,36,.85) 60%,rgba(12,18,36,0));
+}
+.banner-appearance{margin:1rem 0;min-width:0}
+.banner-appearance fieldset{border:0;padding:0;margin:0;min-width:0}
+.banner-appearance-slider{margin:1rem 0}
+.banner-appearance-slider>label{display:block;font-weight:600}
+.banner-appearance-slider input[type=range]{width:100%;max-width:32rem;min-height:44px;padding:0}

@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}{{ submission.title }} · Your Submission{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+<div class="page-heading"><div><p class="eyebrow">Your Submission · {{ month.name }}</p><h1>{{ submission.title }}</h1><p>{{ submission.author }} · {{ submission.get_book_format_display }} · {{ submission.get_status_display }}</p></div></div>
+<p>Completed {{ submission.completed_on }} · Submitted pages: {{ submission.submitted_pages }}{% if submission.status == 'approved' %} · Approved pages: {{ submission.approved_pages }}{% endif %}</p>
+<nav class="form-actions" aria-label="Submission actions">{% if can_reader_edit %}<a class="button primary" href="{% url 'reader-submission-edit' month.group.slug month.pk submission.pk %}">Edit Submission</a>{% endif %}<a class="button secondary" href="{% url 'challenge-participant-detail' month.group.slug month.pk submission.participant_id %}">Back to Your Books</a></nav>
+{% if error %}<p role="alert" class="errorlist">{{ error }}</p>{% endif %}
+<section aria-labelledby="reader-qualifications"><h2 id="reader-qualifications">Qualifications</h2><p>Requests do not award credit. An authorized reviewer must check identity and eligibility.</p>
+{% for group in qualification_groups %}<section class="card"><h3>{{ group.label }}</h3>
+{% for item in group.matches %}<p><strong>{{ item.book.title_snapshot }}</strong> — {{ item.book.author_snapshot }}<br>{% if item.match.is_qualifying %}Qualified · existing credit{% elif item.match.decision_evidence.reader_withdrawal %}Withdrawn by Reader{% elif item.match.status == 'rejected' %}Rejected · this relationship cannot be requested again here{% elif item.match.status == 'pending_review' %}Awaiting qualification review{% else %}This relationship does not currently qualify{% endif %}{% if item.requested %} · Reader post-submission request{% endif %}{% if item.stale %}<br>The book identity changed after this request. Authorized correction review is required.{% endif %}</p>{% endfor %}
+{% for candidate in group.candidates %}<article><h4>{% if not candidate.strong %}Possible Match: {% endif %}{{ candidate.book.title_snapshot }}</h4><p>{{ candidate.book.author_snapshot }}</p><p>{{ candidate.reason }}</p><form method="post">{% csrf_token %}<input type="hidden" name="version" value="{{ request_version }}"><input type="hidden" name="domain" value="{{ group.domain }}"><input type="hidden" name="target" value="{{ candidate.token }}"><button class="button secondary">{% if candidate.strong %}Request Qualification Review{% else %}Request Review{% endif %}</button></form></article>{% empty %}<p class="muted">No new eligible match is available to request. Existing decisions, participation and Challenge rules still apply.</p>{% endfor %}
+</section>{% endfor %}</section>
+{% include 'core/includes/submission_timeline.html' %}
+</div>
+{% endblock %}

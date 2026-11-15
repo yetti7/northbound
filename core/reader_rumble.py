@@ -54,7 +54,7 @@ def build_reader_rumble(*, actor, team, top=20, bonuses=False, include_zero=Fals
     if not include_zero:
         members = [m for m in members if scores[m.pk][key] != 0]
     members.sort(key=lambda m: (-scores[m.pk][key], m.user.username.casefold(), m.pk))
-    artwork = team_branding(actor, team)
+    artwork = team_branding(actor, team, presentation=False)
     return {'team': team.name, 'challenge': team.month.name, 'top': top,
         'metric': 'Total Challenge Points' if bonuses else 'Base Pages',
         'rows': [{'rank': rank, 'username': m.user.username, 'value': scores[m.pk][key]}

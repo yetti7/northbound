@@ -85,9 +85,13 @@ class UnifiedSubmissionReviewTests(TestCase):
         self.assertFalse(PersonalTBRMatch.objects.get(submission=s).is_qualifying)
         s.refresh_from_db()
         data=self.payload(s,confirm_botm='on',confirm_tbr='on')
-        self.assertEqual(self.client.post(self.review_url(s),data).status_code,302)
-        self.assertTrue(BotmMatch.objects.get(submission=s).is_qualifying)
-        self.assertTrue(PersonalTBRMatch.objects.get(submission=s).is_qualifying)
+        self.assertEqual(self.client.post(self.review_url(s),data).status_code,200)
+        from .matching_resolution import confirm_suggestion
+        for model in (BotmMatch, PersonalTBRMatch):
+            match=model.objects.get(submission=s)
+            self.assertFalse(match.is_qualifying)
+            confirm_suggestion(match=match,actor=self.reviewer,decision='confirmed')
+            match.refresh_from_db();self.assertTrue(match.is_qualifying)
         self.assertFalse(HardcoverSyncOutbox.objects.exists())
 
     def test_stale_changed_withdrawn_and_expired_roll_back(self):

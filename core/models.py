@@ -1,3 +1,4 @@
+from .discord_events import observe_challenge
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError
@@ -185,6 +186,9 @@ from .branding_files import branding_path
 
 
 class ReadingGroup(models.Model):
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
     branding_mode = models.CharField(max_length=16, choices=[("logo", "Logo Only"), ("banner", "Logo + Banner")], default="logo")
@@ -222,6 +226,10 @@ class ReadingGroup(models.Model):
 
 
 class GroupDiscordNotification(models.Model):
+    # Manual destination switches do not enable the existing hourly digest.
+    moderator_enabled = models.BooleanField(default=False)
+    community_enabled = models.BooleanField(default=False)
+    encrypted_community_webhook = models.TextField(blank=True)
     group = models.OneToOneField(ReadingGroup, on_delete=models.CASCADE, related_name="discord_notifications")
     enabled = models.BooleanField(default=False)
     encrypted_webhook = models.TextField(blank=True)
@@ -242,6 +250,112 @@ class DiscordDigestDelivery(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["group", "hour"], name="unique_group_discord_digest_hour")]
+
+
+class DiscordManualDelivery(models.Model):
+    class Destination(models.TextChoices):
+        COMMUNITY = "community", "Community Announcements"
+        MODERATOR = "moderator", "Moderator Notifications"
+
+    class Action(models.TextChoices):
+        TEST = "test", "Test Message"
+        STATUS = "status", "Current Status"
+
+    group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE, related_name="discord_manual_deliveries")
+    request_id = models.UUIDField(unique=True)
+    destination = models.CharField(max_length=16, choices=Destination.choices)
+    action = models.CharField(max_length=16, choices=Action.choices)
+    attempted_at = models.DateTimeField(default=timezone.now)
+    outcome = models.CharField(max_length=16, choices=[("pending", "Pending"), ("sent", "Succeeded"), ("failed", "Failed")], default="pending")
+    failure_category = models.CharField(max_length=32, blank=True)
+    retry_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-attempted_at", "-pk"]
+
+
+class DiscordReportSchedule(models.Model):
+    class Frequency(models.TextChoices):
+        DISABLED = "disabled", "Disabled"
+        HALF_HOUR = "30m", "Every 30 minutes"
+        HOUR = "1h", "Every hour"
+        SIX_HOURS = "6h", "Every 6 hours"
+        TWELVE_HOURS = "12h", "Every 12 hours"
+        DAILY = "daily", "Daily"
+        WEEKLY = "weekly", "Weekly"
+        CUSTOM = "custom", "Custom Times"
+
+    configuration = models.ForeignKey(GroupDiscordNotification, on_delete=models.CASCADE, related_name="report_schedules")
+    destination = models.CharField(max_length=16, choices=DiscordManualDelivery.Destination.choices)
+    frequency = models.CharField(max_length=16, choices=Frequency.choices, default="disabled")
+    categories = models.JSONField(default=list, blank=True)
+    times = models.JSONField(default=list, blank=True)
+    weekdays = models.JSONField(default=list, blank=True)
+    send_empty = models.BooleanField(default=False)
+    immediate_categories = models.JSONField(default=list, blank=True)
+    immediate_enabled = models.BooleanField(default=False)
+    immediate_activated_at = models.DateTimeField(null=True, blank=True)
+    configured_at = models.DateTimeField(default=timezone.now)
+    timezone_name = models.CharField(max_length=64, blank=True)
+    revision = models.PositiveIntegerField(default=0)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_outcome = models.CharField(max_length=24, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_failure_category = models.CharField(max_length=32, blank=True)
+    cooldown_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["configuration", "destination"], name="unique_discord_report_destination")]
+
+
+class DiscordReportDelivery(models.Model):
+    schedule = models.ForeignKey(DiscordReportSchedule, on_delete=models.CASCADE, related_name="deliveries")
+    slot_key = models.CharField(max_length=160)
+    scheduled_for = models.DateTimeField()
+    attempted_at = models.DateTimeField(default=timezone.now)
+    outcome = models.CharField(max_length=24, default="claimed")
+    failure_category = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["schedule", "slot_key"], name="unique_discord_report_slot")]
+        ordering = ["-attempted_at", "-pk"]
+
+
+class DiscordSchedulerHeartbeat(models.Model):
+    name = models.CharField(max_length=32, primary_key=True, default="discord")
+    last_seen = models.DateTimeField(default=timezone.now)
+    daemon = models.BooleanField(default=False)
+
+
+class DiscordEventDelivery(models.Model):
+    """Minimal transactional outbox; no payloads or decrypted credentials."""
+    event_key = models.UUIDField(default=uuid.uuid4)
+    group = models.ForeignKey(ReadingGroup, on_delete=models.CASCADE)
+    challenge = models.ForeignKey('ChallengeMonth', on_delete=models.CASCADE)
+    destination = models.CharField(max_length=16, choices=DiscordManualDelivery.Destination.choices)
+    category = models.CharField(max_length=32)
+    review_category = models.CharField(max_length=16, blank=True)
+    source_kind = models.CharField(max_length=24)
+    source_id = models.PositiveBigIntegerField()
+    team = models.ForeignKey('Team', null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(default=timezone.now)
+    activated_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    state = models.CharField(max_length=16, default='pending')
+    attempts = models.PositiveSmallIntegerField(default=0)
+    claim_id = models.UUIDField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    failure_category = models.CharField(max_length=32, blank=True)
+    webhook_fingerprint = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['event_key','destination'], name='unique_discord_event_destination')]
+        indexes = [models.Index(fields=['state','next_attempt_at'], name='discord_event_due')]
+        ordering = ['created_at','pk']
 
 
 class HardcoverConnection(models.Model):
@@ -459,6 +573,10 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    discord_community_opt_in = models.BooleanField(default=False)
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
     prompt_automation_excluded = models.BooleanField(default=False, editable=False)
 
     logo = models.ImageField(upload_to=branding_path, blank=True)
@@ -608,6 +726,7 @@ class ChallengeMonth(models.Model):
         ):
             raise ValidationError({"status": "Reopening a Completed Challenge requires explicit recovery confirmation."})
 
+    @observe_challenge
     def transition_to(self, target_status, *, confirm_reversal=False, confirm_completed_recovery=False):
         if not self.pk:
             raise ValidationError({"status": "Save the Challenge before changing its lifecycle state."})
@@ -626,6 +745,7 @@ class ChallengeMonth(models.Model):
         self.status = target_status
         return self
 
+    @observe_challenge
     def apply_scheduled_actions(self, *, now=None, registration=True, lifecycle=True):
         from .scheduling import lifecycle_due_target
 
@@ -918,6 +1038,10 @@ class MonthTheme(models.Model):
 
 
 class Team(models.Model):
+    gradient_enabled = models.BooleanField(default=False)
+    gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    hide_inherited_logo = models.BooleanField(default=False)
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="teams")
@@ -1040,6 +1164,11 @@ class PersonalTBR(models.Model):
         return f"{self.enrollment} — Personal TBR"
 
 
+def personal_tbr_cover_path(instance, filename):
+    # Uploaded names are never used as paths. image_asset normalizes to PNG.
+    return f'tbr-covers/{instance.personal_tbr_id}/{uuid.uuid4().hex}.png'
+
+
 class PersonalTBRBook(models.Model):
     personal_tbr = models.ForeignKey(PersonalTBR, on_delete=models.CASCADE, related_name="books")
     position = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(9)])
@@ -1062,6 +1191,7 @@ class PersonalTBRBook(models.Model):
     display_cover_url = models.URLField(max_length=1000, null=True, blank=True)
     display_page_count = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     display_refreshed_at = models.DateTimeField(null=True, blank=True)
+    custom_cover = models.ImageField(upload_to=personal_tbr_cover_path, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property
@@ -1074,7 +1204,9 @@ class PersonalTBRBook(models.Model):
 
     @property
     def effective_display_cover_url(self):
-        return self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url
+        from .branding import _asset
+        return (_asset(self.custom_cover)
+                or (self.cover_url_snapshot if self.display_cover_url is None else self.display_cover_url))
 
     @property
     def effective_display_page_count(self):

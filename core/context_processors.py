@@ -260,7 +260,11 @@ PARENT_LABELS = {'my-stats': 'Back to My Stats',
  'team-list': 'Back to Teams',
  'theme-list': 'Back to Themes'}
 
-NAVIGATION_EXCEPTIONS = {'photo-withdraw': 'POST-only action endpoint; no application return control.',
+NAVIGATION_EXCEPTIONS = {
+ 'reader-submission': 'Reader-owned page supplies its own scoped return link.',
+ 'reader-submission-edit': 'Reader pending editor preserves its dedicated Cancel destination.',
+ 'personal-tbr-cover': 'Reader artwork form supplies its own scoped Cancel destination.',
+'photo-withdraw': 'POST-only action endpoint; no application return control.',
 'botm-catalog': 'JSON/API endpoint; no application return control.',
  'botm-match-review': 'Action endpoint, not a secondary navigation screen.',
  'botm-match-synchronize': 'Action endpoint, not a secondary navigation screen.',

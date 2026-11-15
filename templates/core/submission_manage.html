@@ -1,41 +1,9 @@
-{% extends "base.html" %}{% load navigation %}
-{% block title %}Manage Submission · {{ submission.title }} · Northbound{% endblock %}
-{% block content %}
-<div class="submission-editor-shell submission-manage">
-  <div class="page-heading"><div><p class="eyebrow"><a href="{{ month.get_absolute_url }}">{{ month.name }}</a></p><h1>Manage Submission</h1></div></div>
-  <section class="card submission-compact-summary">
-    <h2>{% include "core/includes/submission_title.html" %}</h2>
-    <p>{{ submission.author }} · {{ submission.participant.user.username }}</p>
-    <p>{% if submission.is_removed %}<span class="pill status-warning">Voided</span>{% else %}<span class="pill">{{ submission.get_status_display }}</span>{% endif %}
-      {% if tbr_qualified %}<span class="pill">TBR credit</span>{% endif %}
-      {% if botm_qualified %}<span class="pill">BOTM credit</span>{% endif %}</p>
-    <p>{{ submission.approved_pages|default_if_none:"Pending" }} approved pages · {% if submission.is_removed %}Excluded from totals{% else %}{{ submission.final_scored_pages|default_if_none:"Pending" }} scored pages{% endif %}</p>
-  </section>
-  <nav class="submission-editor-actions" aria-label="Submission actions">
-    {% if can_adjudicate and not submission.is_removed %}{% if month.status == 'active' or month.status == 'finalizing' %}<a class="button secondary" {% url 'submission-review' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Review Submission</a>{% endif %}{% endif %}
-    {% if submission.can_restore %}<a class="button primary" {% url 'submission-restore' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Restore Submission</a>{% endif %}
-    {% if editable %}<a class="button primary" {% url 'submission-editor' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Edit Submission</a>{% endif %}
-    {% if administrative_credit %}<a class="button secondary" {% url 'submission-credit' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Review Credit</a>{% endif %}
-  </nav>
-{% include "core/includes/submission_timeline.html" %}
-  {% if editable %}
-  <details class="card submission-editor-section"><summary>Advanced Options</summary>
-    <div class="submission-editor-actions">
-      <a class="button secondary" {% url 'submission-edit' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Advanced Corrections</a>
-      <a class="button secondary" {% url 'submission-fix-book' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Fix Book Information</a>
-      <a class="button secondary" {% url 'submission-fix-pages' month.group.slug month.pk submission.pk as contextual_link %}href="{% navigation_url contextual_link %}">Fix Pages / Themes</a>
-    </div>
-    {% if can_adjudicate and matches %}
-    <h3>Existing TBR candidates</h3>
-    {% for match in matches %}<p>{{ match.personal_tbr_book.title_snapshot }} · {{ match.get_status_display }}</p>
-    {% if match.status == 'pending_review' %}
-    <div class="action-row">
-      <form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'confirm' %}">{% csrf_token %}<button class="button secondary">Confirm existing candidate</button></form>
-      <form method="post" action="{% url 'personal-tbr-match-review' month.group.slug month.pk match.pk 'reject' %}">{% csrf_token %}<button class="button danger-button">Reject existing candidate</button></form>
-    </div>
-    {% endif %}{% endfor %}
-    {% endif %}
-  </details>
-  {% endif %}
-</div>
+{% extends 'core/submission_workspace.html' %}{% load navigation %}
+{% block workspace_content %}
+<h2>Overview</h2>
+{% if workspace.read_only %}<p class="notice">This submission is read-only. Existing history and qualification evidence are preserved.</p>{% elif submission.status == 'pending' %}<p class="notice">Book approval is pending.{% if workspace.can_review %} Review identity, pages and applicable Theme claims before deciding.{% endif %}</p>{% endif %}
+{% if workspace.conflicts %}<p class="notice">Some qualification evidence needs elevated review. Book approval does not resolve conflicting identities.</p>{% endif %}
+<div class="workspace-grid"><section class="card"><h3>Book evidence</h3><dl class="details"><dt>Completed</dt><dd>{{ submission.completed_on }}</dd><dt>Verification source</dt><dd>{{ submission.get_verification_method_display }}</dd>{% if submission.metadata_pages %}<dt>Hardcover reference</dt><dd>{{ submission.metadata_pages }} pages</dd>{% endif %}<dt>Hardcover</dt><dd>{% include 'core/includes/hardcover_link.html' with url=submission.hardcover_url book_title=submission.title %}{% if not submission.hardcover_url %}No association{% endif %}</dd>{% if workspace.can_view_notes %}<dt>Reader notes</dt><dd>{{ submission.notes|default:'None' }}</dd>{% endif %}</dl></section>
+<section class="card"><h3>Next action</h3>{% if workspace.can_review and submission.status == 'pending' %}<p>Review this book{% if workspace.pending_themes %} and {{ workspace.pending_themes }} pending Theme claim{{ workspace.pending_themes|pluralize }}{% endif %}.</p><a class="button primary" href="{{ workspace.review_url }}">Review Pending Submission</a>{% elif workspace.can_edit %}<p>Correct book information with the existing preview and confirmation safeguards.</p><a class="button primary" href="{{ workspace.edit_url }}">Edit Book</a>{% else %}<p>No book edit or review action is available within your current authority and this lifecycle.</p>{% endif %}<p>Qualification requests and Immersive Reading have separate decisions in Qualifications.</p></section></div>
+{% if submission.can_void or submission.can_restore %}<section class="card workspace-lifecycle"><h3>Submission state</h3>{% if submission.can_void %}<a class="button secondary" href="{{ workspace.void_url }}">Void Submission</a>{% endif %}{% if submission.can_restore %}<a class="button secondary" href="{{ workspace.restore_url }}">Restore Submission</a>{% endif %}</section>{% endif %}
 {% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{{ team.name }} · {{ month.name }}{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/challenge_identity.css' %}"><link rel="stylesheet" href="{% static 'css/team_identity.css' %}">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/challenge_identity.css' %}"><link rel="stylesheet" href="{% static 'css/team_identity.css' %}"><link rel="stylesheet" href="{% static 'css/team_books.css' %}">{% endblock %}
 {% block content %}{% if month.status == 'finalizing' or month.status == 'completed' or month.status == 'archived' %}<p class="notice neutral">Team assignments are locked after the Active stage.</p>{% endif %}
 {% include 'core/includes/team_identity_header.html' %}
 {% if can_access_team_branding %}<nav class="action-row" aria-label="Team settings"><a class="button secondary" href="{% url 'team-branding' group.slug month.pk team.pk %}">{% if team_branding_editable %}Team Branding Settings{% else %}View Team Branding{% endif %}</a></nav>{% endif %}
@@ -44,7 +44,7 @@
 <section id="team-books">
   <div class="section-heading"><h2>Team Books</h2></div>
   <div class="team-book-list">{% for book in team_books.items %}
-    {% include "core/includes/team_book_card.html" with linked=True %}
+    {% include "core/includes/team_book_card.html" with linked=True compact=True %}
   {% empty %}<p class="empty-state">No books submitted by this team yet.</p>{% endfor %}</div>
   {% if team_books.previous or team_books.next %}<nav class="action-row" aria-label="Team Books pages">
     {% if team_books.previous %}<a class="button secondary" href="{{ team_books.previous }}">Newer books</a>{% endif %}
