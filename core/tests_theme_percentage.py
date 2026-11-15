@@ -283,7 +283,7 @@ class PercentageThemeTests(TestCase):
             correct_unused_theme(theme=t, values={'bonus_percentage': 80},
                 recovery_request=self.request(t, 'theme.correct_unused'))
 
-    def test_authorized_page_only_review_post_recalculates_and_audits(self):
+    def test_approved_page_review_post_requires_signed_correction(self):
         c = ThemeClaim.objects.create(theme=self.theme(), submission=self.submission)
         self.review(400, decisions={c.pk: 'approved'})
         self.client.force_login(self.user)
@@ -298,12 +298,12 @@ class PercentageThemeTests(TestCase):
             'claims-MIN_NUM_FORMS': 0, 'claims-MAX_NUM_FORMS': 1000,
             'claims-0-id': c.pk, 'claims-0-submission': self.submission.pk,
             'claims-0-status': 'approved'})
-        self.assertEqual(response.status_code, 302)
+        self.assertContains(response, "signed Edit Book correction preview")
         c.refresh_from_db(); self.submission.refresh_from_db()
         self.assertEqual((c.award_basis_pages, c.award_bonus_pages,
-                          self.submission.final_scored_pages), (500, 125, 625))
+                          self.submission.final_scored_pages), (400, 100, 500))
         from .models import AuditEvent
-        self.assertTrue(AuditEvent.objects.filter(
+        self.assertFalse(AuditEvent.objects.filter(
             action='submission.approved', object_id=str(self.submission.pk), summary__contains='500',
         ).exists())
 

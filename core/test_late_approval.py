@@ -237,8 +237,12 @@ class LateApprovalTests(TestCase):
         synchronize_submission(book)
         self.assertFalse(BotmCompletionAward.objects.exists())
         self.assertFalse(ModifierProvenance.objects.filter(submission=book).exists())
-        with self.assertRaisesMessage(ValidationError, "held historical Theme"):
+        before = list(book.theme_claims.values())
+        with self.assertRaisesMessage(ValidationError, "signed Edit Book correction preview"):
             self.approve(book, themes=True)
+        self.assertEqual(list(book.theme_claims.values()), before)
+        book.refresh_from_db()
+        self.assertEqual(book.final_scored_pages, 400)
 
     def test_rate_change_invalidates_review_token_for_departed_reader(self):
         self.configure_awards()

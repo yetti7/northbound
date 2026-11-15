@@ -201,7 +201,7 @@ class DisplayBackfillMigrationTests(TransactionTestCase):
                 pre_save.disconnect(forbid_selection_save)
             migrated = executor.loader.project_state([('core', '0062_backfill_selection_display_metadata')]).apps
             self.assertEqual(evidence_state(migrated), before)
-            for model in (PersonalTBRBook, BotmBook):
+            for model in (migrated.get_model('core', 'PersonalTBRBook'), migrated.get_model('core', 'BotmBook')):
                 for book in model.objects.all():
                     self.assertEqual(book.display_title, book.title_snapshot)
                     self.assertEqual(book.display_author, book.author_snapshot)
