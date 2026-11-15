@@ -3946,6 +3946,7 @@ def _team_book_values(team):
         status__in=[BookSubmission.Status.PENDING, BookSubmission.Status.APPROVED],
     ).order_by("-submitted_at", "-pk").values(
         "pk", "title", "author", "participant__user__username", "catalog_book__cover_url", "submitted_at", "status",
+        "submitted_pages", "approved_pages", "reference_url",
     )
 
 

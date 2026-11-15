@@ -1,12 +1,19 @@
-{% load navigation %}{% load tz %}
+{% load navigation tz team_books %}
 {% timezone month.group.timezone %}
 <article class="card team-book-card">
   {% include "core/includes/book_cover.html" with image_url=book.catalog_book__cover_url title=book.title %}
   <div>
+    {% if compact %}{% with pages=book|recorded_pages reference=book.reference_url|safe_reference_url %}
+    <h3>{% if reference %}<a href="{{ reference }}" target="_blank" rel="noopener noreferrer">{{ book.title }}</a>{% else %}{{ book.title }}{% endif %}</h3>
+    <p class="team-book-author">{{ book.author|default:"Author unavailable" }}</p>
+    <p>{% if pages != None %}{{ pages }} page{{ pages|pluralize }}{% else %}Pages unavailable{% endif %}</p>
+    <p class="team-book-reader">{{ book.participant__user__username }}</p>
+    {% endwith %}{% else %}
     <h3>{% if linked %}<a {% url 'team-book-detail' month.group.slug month.pk team.pk book.pk as contextual_link %}href="{% navigation_url contextual_link %}">{{ book.title }}</a>{% else %}{{ book.title }}{% endif %}</h3>
     <p>{{ book.author }}</p>
     <p>{{ book.participant__user__username }} · <time datetime="{{ book.submitted_at|date:'c' }}">{{ book.submitted_at|date:"M j, Y · g:i A" }}</time></p>
     <span class="pill">{% if book.status == "approved" %}Approved{% else %}Pending{% endif %}</span>
+    {% endif %}
   </div>
 </article>
 {% endtimezone %}

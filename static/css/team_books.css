@@ -1,0 +1,10 @@
+/* Compact gallery only; roster, summary cards and legacy book detail stay unchanged. */
+#team-books .team-book-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,19rem),1fr));gap:.75rem;align-items:start}
+#team-books .team-book-card{grid-template-columns:60px minmax(0,1fr);gap:.75rem;padding:.75rem;border-radius:12px;align-items:start}
+#team-books .team-book-card .book-cover-frame{width:60px;max-width:60px;align-self:start;border-radius:7px}
+#team-books .team-book-card [data-book-cover-image]{object-fit:contain}
+#team-books .team-book-card>div{min-width:0}
+#team-books .team-book-card h3{font-size:1rem;line-height:1.3;margin:0 0 .2rem;overflow-wrap:anywhere}
+#team-books .team-book-card h3 a{display:inline-block;max-width:100%;min-height:44px;padding-block:.25rem;text-decoration:underline;text-underline-offset:.15em}
+#team-books .team-book-card h3 a:focus-visible{outline:3px solid var(--accent);outline-offset:3px;border-radius:3px}
+#team-books .team-book-card p{font-size:.875rem;line-height:1.4;margin:.2rem 0;overflow-wrap:anywhere}
