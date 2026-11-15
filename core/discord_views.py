@@ -13,9 +13,33 @@ from django.views.decorators.http import require_http_methods
 from .discord_notifications import DiscordNotificationForm, configure_notifications, destination_fields
 from .discord_manual import (DESTINATIONS, ACTIONS, FAILURES, destination_diagnostics,
     manual_request_token, read_manual_request, deliver_manual)
-from .models import GroupDiscordNotification, ReadingGroup, DiscordReportSchedule, DiscordManualDelivery, DiscordReportDelivery, DiscordDigestDelivery
+from .models import GroupDiscordNotification, ReadingGroup, DiscordReportSchedule, DiscordManualDelivery, DiscordReportDelivery, DiscordDigestDelivery, ChallengeStaffAssignment
 from .discord_scheduling import ReportScheduleForm, configure_report_schedule, schedule_diagnostics, COMMUNITY_CATEGORIES
-from .permissions import can_configure_discord_notifications, can_view_discord_notifications
+from .permissions import (can_configure_discord_notifications, can_view_discord_notifications,
+    visible_challenges_for, can_manage_months, can_operate_challenge, challenge_history_locked)
+
+
+def community_challenge_rows(actor, group):
+    """Read-only projection of visible Challenges; the existing checkbox owns opt-in."""
+    from .discord_community import community_eligible
+    months=list(visible_challenges_for(actor,group.challenge_months.select_related('group').order_by('pk')))
+    manage=can_manage_months(actor,group)
+    # Avoid repeated permission queries for every row in a read-only Moderator list.
+    hosted=set() if manage else set(ChallengeStaffAssignment.objects.filter(
+        month__group=group,membership__user=actor,membership__is_active=True,
+        role=ChallengeStaffAssignment.Role.HOST,ended_at__isnull=True).values_list('month_id',flat=True))
+    rows=[]
+    for month in months:
+        eligible=community_eligible(month)
+        reason=('Draft' if month.status=='draft' else 'Group inactive' if not group.is_active
+            else 'Announcements not enabled' if not month.discord_community_opt_in
+            else 'Lifecycle not eligible' if not eligible else '')
+        settings_url=''
+        if not challenge_history_locked(month) and (manage or (month.pk in hosted and can_operate_challenge(actor,month))):
+            settings_url=reverse('challenge-general-settings',args=[group.slug,month.pk])
+        rows.append({'name':month.name,'lifecycle':month.get_status_display(),
+            'enabled':month.discord_community_opt_in,'eligible':eligible,'reason':reason,'settings_url':settings_url})
+    return rows,months
 
 
 def settings_redirect(group, destination):
@@ -80,6 +104,7 @@ def discord_notification_settings(request, group_slug):
         if invalid_preferences.is_valid():
             messages.success(request, 'Notification preferences saved. Automatic delivery requires separate global worker activation.')
             return settings_redirect(group, selected)
+    challenge_rows,community_months=community_challenge_rows(request.user,group)
     destinations = []
     for destination, label in DESTINATIONS.items():
         enabled_field, _ = destination_fields(destination)
@@ -100,7 +125,7 @@ def discord_notification_settings(request, group_slug):
             group=group,destination=destination,schedule=report,legacy_enabled=bool(config and config.enabled))
         destinations.append({'key': destination, 'label': label, 'form': form,
             'status': destination_diagnostics(config, destination, group=group),
-            'schedule_form': report_form, 'schedule_status': schedule_diagnostics(report,group=group),
+            'schedule_form': report_form, 'schedule_status': schedule_diagnostics(report,group=group,community_months=community_months),
             'unavailable_categories': [],
             'history': history_rows(group,destination),
             'events': event_diagnostics(group,destination),
@@ -110,4 +135,4 @@ def discord_notification_settings(request, group_slug):
                 for action_key, action_label in ACTIONS.items()] if editable else []})
     # Never pass models containing encrypted webhooks or decrypted values to templates.
     return render(request, 'core/group_discord_notifications.html',
-        {'group': group, 'editable': editable, 'destinations': destinations})
+        {'group': group, 'editable': editable, 'destinations': destinations,'community_challenges':challenge_rows})

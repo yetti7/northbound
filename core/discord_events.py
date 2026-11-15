@@ -383,8 +383,18 @@ def event_diagnostics(group,destination):
     heartbeat=DiscordSchedulerHeartbeat.objects.filter(name='discord-events').first()
     active=settings.NORTHBOUND_DISCORD_EVENTS_ENABLED
     recent=heartbeat and 0<=(timezone.now()-heartbeat.last_seen).total_seconds()<90
-    schedule=DiscordReportSchedule.objects.filter(configuration__group=group,destination=destination).first()
-    return {'enabled':bool(schedule and schedule.immediate_enabled),'worker':
+    schedule=DiscordReportSchedule.objects.select_related('configuration__group').filter(configuration__group=group,destination=destination).first()
+    from .discord_manual import _blocking_reason, FAILURES
+    enabled=bool(schedule and schedule.immediate_enabled)
+    worker_active=bool(recent and heartbeat.daemon)
+    reason=_blocking_reason(schedule.configuration if schedule else None,destination)
+    readiness='Disabled — immediate notifications are disabled in preferences.'
+    if enabled:
+        if reason:readiness='Paused — '+FAILURES[reason]
+        elif not active:readiness='Paused — global immediate delivery gate is disabled.'
+        elif not worker_active:readiness='Worker inactive — no recent recurring event-worker heartbeat.'
+        else:readiness='Running — recent recurring event-worker heartbeat.'
+    return {'readiness':readiness,'global_enabled':active,'worker_active':worker_active,'enabled':bool(schedule and schedule.immediate_enabled),'worker':
         'Not activated' if not active else 'Recent worker heartbeat' if recent and heartbeat.daemon else
         'Recent one-time check' if recent else 'No recent heartbeat',
         'pending':rows.filter(state='pending').count(),'last_sent':rows.filter(state='sent').order_by('-finished_at').first(),

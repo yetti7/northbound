@@ -2,8 +2,9 @@
 {% if editable %}<form method="post" class="stacked-form" data-report-form data-form-errors="{{ destination.schedule_form.errors|yesno:'true,false' }}">{% csrf_token %}<input type="hidden" name="destination" value="{{ destination.key }}"><input type="hidden" name="action" value="preferences">{% endif %}
 {{ destination.schedule_form.non_field_errors }}
 <fieldset{% if not editable %} disabled{% endif %}>
-<legend>Notification Preferences</legend>
-<p class="muted">Scheduled report categories. {% if destination.key == 'community' %}Only opted-in Challenges and publicly shareable information are included. Participation and results require visibility authorization for the Discord audience and are currently omitted, including after completion.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
+<legend>{% if destination.key == 'community' %}Information Included in Scheduled Updates{% else %}Notification Preferences{% endif %}</legend>
+<p class="muted">{% if destination.key == 'community' %}Choose which details appear in scheduled Discord updates. Challenges must separately enable Discord announcements in their Challenge Settings. Only publicly shareable information is included. Categories select information, not which Challenges are included.{% else %}Choose review categories for scheduled reports.{% endif %}</p>
+{% if destination.key == 'community' %}<p class="muted">Participation summaries, published results and standings, and immediate Published results are unavailable for the Community audience. Stored selections are preserved; these options do not produce messages.</p>{% endif %}
 <div class="discord-category-list">{{ destination.schedule_form.categories }}{{ destination.schedule_form.categories.errors }}</div>
 <h3>Immediate Notifications</h3><input type="hidden" name="immediate_controls" value="1">
 <label for="{{ destination.schedule_form.immediate_enabled.id_for_label }}">{{ destination.schedule_form.immediate_enabled }} Enable immediate notifications</label>{{ destination.schedule_form.immediate_enabled.errors }}

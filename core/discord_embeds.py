@@ -168,9 +168,13 @@ def pack(embeds):
     return payloads
 
 
-def community_status_embed(group, timestamp):
-    value = embed(group=group, title='📚 Northbound — Community Update',
-        description='Your next reading adventure starts here.\nVisit Northbound for the latest updates available to you.',
+def community_status_embed(group, timestamp, *, reason="no_eligible"):
+    descriptions = {
+        'no_eligible': 'No eligible Challenges are currently included in Community announcements.\nEnable Discord announcements in an eligible Challenge’s settings to include it in future updates.',
+        'no_selected_content': 'No shareable Challenge details are available for the selected report categories.\nChoose supported information in the Community scheduled-update preferences.',
+    }
+    value = embed(group=group, title=clip('📚 '+name(group.name)+' — Community Update',256),
+        description=descriptions.get(reason, descriptions['no_selected_content']),
         color=COMMUNITY_COLOR, timestamp=timestamp)
     link = link_field('View Northbound', application_url('group-detail', [group.slug], public=True))
     if link:

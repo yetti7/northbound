@@ -26,3 +26,8 @@
 .discord-advanced summary{cursor:pointer;min-height:32px;font-weight:600}
 .discord-history{padding-left:1.3rem;font-size:.9rem;overflow-wrap:anywhere}
 @media(max-width:640px){.discord-tabs [role=tab]{font-size:.9rem;padding:.7rem .55rem}.discord-destination{padding:1rem}.discord-delivery-summary .details{grid-template-columns:minmax(0,1fr)}.discord-delivery-summary .details dd{margin:0 0 .5rem}}
+
+.discord-challenge-list{border-top:1px solid var(--border);padding-top:1rem;margin-top:1rem;overflow-wrap:anywhere}
+.discord-challenge-list summary{cursor:pointer;font-weight:600;min-height:44px}
+.discord-challenge-list li{margin:.75rem 0}
+.discord-challenge-list summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}

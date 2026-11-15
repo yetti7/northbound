@@ -84,6 +84,10 @@ class ReportScheduleForm(forms.Form):
         self.legacy_enabled = legacy_enabled and destination=='moderator'
         self.fields['categories'].choices = MODERATOR_CATEGORIES if destination=='moderator' else COMMUNITY_CATEGORIES
         self.fields['immediate_categories'].choices = IMMEDIATE_CATEGORIES[destination]
+        if destination == 'community':
+            unavailable = ' — unavailable for the Community audience'
+            self.fields['categories'].choices = [(key,label+unavailable if key in {'participation','results'} else label) for key,label in COMMUNITY_CATEGORIES]
+            self.fields['immediate_categories'].choices = [(key,label+unavailable if key=='results' else label) for key,label in IMMEDIATE_CATEGORIES[destination]]
         if not self.legacy_enabled:
             self.fields.pop('retire_legacy')
 
@@ -347,7 +351,7 @@ def process_due_reports(*, now=None, daemon=False):
     return result
 
 
-def schedule_diagnostics(schedule, *, group, now=None):
+def schedule_diagnostics(schedule, *, group, now=None, community_months=None):
     now=now or timezone.now()
     heartbeat=DiscordSchedulerHeartbeat.objects.filter(name='discord').first()
     if not settings.NORTHBOUND_DISCORD_SCHEDULER_ENABLED:
@@ -355,6 +359,7 @@ def schedule_diagnostics(schedule, *, group, now=None):
     elif heartbeat and 0 <= (now-heartbeat.last_seen).total_seconds() <= GRACE_SECONDS:
         operational='Recently active scheduler' if heartbeat.daemon else 'Recent one-time scheduler check'
     else:operational='Not running: no recent scheduler heartbeat.'
+    worker_active=bool(heartbeat and heartbeat.daemon and 0 <= (now-heartbeat.last_seen).total_seconds() <= GRACE_SECONDS)
     frequency=schedule.frequency if schedule else 'disabled'
     upcoming=None;error=''
     try:
@@ -369,20 +374,33 @@ def schedule_diagnostics(schedule, *, group, now=None):
         if (schedule.next_run_at and schedule.next_run_at>now and schedule.timezone_name==group.timezone
                 and (not schedule.cooldown_until or schedule.next_run_at>=schedule.cooldown_until)):
             upcoming=schedule.next_run_at
-    readiness='Scheduled reporting disabled.'
+    privacy_notice = ('Only opted-in, eligible metadata is shared. Participation and results remain unavailable for the Community audience.'
+        if schedule and schedule.destination=='community' else '')
+    readiness='Disabled — scheduled reports are disabled.' if schedule else 'Disabled — no report frequency is configured.'
     if schedule and frequency!='disabled':
         reason=_blocking_reason(schedule.configuration,schedule.destination)
-        readiness=FAILURES.get(reason,'Configuration ready. Delivery still requires an activated scheduler.')
-        if schedule.cooldown_until and schedule.cooldown_until>now:readiness=FAILURES['rate_limited']
-        if error:readiness=error
+        if reason:readiness='Paused — '+FAILURES[reason]
+        elif not settings.NORTHBOUND_DISCORD_SCHEDULER_ENABLED:
+            readiness='Paused — global scheduling gate is disabled.'
+        elif schedule.cooldown_until and schedule.cooldown_until>now:readiness='Paused — '+FAILURES['rate_limited']
+        elif error:readiness='Paused — '+error
         elif schedule.destination=='moderator' and schedule.configuration.enabled:
-            readiness='The existing hourly digest must be disabled before using this schedule.'
-        elif schedule.destination=='community':
-            readiness='Only opted-in, eligible public-sharing content is included; restricted information is omitted.'
+            readiness='Paused — turn off the existing hourly digest before using this schedule.'
+        else:
+            empty_reason=''
+            if schedule.destination=='community':
+                from .discord_community import community_empty_reason
+                empty_reason=community_empty_reason(group,schedule.categories,months=community_months)
+            if empty_reason and not schedule.send_empty:
+                readiness=('Paused — no eligible opted-in Challenges.' if empty_reason=='no_eligible'
+                    else 'Paused — no shareable content in the selected report categories.')
+            elif not worker_active:readiness='Worker inactive — no recent recurring scheduler heartbeat.'
+            else:readiness='Running — recent recurring scheduler heartbeat.'
     outcome_labels={'claimed':'Started; outcome may be unknown. No automatic retry.', 'sent':'Accepted by Discord',
         'empty':'No eligible content; no message sent', 'failed':'Delivery failed',
         'blocked':'Delivery blocked by configuration or cooldown', 'missed':'Missed slot skipped; not replayed'}
-    return {'readiness':readiness,'outcome_label':outcome_labels.get(schedule.last_outcome,'No scheduled attempt') if schedule else 'No scheduled attempt',
+    return {'readiness':readiness,'privacy_notice':privacy_notice,'worker_active':worker_active,
+        'global_enabled':settings.NORTHBOUND_DISCORD_SCHEDULER_ENABLED,'outcome_label':outcome_labels.get(schedule.last_outcome,'No scheduled attempt') if schedule else 'No scheduled attempt',
         'enabled':frequency!='disabled','frequency':dict(DiscordReportSchedule.Frequency.choices).get(frequency,'Unavailable'),
         'timezone':group.timezone,'display_timezone':display_zone,'next_run':upcoming,'operational':operational,'error':error,
         'last_attempt':schedule.last_attempt_at if schedule else None,'last_sent':schedule.last_sent_at if schedule else None,
