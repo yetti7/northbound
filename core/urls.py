@@ -6,7 +6,7 @@ from .branding_views import branding_settings
 from django.urls import path
 from . import global_search, views
 
-from . import immersive_ui
+from . import immersive_ui, reader_submission_views
 
 from .discord_views import discord_notification_settings
 
@@ -243,6 +243,8 @@ urlpatterns = [
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/edit/pages/", views.submission_edit, {"workflow": "pages"}, name="submission-fix-pages"),
     path("config/submission-activity/", views.submission_activity, name="platform-submission-activity"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/activity/", views.submission_activity, name="submission-activity"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/reader/", reader_submission_views.detail, name="reader-submission"),
+    path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/reader/edit/", reader_submission_views.edit, name="reader-submission-edit"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/history/", views.submission_history, name="submission-history"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/reviews/<int:pk>/", views.submission_review, name="submission-review"),
     path("groups/<slug:group_slug>/months/<int:month_pk>/submissions/<int:pk>/restore/", views.submission_restore, name="submission-restore"),

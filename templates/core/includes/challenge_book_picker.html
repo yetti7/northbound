@@ -1,5 +1,5 @@
 {% if challenge_book_groups %}
-<section class="challenge-book-picker" data-challenge-book-picker data-preview-url="{% url 'submission-catalog' month.group.slug month.pk %}" aria-labelledby="challenge-books-heading">
+<section class="challenge-book-picker" data-challenge-book-picker data-preview-url="{% if picker_preview_url %}{{ picker_preview_url }}{% else %}{% url 'submission-catalog' month.group.slug month.pk %}{% endif %}" aria-labelledby="challenge-books-heading">
   <h2 id="challenge-books-heading">Your Challenge Books</h2>
   <p>Reading a Book of the Month or a book on your Personal TBR? Choose it here. Selection requests qualification review; it does not guarantee credit.</p>
   {% for group in challenge_book_groups %}

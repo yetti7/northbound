@@ -90,6 +90,9 @@ def identity_evidence(submission, book):
         short, long = sorted([title.split(), other.split()], key=len)
         if len(short) >= 3 and len(short) < len(long) and long[:len(short)] == short:
             return 'pending', 'Same author and exact title prefix; subtitle identity requires review.'
+    from .reader_submissions import is_requested
+    if is_requested(submission, book):
+        return 'pending', 'Reader requested post-submission qualification review.'
     selected = (submission.selected_botm_book_id if isinstance(book, BotmBook)
                 else submission.selected_tbr_book_id)
     if selected == book.pk:
@@ -115,7 +118,8 @@ def _legacy_stamp_matches(match, submission):
 
 def assess_entries(submission, books, domain):
     """Shared, read-only candidate evaluation for synchronization and review UI."""
-    selected = submission.selected_botm_book_id if domain == 'botm' else submission.selected_tbr_book_id
+    from .reader_submissions import requested_entry_id
+    selected = requested_entry_id(submission, domain) or (submission.selected_botm_book_id if domain == 'botm' else submission.selected_tbr_book_id)
     assessed = [(b, *identity_evidence(submission, b)) for b in books]
     if selected:
         assessed = [item for item in assessed if item[0].pk == selected]
@@ -241,7 +245,7 @@ def synchronize_domain(submission, domain, *, earned_only=False, restore_earned=
             results.append(previous);continue
         conflict = evidence == 'conflict' or evidence == 'none'
         duplicate = competing(match_model, submission, book, field, previous.pk if previous else None)
-        if approved and evidence in {'work', 'exact'} and len(assessed) == 1 and not duplicate:
+        if approved and evidence in {'work', 'exact'} and len(assessed) == 1 and not duplicate and not (previous and previous.decision_evidence.get('reader_request')):
             method = 'catalog_work' if evidence == 'work' else 'normalized_title_author'
             match = module._confirm_candidate(book, submission, method=method, evidence_summary=reason)
         else:
@@ -273,6 +277,11 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
     match = model.objects.select_for_update().select_related(
         field+'__catalog_book', 'submission__catalog_book', 'submission__month', 'submission__participant__user').get(pk=match.pk)
     s = match.submission;book = getattr(match, field)
+    from .reader_submissions import request_data, protected_request_state
+    request = request_data(match)
+    protected = protected_request_state(s) if request else None
+    if request and (request.get('actor_id') != s.participant.user_id or request.get('fingerprint') != identity_stamp(s, book)):
+        raise ValidationError('The requested book identity changed. This request cannot be approved or rejected from stale evidence.')
     match.full_clean()
     if not actor.is_active or not can_review_submission(actor, s):
         raise ValidationError('Submission review scope is required for suggested-match confirmation.')
@@ -288,13 +297,17 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
     if not match.suggestion_fingerprint and not _legacy_stamp_matches(match, s):
         raise ValidationError('Historical candidate evidence changed. Reload and investigate.')
     if decision == 'confirmed':
+        if request:
+            from .reader_submissions import eligible
+            if not eligible(s.participant.user, s):
+                raise ValidationError('The requesting Reader is no longer eligible for qualification review.')
         from .permissions import is_active_floater
         if is_active_floater(s.month, s.participant_id):
             raise ValidationError('Active Floaters cannot receive new challenge credit.')
         module = import_module('.botm_matching' if model is BotmMatch else '.personal_tbr_matching', __package__)
         evidence, reason = identity_evidence(s, book)
         selected = s.selected_botm_book_id if model is BotmMatch else s.selected_tbr_book_id
-        plausible = evidence in {'work','exact','pending'} and (evidence != 'pending' or bool(selected == book.pk) or
+        plausible = evidence in {'work','exact','pending'} and (evidence != 'pending' or bool(selected == book.pk) or bool(request) or
             same_trusted_work(s, book) or
             (normalize_book_identity(s.author) == book.normalized_author and bool(s.author)))
         if not plausible or match.conflict_reason:
@@ -313,12 +326,24 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
                                                    'catalog_edition_id':s.catalog_edition_id},
                             'entry_identity':entry_evidence(book),
                             'actor_id':actor.pk,'decided_at':match.decided_at.isoformat()}
+    if request:
+        match.decision_evidence['reader_request'] = request
     match.save(update_fields=['method','status','is_qualifying','reviewer','decided_at','decision_evidence','updated_at'])
     module = import_module('.botm_matching' if model is BotmMatch else '.personal_tbr_matching', __package__)
     module._finalize_submission_matches(s, list(model.objects.filter(submission=s)))
+    if protected is not None:
+        current = protected_request_state(s)
+        for award in ('PersonalTBRCompletionAward','BotmCompletionAward'):
+            old_ids = {row[0] for row in protected[award]}
+            current[award] = [row for row in current[award] if row[0] in old_ids]
+        if current != protected:
+            raise ValidationError('This request would change protected book evidence, Themes or a frozen completion award. Use authorized correction review instead.')
     AuditEvent.objects.create(actor=actor,group=s.month.group,
         action=('botm.' if model is BotmMatch else 'personal_tbr.')+('match_confirmed' if decision=='confirmed' else 'match_rejected'),
         object_type=model.__name__,object_id=str(match.pk),summary=json.dumps(match.decision_evidence,sort_keys=True))
+    if request:
+        AuditEvent.objects.create(actor=actor,group=s.month.group,action='submission.qualification_'+decision,
+            object_type='BookSubmission',object_id=str(s.pk),summary=json.dumps({'domain':request['domain'],'match_id':match.pk}))
     return match
 
 

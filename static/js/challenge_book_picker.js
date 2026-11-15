@@ -98,6 +98,15 @@
     input(`${group.dataset.selectionGroup}_token`).value = choice.value;
     render(group);
   });
+  // Existing pending associations are retained unless explicitly removed.
+  document.querySelector('[data-clear-book]')?.addEventListener('click', () => {
+    const clearAssociation = input('clear_catalog');
+    if (clearAssociation) clearAssociation.checked = true;
+  });
+  document.addEventListener('northbound-pages-selected', () => {
+    const clearAssociation = input('clear_catalog');
+    if (clearAssociation) clearAssociation.checked = false;
+  });
   form.addEventListener('input', schedulePreview);
   document.addEventListener('northbound-pages-selected', schedulePreview);
   // Manual entry must also work when Hardcover is disconnected.

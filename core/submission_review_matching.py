@@ -37,9 +37,14 @@ def matching_cards(submission):
         for book,strength,reason in assessed:
             match = next((m for m in matches if getattr(m,field+'_id') == book.pk),None)
             state = 'automatic' if strength in {'work','exact'} else 'suggested'
+            from .reader_submissions import request_data
+            if match and match.status == 'pending_review' and request_data(match):
+                state = 'suggested'
             duplicate = competing(model,submission,book,field,match.pk if match else None)
             if strength in {'none','conflict'} or len(assessed)>1 or duplicate:
                 state = 'conflict'
+            if match and match.status == 'rejected':
+                state='conflict'
             if match and match.method == 'manual_review':
                 if match.status == 'rejected':state='conflict';reason='A previous review rejected this relationship.'
                 elif ((match.decision_evidence and match.decision_evidence.get('fingerprint') != identity_stamp(submission,book))
@@ -51,7 +56,8 @@ def matching_cards(submission):
                        'Matching needs elevated review. You may approve the book without this credit.')
             if state == 'conflict':
                 if match and match.status == 'rejected':
-                    explanation = 'A previous reviewer rejected this relationship.'
+                    explanation = ('The Reader withdrew this qualification selection.' if match.decision_evidence.get('reader_withdrawal')
+                                   else 'A previous reviewer rejected this relationship.')
                 elif duplicate:
                     explanation = 'Another submission or relationship already holds this qualification.'
                 elif len(assessed)>1:

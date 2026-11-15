@@ -6193,6 +6193,11 @@ def submission_catalog(request, group_slug, month_pk):
         except ValidationError as exc:
             return JsonResponse({"ok": False, "message": " ".join(exc.messages)}, status=400)
         return JsonResponse({"ok": True, "feedback": feedback})
+    return _submission_catalog_action(request, month)
+
+
+def _submission_catalog_action(request, month):
+    """Existing catalog operations after each caller validates its workflow scope."""
     connection = HardcoverConnection.objects.filter(group=month.group, is_valid=True).first()
     if not connection:
         return JsonResponse({"ok": False, "message": "Hardcover catalog search is not connected for this group. Use manual entry."}, status=503)
@@ -6949,6 +6954,9 @@ def _annotate_submission_edit(user, submissions):
         if submission.month_id not in scopes:
             scopes[submission.month_id] = activity_scope(user, submission.month, include_own_voided=True)
         submission.can_view_activity = any(scope.filter(pk=submission.pk).exists() for scope in scopes[submission.month_id])
+        from .reader_submissions import owns, eligible
+        submission.reader_detail_url = reverse('reader-submission', args=[submission.month.group.slug, submission.month_id, submission.pk]) if owns(user, submission) else ''
+        submission.can_reader_edit = eligible(user, submission, editing=True)
         submission.can_edit = can_edit_submission(user, submission)
         from .administrative_matching import can_manage_credit
         submission.can_manage_submission = submission.can_edit or can_manage_credit(user, submission)
@@ -7200,6 +7208,22 @@ def submission_review(request, group_slug, month_pk, pk):
             "voided_review": True,
         })
     from .submission_review_matching import matching_cards, MatchingReviewForm, apply_unified_review
+    from . import reader_submissions as reader_service
+    if request.method == 'POST' and request.POST.get('action') == 'reader-qualification-review':
+        try:
+            reader_service.review_request(submission=submission, actor=request.user, domain=request.POST.get('domain'),
+                match_id=request.POST.get('match_id'), state=request.POST.get('request_version'), decision=request.POST.get('decision'))
+        except (ValidationError, PermissionDenied, DatabaseError, ValueError) as exc:
+            explanation=' '.join(exc.messages) if isinstance(exc,ValidationError) else 'Reload and check identity, eligibility and frozen award evidence.'
+            messages.error(request, 'The qualification request could not be decided. Nothing was saved. '+explanation)
+        else:
+            messages.success(request, 'Qualification decision saved. Book details and approved pages were preserved.')
+        return redirect('submission-review', group_slug=group_slug, month_pk=month_pk, pk=pk)
+    reader_requests = []
+    for domain, (model, field) in reader_service.DOMAINS.items():
+        for match in model.objects.filter(submission=submission, status='pending_review').select_related(field):
+            if reader_service.request_data(match):
+                reader_requests.append({'domain':domain,'label':'BOTM' if domain=='botm' else 'Personal TBR','match':match,'book':getattr(match,field)})
     cards = matching_cards(submission)
     matching_form = MatchingReviewForm(request.POST or None, submission=submission, actor=request.user, cards=cards)
     form = SubmissionReviewForm(request.POST or None, instance=submission, initial={
@@ -7245,7 +7269,7 @@ def submission_review(request, group_slug, month_pk, pk):
                 return redirect("review-queue", group_slug=group_slug, month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
     _annotate_submission_edit(request.user, [submission])
-    return render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []})
+    return render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []})
 
 
 @login_required

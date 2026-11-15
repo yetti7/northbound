@@ -11,11 +11,11 @@ from .botm_presentation import build_botm_reader_presentation
 from .personal_tbr_presentation import build_personal_tbr_reader_presentation
 
 
-def picker_groups(*, month, participant, actor, data=None):
+def picker_groups(*, month, participant, actor, data=None, allow_finalizing=False):
     from .permissions import is_active_floater
     if (actor.is_superuser or not actor.is_active or not participant or not participant.is_active
             or participant.user_id != actor.pk or participant.group_id != month.group_id
-            or month.status != 'active' or is_active_floater(month, participant.pk)
+            or month.status not in ({'active','finalizing'} if allow_finalizing else {'active'}) or is_active_floater(month, participant.pk)
             or not MonthEnrollment.objects.filter(month=month, participant=participant, is_active=True, awaiting_scoring_team=False).exists()):
         return []
     botm = list(month.botm_books.filter(is_retired=False).select_related('catalog_book', 'catalog_edition')) if month.botm_enabled else []
@@ -42,7 +42,7 @@ def picker_groups(*, month, participant, actor, data=None):
     return groups
 
 
-def preview_selection(*, data, month, participant, actor):
+def preview_selection(*, data, month, participant, actor, allow_finalizing=False):
     """No saves, catalog requests, matching records or awards."""
     submission = BookSubmission(month=month, participant=participant,
                                 title=data.get('title', ''), author=data.get('author', ''))
@@ -61,7 +61,7 @@ def preview_selection(*, data, month, participant, actor):
         submission.title = edition.book.title
         submission.author = edition.book.author
     feedback = []
-    for group in picker_groups(month=month, participant=participant, actor=actor):
+    for group in picker_groups(month=month, participant=participant, actor=actor, allow_finalizing=allow_finalizing):
         domain = group['domain']
         selected = getattr(submission, 'selected_' + domain + '_book_id')
         assessed = assess_entries(submission, group['books'], domain)
