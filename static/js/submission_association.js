@@ -8,7 +8,7 @@
     form.elements.preview_token.value = '';
     if (form.elements.confirm_approved) form.elements.confirm_approved.checked = false;
     if (form.elements.confirm_work) form.elements.confirm_work.checked = false;
-    form.querySelector('[data-correction-submit]').textContent = form.hasAttribute('data-compact-editor') ? 'Save' : 'Preview Changes';
+    form.querySelector('[data-correction-submit]').textContent = form.hasAttribute('data-compact-editor') && form.dataset.requiresPreview !== 'true' && !(panel && form.elements.edition.value && form.elements.edition.value !== panel.dataset.currentEdition) ? 'Save Pending Changes' : 'Preview Changes';
   };
   form.addEventListener('input', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});
   form.addEventListener('change', event => {if (!['confirm_approved', 'confirm_work'].includes(event.target.name)) clearPreview();});

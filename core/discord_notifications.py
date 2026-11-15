@@ -34,7 +34,7 @@ def validate_webhook(value):
 
 
 class DiscordNotificationForm(forms.Form):
-    enabled = forms.BooleanField(required=False, label='Enable hourly review digest')
+    enabled = forms.BooleanField(required=False, label='Enable destination')
     webhook_url = forms.CharField(required=False, max_length=2048, strip=True,
         widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
         label='New Discord webhook URL', help_text='Leave blank to keep the saved webhook. It is never displayed.')
@@ -55,7 +55,7 @@ class DiscordNotificationForm(forms.Form):
 
 @sensitive_variables()
 @transaction.atomic
-def configure_notifications(*, group, actor, enabled, webhook_url='', remove=False):
+def configure_notifications(*, group, actor, enabled, webhook_url='', remove=False, destination=None):
     group = ReadingGroup.objects.select_for_update().get(pk=group.pk, is_active=True)
     actor = get_user_model().objects.get(pk=actor.pk)
     if not can_configure_discord_notifications(actor, group):
@@ -65,21 +65,26 @@ def configure_notifications(*, group, actor, enabled, webhook_url='', remove=Fal
     if webhook_url:
         validate_webhook(webhook_url)
     config, _ = GroupDiscordNotification.objects.get_or_create(group=group)
-    before = (config.enabled, config.encrypted_webhook)
+    if destination is None:
+        enabled_field, webhook_field = 'enabled', 'encrypted_webhook'
+    else:
+        enabled_field, webhook_field = destination_fields(destination)
+    before = (getattr(config, enabled_field), getattr(config, webhook_field))
     if remove:
-        config.encrypted_webhook = ''
+        setattr(config, webhook_field, '')
         enabled = False
     elif webhook_url:
-        config.encrypted_webhook = encrypt_token(webhook_url)
-    if enabled and not config.encrypted_webhook:
+        setattr(config, webhook_field, encrypt_token(webhook_url))
+    if enabled and not getattr(config, webhook_field):
         raise ValidationError('Save a webhook before enabling notifications.')
-    config.enabled = enabled
-    if before != (config.enabled, config.encrypted_webhook):
-        config.save(update_fields=['enabled', 'encrypted_webhook'])
+    setattr(config, enabled_field, enabled)
+    if before != (enabled, getattr(config, webhook_field)):
+        config.save(update_fields=[enabled_field, webhook_field])
         AuditEvent.objects.create(actor=actor, group=group, action='group.discord_notifications_updated',
             object_type='ReadingGroup', object_id=str(group.pk),
-            summary=json.dumps({'enabled': enabled, 'webhook_changed': bool(webhook_url or remove),
-                                'webhook_configured': bool(config.encrypted_webhook)}))
+            summary=json.dumps({'destination': destination or 'legacy_moderator_digest',
+                                'enabled': enabled, 'webhook_changed': bool(webhook_url or remove),
+                                'webhook_configured': bool(getattr(config, webhook_field))}))
     return config
 
 
@@ -214,26 +219,33 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 @sensitive_variables()
-def send_webhook(url, payload):
+def send_webhook(url, payload, *, detailed=False, retryable=False):
     """Return only safe status/cooldown values; never return provider messages."""
     try:
         validate_webhook(url)
         request = Request(url, data=json.dumps(payload).encode(),
             headers={'Content-Type': 'application/json', 'User-Agent': 'Northbound review digest'}, method='POST')
         with build_opener(NoRedirect()).open(request, timeout=10) as response:
-            return ('sent', 0) if 200 <= response.status < 300 else ('failed', 0)
+            return ('sent', 0) if 200 <= response.status < 300 else ('rejected' if detailed else 'failed', 0)
     except HTTPError as exc:
         if exc.code == 429:
             try:
                 body = json.loads(exc.read(4096))
                 delay = float(body.get('retry_after', exc.headers.get('Retry-After', 3600)))
-                delay = min(86400, max(3600, delay))
+                delay = min(86400, max(1 if retryable else 3600, delay))
             except (ValueError, TypeError, AttributeError):
                 delay = 3600
             return 'rate_limited', delay
-        return 'failed', 0
-    except (URLError, OSError, ValidationError, ValueError):
-        return 'failed', 0
+        if retryable and 500 <= exc.code < 600:
+            return 'server_error', 0
+        return ('rejected' if detailed else 'failed'), 0
+    except TimeoutError:
+        return ('timeout' if detailed else 'failed'), 0
+    except URLError as exc:
+        status = 'timeout' if isinstance(exc.reason, TimeoutError) else 'network_error'
+        return (status if detailed else 'failed'), 0
+    except (OSError, ValidationError, ValueError):
+        return ('network_error' if detailed else 'failed'), 0
 
 
 def delivery_enabled():
@@ -315,3 +327,11 @@ def process_due_discord_digests(*, now=None):
             logger.warning('Discord digest processing failed for Group %s', group_id)
             results.append((group_id, 'failed'))
     return results
+
+
+def destination_fields(destination):
+    if destination == 'moderator':
+        return 'moderator_enabled', 'encrypted_webhook'
+    if destination == 'community':
+        return 'community_enabled', 'encrypted_community_webhook'
+    raise ValidationError('Choose a valid Discord destination.')

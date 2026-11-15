@@ -1,17 +1,12 @@
-{% extends "base.html" %}{% load navigation %}
-{% load static %}
-{% block title %}Edit Submission · {{ submission.title }}{% endblock %}
-{% block content %}
-<div class="submission-editor-shell">
-  <div class="page-heading"><div><p class="eyebrow"><a href="{% navigation_url cancel_url %}">Manage Submission</a></p><h1>Edit Submission</h1></div></div>
-  <section class="card submission-compact-summary"><h2>{{ submission.title }}</h2><p>{{ submission.author }} · {{ submission.participant.user.username }}</p><span class="pill">{{ submission.get_status_display }}</span></section>
-  <form method="post" class="stacked-form submission-editor-form" data-correction-form data-compact-editor>
+{% extends 'core/submission_workspace.html' %}{% load static navigation %}
+{% block workspace_content %}<h2>Edit Book</h2><p>Book corrections preserve their existing status rules, identity checks and scoring safeguards. Approved changes require the signed impact preview before confirmation.</p>
+  <form method="post" action="{{ workspace.edit_post_url }}"{% if form.is_bound %} data-unsaved-state{% endif %} data-requires-preview="{% if submission.status == 'approved' %}true{% else %}false{% endif %}" class="stacked-form submission-editor-form" data-correction-form data-compact-editor>
     {% csrf_token %}{{ form.version }}{{ form.preview_token }}{{ form.edition }}
     {{ form.non_field_errors }}
     {% if reload_required %}<p class="notice" role="alert">Your changes were not saved. <a href="{% navigation_url edit_url %}">Reload submission</a> before trying again.</p>{% endif %}
     {{ original_themes|json_script:"submission-original-themes" }}
     <details class="card submission-editor-section"{% if book_open %} open{% endif %}>
-      <summary>Book Details <span>{{ submission.title }}</span></summary>
+      <summary>Book Details</summary><p>Format: <strong>{{ submission.get_book_format_display }}</strong>. Manual format correction is not supported by this editor. A verified Hardcover edition change may update the format through the existing correction service.</p>
       {{ form.title.as_field_group }}{{ form.author.as_field_group }}
       {{ form.edition.errors }}
       <details class="submission-editor-section"{% if association_changed or form.edition.errors %} open{% endif %}>
@@ -70,11 +65,9 @@
       </section>
     {% endif %}
     <div class="submission-editor-actions">
-      <button class="button primary" type="submit" data-correction-submit{% if reload_required %} disabled{% endif %}>{% if preview %}Apply Changes{% else %}Save{% endif %}</button>
+      <button class="button primary" type="submit" data-correction-submit{% if reload_required %} disabled{% endif %}>{% if preview %}Apply Changes{% elif submission.status == 'approved' %}Preview Changes{% else %}Save Pending Changes{% endif %}</button>
       <a class="button secondary" href="{{ cancel_url }}">Cancel</a>
     </div>
-  </form>
-</div>
-<script src="{% static 'js/theme_eligibility.js' %}" defer></script>
-<script src="{% static 'js/submission_association.js' %}" defer></script>
+  </form><details class="workspace-advanced"><summary>Specialized correction workflows</summary><p>These focused forms retain their separate field restrictions and confirmation steps.</p><a href="{{ focused_book_url }}">Fix Book Information</a> · <a href="{{ focused_pages_url }}">Fix Pages / Themes</a> · <a href="{{ advanced_url }}">Advanced Corrections</a></details>
+<script src="{% static 'js/theme_eligibility.js' %}" defer></script><script src="{% static 'js/submission_association.js' %}?v=2" defer></script>
 {% endblock %}

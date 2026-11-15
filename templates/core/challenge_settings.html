@@ -1,8 +1,9 @@
 {% extends "base.html" %}{% load community_branding %}
 {% load tz static %}
 {% block title %}Challenge Settings · {{ month.name }}{% endblock %}
-{% block content %}{% branding_settings_visible month as can_view_art_settings %}{% if can_view_art_settings %}<section class="card"><h2>Branding</h2><a class="button secondary" href="{% url 'challenge-branding' month.group.slug month.pk %}">Branding Settings</a></section>{% endif %}{% load community_branding %}{% artwork month as community_art %}{% include 'core/includes/community_branding.html' with branding=community_art %}
+{% block content %}{% branding_settings_visible month as can_view_art_settings %}
 <div class="page-heading page-header"><div class="page-header-content"><p class="eyebrow">{{ month.name }}</p><h1>Challenge Settings</h1><p class="lede">Configuration, staffing, features, and lifecycle controls for this Challenge.</p></div></div>
+{% if can_view_art_settings %}<div class="action-row"><a class="button secondary" href="{% url 'challenge-branding' month.group.slug month.pk %}">Branding Settings</a></div>{% endif %}
 {% include "core/includes/challenge_immediate_actions.html" %}
 
 <section class="page-section"><div class="section-heading"><div><h2>Core Configuration</h2><p>Challenge identity, schedule, registration, and communication.</p></div></div><div class="card-grid challenge-settings-grid">

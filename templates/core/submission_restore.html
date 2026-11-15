@@ -1,7 +1,7 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load static %}
 {% block title %}Restore Submission · Northbound{% endblock %}
 {% block content %}
-<div class="submission-editor-shell">
+<div class="submission-editor-shell"{% if workspace_state_action %} data-submission-workspace{% endif %}>
   <div class="page-heading"><h1>Restore Submission</h1></div>
   <section class="card submission-compact-summary">
     <h2>{% include "core/includes/submission_title.html" %}</h2>
@@ -11,7 +11,7 @@
     {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
     {% if eligible %}
       <p>Restoring an Approved submission can immediately affect scoring, qualifications, and Challenge standings.</p>
-      <form method="post">
+      <form method="post"{% if error %} data-unsaved-state{% endif %}>
         {% csrf_token %}
         <input type="hidden" name="confirmation" value="{{ confirmation }}">
         <p><label for="restore-reason">Restoration reason (optional)</label><textarea id="restore-reason" name="reason" rows="3">{{ reason }}</textarea></p>
@@ -26,4 +26,4 @@
     {% endif %}
   </section>
 </div>
-{% endblock %}
+{% if workspace_state_action %}<script src="{% static 'js/submission_workspace.js' %}?v=1" defer></script>{% endif %}{% endblock %}

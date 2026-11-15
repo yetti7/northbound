@@ -31,7 +31,10 @@
     </div>
     {% if timeline.page.has_other_pages %}
     <nav class="submission-editor-actions" aria-label="Submission history pages">
-      {% if standalone %}
+      {% if workspace %}
+        {% if workspace.history_previous %}<a class="button secondary" href="{{ workspace.history_previous }}">Newer activity</a>{% endif %}
+        {% if workspace.history_next %}<a class="button secondary" href="{{ workspace.history_next }}">Older activity</a>{% endif %}
+      {% elif standalone %}
         {% if timeline.page.has_previous %}<a class="button secondary" href="?page={{ timeline.page.previous_page_number }}">Newer activity</a>{% endif %}
         {% if timeline.page.has_next %}<a class="button secondary" href="?page={{ timeline.page.next_page_number }}">Older activity</a>{% endif %}
       {% else %}

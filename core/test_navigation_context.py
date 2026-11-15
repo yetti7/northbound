@@ -78,7 +78,9 @@ class ContextualNavigationTests(NavigationFoundationTests):
             self.assertContains(response,'class="back-button contextual-back"',count=1)
             self.assertEqual(response.context['logical_parent_label'],'Back to Review Queue')
             if route=='submission-editor':
-                self.assertEqual(response.context['cancel_url'],target)
+                self.assertEqual(urlsplit(response.context['cancel_url']).path,target)
+                self.assertEqual(parse_qs(urlsplit(response.context['cancel_url']).query)['section'],['overview'])
+                self.assertEqual(parse_qs(urlsplit(response.context['cancel_url']).query)['nav'],[token])
         book.refresh_from_db();self.assertEqual((book.title,book.approved_pages,book.status),('A long book title',100,'approved'))
         self.assertEqual(AuditEvent.objects.count(),before)
 

@@ -368,6 +368,12 @@ class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):
 
 
 class GroupCreateForm(forms.ModelForm):
+    def clean_timezone(self):
+        from .discord_scheduling import valid_zone
+        value = self.cleaned_data['timezone']
+        valid_zone(value)
+        return value
+
     hardcover_api_token = forms.CharField(
         label="Hardcover API Token",
         required=False,
@@ -406,6 +412,12 @@ class GroupCreateForm(forms.ModelForm):
 
 
 class GroupEditForm(forms.ModelForm):
+    def clean_timezone(self):
+        from .discord_scheduling import valid_zone
+        value = self.cleaned_data['timezone']
+        valid_zone(value)
+        return value
+
     class Meta:
         model = ReadingGroup
         fields = ("name", "timezone", "announcement_enabled", "announcement")
@@ -608,8 +620,9 @@ class ChallengeCreateForm(forms.Form):
 class ChallengeGeneralSettingsForm(forms.ModelForm):
     class Meta:
         model = ChallengeMonth
-        fields = ("name", "description")
-        labels = {"name": "Challenge Title"}
+        fields = ("name", "description", "discord_community_opt_in")
+        labels = {"name": "Challenge Title", "discord_community_opt_in": "Include this Challenge in Discord announcements"}
+        help_texts = {"discord_community_opt_in": "Community announcements only. Public visibility restrictions still apply. Enabling this does not publish past announcements or activate immediate messages."}
         widgets = {"description": forms.Textarea(attrs={"rows": 4})}
 
 

@@ -1,0 +1,12 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Edit Pending Submission · {{ submission.title }}{% endblock %}
+{% block content %}
+<div class="submission-editor-shell">
+<div class="page-heading"><div><p class="eyebrow">{{ month.name }}</p><h1>Edit Submission</h1><p>Your book will remain Pending. Original submission and selection evidence is retained. New qualification selections request review; they do not replace that evidence.</p></div></div>
+{% include 'core/includes/challenge_book_picker.html' %}
+{% if hardcover_available %}<section class="form-card" data-catalog-tools data-catalog-url="{% url 'reader-submission-edit' month.group.slug month.pk submission.pk %}"><h2>Find on Hardcover</h2><div class="stacked-form"><p><label for="catalog-search">Title, Author, or ISBN</label><input id="catalog-search" type="search"><button class="button" type="button" data-catalog-search>Search</button></p><p><label for="catalog-link">Hardcover Book or Edition Link</label><input id="catalog-link" type="url"><button class="button" type="button" data-catalog-link>Import Link</button></p></div><p data-catalog-status role="status"></p><div class="card-grid" data-catalog-results></div><div data-audio-scoring hidden></div></section>{% endif %}
+<section class="form-card"><h2>Book Details</h2><button class="button secondary" type="button" data-clear-book>Clear and Enter Manually</button><form id="submission-form" method="post" class="stacked-form standard-form" data-submission-form>{% csrf_token %}
+<input type="hidden" name="selected_botm"><input type="hidden" name="botm_token"><input type="hidden" name="selected_tbr"><input type="hidden" name="tbr_token">
+{{ form.as_p }}<p class="muted" data-entry-mode>Pending — all changes require review</p><div class="form-actions"><button class="button primary">Save Submission</button><a class="button secondary" href="{{ cancel_url }}">Cancel</a></div></form></section>
+</div><script src="{% static 'js/challenge_book_picker.js' %}?v=3" defer></script><script src="{% static 'js/theme_eligibility.js' %}" defer></script>
+{% endblock %}

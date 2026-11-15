@@ -1,0 +1,4 @@
+{% for item in qualification_feedback %}
+<section><h3>{% if item.domain == 'botm' %}Book of the Month{% else %}Personal TBR{% endif %}</h3><p>{{ item.message }}</p>
+{% for suggestion in item.suggestions %}<details open><summary>Dismiss / show possible {% if item.domain == 'botm' %}BOTM{% else %}Personal TBR{% endif %} Match: {{ suggestion.title }} — {{ suggestion.author }}</summary><p>{{ suggestion.message }}</p><button type="submit" form="submission-form" formaction="?qualification-preview=1" name="{{ item.domain }}_choice" value="{{ suggestion.token }}" class="button secondary" formnovalidate>Request Review</button><p class="muted">Select this entry above to request review when submitting. Or close this suggestion to dismiss it and continue without selecting.</p></details>{% endfor %}</section>
+{% endfor %}

@@ -1,5 +1,9 @@
 """Read-only assessment; deliberately never invokes synchronization services."""
 import json
+import argparse
+from core.matching_resolution import assess_entries
+from core.historical_restoration import limits_automatic_credit
+from core.permissions import is_active_floater
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -14,6 +18,8 @@ class Command(BaseCommand):
     help = "Report eligible approved submissions with no Personal TBR match; never repair data."
 
     def add_arguments(self, parser):
+        # Reconciliation deliberately retains its historical candidate set.
+        parser.add_argument("--legacy-candidates", action="store_true", help=argparse.SUPPRESS)
         parser.add_argument("--group", required=True)
         parser.add_argument("--month", required=True, type=int)
 
@@ -22,6 +28,7 @@ class Command(BaseCommand):
             month = ChallengeMonth.objects.get(pk=options["month"], group__slug=options["group"])
         except ChallengeMonth.DoesNotExist as exc:
             raise CommandError("Challenge not found for this Group.") from exc
+        legacy = options["legacy_candidates"]
         rows, readers = [], []
         enrollments = MonthEnrollment.objects.filter(
             month=month, is_active=True, participant__is_active=True,
@@ -31,7 +38,7 @@ class Command(BaseCommand):
             enrollments = enrollments.none()
         for enrollment in enrollments.order_by("pk"):
             tbr = enrollment.personal_tbr
-            books = list(tbr.books.order_by("pk"))
+            books = list(tbr.books.select_related("catalog_book", "catalog_edition__book").order_by("pk"))
             completed = set(PersonalTBRMatch.objects.filter(
                 personal_tbr_book__personal_tbr=tbr, status="confirmed", is_qualifying=True,
             ).values_list("personal_tbr_book_id", flat=True))
@@ -42,14 +49,28 @@ class Command(BaseCommand):
                 personal_tbr_matches__isnull=True,
             ).order_by("pk")
             for submission in submissions:
-                method, candidates = select_candidates(
-                    submission_catalog_book_id=submission.catalog_book_id,
-                    normalized_title=normalize_book_identity(submission.title),
-                    normalized_author=normalize_book_identity(submission.author), books=books,
-                )
+                if legacy:
+                    method, candidates = select_candidates(
+                        submission_catalog_book_id=submission.catalog_book_id,
+                        normalized_title=normalize_book_identity(submission.title),
+                        normalized_author=normalize_book_identity(submission.author), books=books,
+                    )
+                    assessed = []
+                    eligible = True
+                else:
+                    assessed = assess_entries(submission, books, 'tbr')
+                    candidates = [item[0] for item in assessed]
+                    method = assessed[0][1] if len(assessed) == 1 else 'ambiguous'
+                    from core.prompt_reservations import has_bingo_selection
+                    eligible = (month.status in {'active', 'finalizing'} and enrollment.participant.user.is_active
+                        and not enrollment.awaiting_scoring_team and not submission.late_approval_evidence
+                        and not limits_automatic_credit(submission) and not has_bingo_selection(submission)
+                        and not is_active_floater(month, enrollment.participant_id)
+                        and all(evidence != 'conflict' for _, evidence, _ in assessed))
                 if not candidates:
                     continue
-                credit = len(candidates) == 1 and candidates[0].pk not in projected
+                strong = legacy or (len(assessed) == 1 and assessed[0][1] in {'work', 'exact'})
+                credit = eligible and strong and len(candidates) == 1 and candidates[0].pk not in projected
                 bonus = month.tbr_book_bonus_pages if credit else 0
                 if credit:
                     projected.add(candidates[0].pk)
@@ -57,8 +78,9 @@ class Command(BaseCommand):
                 rows.append({
                     "submission_id": submission.pk, "participant_id": enrollment.participant_id,
                     "tbr_book_ids": [book.pk for book in candidates], "method": method,
-                    "assessment": "unique_uncredited" if credit else (
-                        "ambiguous_requires_review" if len(candidates) > 1 else "already_credited_or_duplicate"
+                    "evidence": [reason for _, _, reason in assessed],
+                    "assessment": "unique_uncredited" if credit else "ineligible" if not eligible else (
+                        "ambiguous_requires_review" if len(candidates) > 1 or not strong else "already_credited_or_duplicate"
                     ),
                     "potential_new_book_bonus_pages": bonus,
                 })
@@ -77,9 +99,9 @@ class Command(BaseCommand):
                     ),
                 })
         self.stdout.write(json.dumps({
-            "read_only": True, "group": options["group"], "month_id": month.pk,
+            "read_only": True, "evaluator": "legacy_reconciliation" if legacy else "live_assess_entries", "group": options["group"], "month_id": month.pk,
             "limitations": [
-                "Only eligible approved submissions with no match records and deterministic candidates are listed.",
+                "Approved submissions without match records are assessed; eligibility and ambiguity are reported separately.",
                 "Existing pending, rejected, or nonqualifying match records require separate review.",
                 "Projections use submission ID order and current configuration; no awards are created.",
                 "Review durable provenance, frozen award sets, effective dates and historical checkpoints before repair.",

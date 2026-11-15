@@ -1,4 +1,4 @@
-<header class="challenge-identity team-identity{% if team_art.effective_logo %} has-logo{% endif %}{% if team_art.effective_banner %} has-banner{% endif %}">
+<header class="challenge-identity team-identity{% if team_art.effective_logo %} has-logo{% endif %}{% if team_art.effective_banner %} has-banner{% endif %}{% if team_art.appearance.custom %} branding-custom-gradient{% endif %}{% if team_art.showcase %} is-artwork-showcase{% endif %}"{% if team_art.appearance.custom %} style="{{ team_art.appearance.style }}"{% endif %}>
 {% if team_art.effective_banner %}<img class="challenge-identity-banner" src="{{ team_art.effective_banner }}" alt="" aria-hidden="true" data-community-image>{% endif %}
 <div class="challenge-identity-main">{% if team_art.effective_logo %}<img class="challenge-identity-logo" src="{{ team_art.effective_logo }}" alt="" data-community-image>{% endif %}
 <div class="challenge-identity-info"><p class="eyebrow"><a href="{% url 'team-list' group.slug month.pk %}">{{ month.name }} Teams</a></p><h1>{{ team.name }}</h1><p class="lede"><span class="team-swatch" style="background:{{ team.color }}"></span> Current team overview</p></div>

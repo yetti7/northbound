@@ -37,9 +37,14 @@ def matching_cards(submission):
         for book,strength,reason in assessed:
             match = next((m for m in matches if getattr(m,field+'_id') == book.pk),None)
             state = 'automatic' if strength in {'work','exact'} else 'suggested'
+            from .reader_submissions import request_data
+            if match and match.status == 'pending_review' and request_data(match):
+                state = 'suggested'
             duplicate = competing(model,submission,book,field,match.pk if match else None)
             if strength in {'none','conflict'} or len(assessed)>1 or duplicate:
                 state = 'conflict'
+            if match and match.status == 'rejected':
+                state='conflict'
             if match and match.method == 'manual_review':
                 if match.status == 'rejected':state='conflict';reason='A previous review rejected this relationship.'
                 elif ((match.decision_evidence and match.decision_evidence.get('fingerprint') != identity_stamp(submission,book))
@@ -51,7 +56,8 @@ def matching_cards(submission):
                        'Matching needs elevated review. You may approve the book without this credit.')
             if state == 'conflict':
                 if match and match.status == 'rejected':
-                    explanation = 'A previous reviewer rejected this relationship.'
+                    explanation = ('The Reader withdrew this qualification selection.' if match.decision_evidence.get('reader_withdrawal')
+                                   else 'A previous reviewer rejected this relationship.')
                 elif duplicate:
                     explanation = 'Another submission or relationship already holds this qualification.'
                 elif len(assessed)>1:
@@ -115,6 +121,8 @@ class MatchingReviewForm(forms.Form):
 @transaction.atomic
 def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations, prompt_decisions=None):
     from .permissions import can_review_submission
+    from django.contrib.auth import get_user_model
+    actor = get_user_model().objects.get(pk=actor.pk)
     ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     current=BookSubmission.objects.select_for_update(of=('self',)).select_related('month','participant__user','catalog_book','catalog_edition').get(pk=submission.pk)
     if not can_review_submission(actor,current) or current.is_removed or current.month.status not in {'active','finalizing'}:
@@ -125,6 +133,8 @@ def apply_unified_review(submission, claims, actor, reviewed_at, *, version, con
         raise ValidationError('This review expired. Reload the page before reviewing again.') from None
     if expected != {'actor':actor.pk,'submission':current.pk,'state':review_state(current)}:
         raise ValidationError('This submission or its matching information changed. Reload before reviewing again.')
+    if current.status == 'approved' and (confirmations or prompt_decisions):
+        raise ValidationError('Use Qualifications for qualification decisions, or the signed Edit Book preview for approved scoring corrections.')
     if confirmations and submission.status != 'approved':
         raise ValidationError('Matching confirmation requires approving the book. Clear the confirmations for another decision.')
     cards=matching_cards(current);suggestions={}

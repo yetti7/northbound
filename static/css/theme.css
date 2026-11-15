@@ -305,6 +305,10 @@ html[data-theme="light"] .button.recovery{background:#9d2940;border-color:#9d294
 .development-banner{text-align:center;padding:.5rem 1rem;border-bottom:1px solid var(--border);font-weight:700}
 
 /* Compact Reader challenge-book picker; independent of competitive statistics. */
+.challenge-book-picker select{display:block;width:100%;max-width:100%;min-width:0;margin:.5rem 0}
+.challenge-book-option:disabled{opacity:.65;cursor:default}
+[data-selection-feedback] section{margin:1rem 0;overflow-wrap:anywhere}
+[data-selection-feedback] .button{margin:.25rem .4rem .25rem 0}
 .challenge-book-picker{margin:0 0 1.25rem;padding:1rem;border:1px solid var(--border);border-radius:12px;background:var(--panel)}
 .challenge-book-picker h2{font-size:1.15rem;margin:0}.challenge-book-picker>p{margin:.5rem 0}
 .challenge-book-picker details{border-top:1px solid var(--border);padding:.65rem 0}

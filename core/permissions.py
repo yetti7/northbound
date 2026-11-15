@@ -280,6 +280,8 @@ def scope_reviewable_submissions(user, month, queryset):
 
 
 def can_review_submission(user, submission):
+    if not user.is_authenticated or not user.is_active:
+        return False
     return scope_reviewable_submissions(
         user,
         submission.month,

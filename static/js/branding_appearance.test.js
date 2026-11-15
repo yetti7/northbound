@@ -1,0 +1,26 @@
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const enabled = {checked:true, listeners:{}, addEventListener(n,f){this.listeners[n]=f;}};
+const coverage = {name:'gradient_coverage',value:'30',dataset:{default:'75'},listeners:{},addEventListener(n,f){this.listeners[n]=f;}};
+const darkness = {name:'gradient_darkness',value:'65',dataset:{default:'85'},listeners:{},addEventListener(n,f){this.listeners[n]=f;}};
+const status = {}, outputs = {gradient_coverage:{},gradient_darkness:{}}, reset = {addEventListener(n,f){this[n]=f;}};
+const hiddenLogo = {checked:true}, upload = {value:'untouched.png'};
+const panel = {querySelector(selector){
+ if(selector==='[name="gradient_enabled"]')return enabled;
+ if(selector==='[name="gradient_coverage"]')return coverage;
+ if(selector==='[name="gradient_darkness"]')return darkness;
+ if(selector==='[data-appearance-status]')return status;
+ if(selector==='[data-appearance-defaults]')return reset;
+ const match=selector.match(/data-appearance-value="([^"]+)"/);
+ if(match)return outputs[match[1]];
+ throw new Error('Unexpected control: '+selector);
+}};
+vm.runInNewContext(fs.readFileSync('static/js/branding_appearance.js','utf8'),{document:{querySelector(){return panel;}}});
+assert.equal(outputs.gradient_coverage.textContent,'30%');
+assert.equal(status.textContent,'Customized gradient enabled.');
+coverage.value='0';coverage.listeners.input();assert.equal(outputs.gradient_coverage.textContent,'0%');
+darkness.value='100';darkness.listeners.input();assert.equal(outputs.gradient_darkness.textContent,'100%');
+reset.click();assert.equal(enabled.checked,false);assert.equal(coverage.value,'75');assert.equal(darkness.value,'85');
+assert.match(status.textContent,/Legacy/);assert.equal(hiddenLogo.checked,true);assert.equal(upload.value,'untouched.png');
+console.log('Appearance controls: values, boundaries, enabled status and scoped defaults passed.');

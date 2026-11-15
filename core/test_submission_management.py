@@ -36,9 +36,9 @@ class SubmissionManagementTests(TransactionTestCase):
     def test_panel_forms_permissions_and_existing_tbr_adjudication(self):
         item=self.submission();host=self.actor();self.client.force_login(host)
         response=self.client.get(self.route_url('submission-manage',item))
-        for label in ['Edit Submission','Review Credit','Advanced Options']:
+        for label in ['Edit Book','Qualifications','History']:
             self.assertContains(response,label)
-        self.assertContains(response,'<summary>View History</summary>',html=True)
+        self.assertContains(self.client.get(self.route_url('submission-manage',item)+'?section=history'),'<summary>View History</summary>',html=True)
         pages=self.client.get(self.route_url('submission-fix-pages',item))
         self.assertNotContains(pages,'data-edit-association')
         self.assertNotIn('title',pages.context['form'].fields)
@@ -49,10 +49,10 @@ class SubmissionManagementTests(TransactionTestCase):
         self.assertContains(book,'Link Only')
         match=item.personal_tbr_matches.get()
         PersonalTBRMatch.objects.filter(pk=match.pk).update(status='pending_review',is_qualifying=False)
-        response=self.client.get(self.route_url('submission-manage',item))
+        response=self.client.get(self.route_url('submission-manage',item)+'?section=qualifications')
         self.assertContains(response,'Confirm existing candidate')
         owner=self.actor('owner');self.client.force_login(owner)
-        self.assertNotContains(self.client.get(self.route_url('submission-manage',item)),'Confirm existing candidate')
+        self.assertNotContains(self.client.get(self.route_url('submission-manage',item)+'?section=qualifications'),'Confirm existing candidate')
         self.client.force_login(self.reader.user)
         for name in ['submission-manage','submission-fix-book','submission-fix-pages']:
             self.assertEqual(self.client.get(self.route_url(name,item)).status_code,403)
@@ -215,7 +215,7 @@ class SubmissionManagementTests(TransactionTestCase):
         response = self.client.get(url)
         for label in ('Book Details', 'Pages &amp; Completion', 'Themes'):
             self.assertContains(response, label)
-        self.assertNotContains(response, 'submission-editor-section" open')
+        self.assertContains(response, 'submission-editor-section" open')
         theme = MonthTheme.objects.create(
             month=self.month, name='Combined editor theme', starts_on=self.month.starts_on,
             ends_on=self.month.ends_on, bonus_percentage=25,
@@ -382,7 +382,7 @@ class SubmissionManagementTests(TransactionTestCase):
         self.assertContains(self.client.get(overview), feed)
         self.assertContains(self.client.get(queue), feed)
         self.assertNotContains(self.client.get(settings), feed)
-        response = self.client.get(self.route_url("submission-manage", item))
+        response = self.client.get(self.route_url("submission-manage", item)+"?section=history")
         self.assertContains(response, "<summary>View History</summary>", html=True)
         self.assertContains(response, "Submitted")
         self.assertNotContains(response, feed)

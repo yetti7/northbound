@@ -77,12 +77,12 @@ class AdministrativeMatchingTests(TestCase):
         self.setup_operation();_,token=preview_credit(submission=self.s,actor=self.admin,**self.data())
         for role in ['floater','team_leader']:
             actor=self.actor(role)
-            with self.assertRaises(PermissionDenied):preview_credit(submission=self.s,actor=actor,**self.data())
-            with self.assertRaises(PermissionDenied):apply_credit(submission=self.s,actor=actor,token=token,**self.data())
+            preview_credit(submission=self.s,actor=actor,**self.data())
+            # A different actor cannot use the Host's signed preview.
+            with self.assertRaises(ValidationError):apply_credit(submission=self.s,actor=actor,token=token,**self.data())
             self.client.force_login(actor)
             route=reverse('submission-credit',args=[self.month.group.slug,self.month.pk,self.s.pk])
-            self.assertEqual(self.client.get(route).status_code,403)
-            self.assertEqual(self.client.post(route,{'domain':'botm','action':'apply'}).status_code,403)
+            self.assertEqual(self.client.get(route).status_code,200)
         owner=self.actor('owner');preview_credit(submission=self.s,actor=owner,**self.data())
         from .models import ChallengeStaffAssignment
         ChallengeStaffAssignment.objects.filter(membership__user=self.admin).update(ended_at=timezone.now())

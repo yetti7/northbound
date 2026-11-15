@@ -16,7 +16,7 @@ ORIGINS = {
     'prompt-progress-report': ('Back to Prompt Report', {'reader','team','category','completion','page'}),
     'recap-dashboard': ('Back to Chronicle', {'group','challenge','perspective','reader','team','period','anchor','start','end'}),
 }
-SCREENS = {'submission-manage','submission-editor','submission-edit','submission-fix-book','submission-fix-pages','submission-credit','submission-review','submission-history','submission-activity','submission-restore','submission-immersive','team-book-detail','prompt-progress','recap-wrapped'}
+SCREENS = {'immersive-action','submission-manage','submission-editor','submission-edit','submission-fix-book','submission-fix-pages','submission-credit','submission-review','submission-history','submission-activity','submission-restore','submission-immersive','team-book-detail','prompt-progress','recap-wrapped'}
 
 
 def _authorized(request, name, kwargs, query):

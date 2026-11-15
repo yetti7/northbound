@@ -4,6 +4,7 @@ Call request_immersive() after saving a new manual/Hardcover submission inside
 its existing creation transaction, or independently for an existing submission.
 The caller never needs to approve the book first to record a pending request.
 """
+from .discord_events import observe_book
 import json
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -86,6 +87,7 @@ def configure_immersive(*, month, actor, enabled, percent):
 
 
 @transaction.atomic
+@observe_book
 def request_immersive(*, submission, actor):
     actor = _actor(actor)
     submission = _submission(submission)
@@ -112,6 +114,7 @@ def _late_request_eligible(request):
 
 
 @transaction.atomic
+@observe_book
 def review_immersive(*, request, actor, decision, reason=''):
     if decision not in {'approved', 'rejected', 'revoked'}:
         raise ValidationError('Choose approval, rejection or revocation.')

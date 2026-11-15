@@ -8,6 +8,11 @@ from .models import AuditEvent, BookSubmission, BotmMatch, Membership, PersonalT
 from .permissions import can_view_challenge, membership_for, restricted_host_team_ids, scope_reviewable_submissions
 
 LABELS = {
+    "submission.reader_edited": "Submission edited by Reader",
+    "submission.qualification_requested": "Qualification review requested",
+    "submission.qualification_withdrawn": "Qualification request withdrawn",
+    "submission.qualification_confirmed": "Qualification request approved",
+    "submission.qualification_rejected": "Qualification request rejected",
     "submission.created": "Submitted",
     "submission.restored": "Restored",
     "submission.approved": "Approved",
@@ -24,6 +29,8 @@ LABELS = {
     "botm.match_rejected": "Book of the Month match rejected",
 }
 READER_ACTIONS = {
+    "submission.reader_edited", "submission.qualification_requested", "submission.qualification_withdrawn",
+    "submission.qualification_confirmed", "submission.qualification_rejected",
     "submission.created", "submission.approved", "submission.rejected",
     "submission.pending", "submission.review_changed", "submission.corrected", "submission.restored",
 }

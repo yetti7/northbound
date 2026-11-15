@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}Personal TBR Cover · {{ book.effective_display_title }}{% endblock %}
+{% block content %}
+<div class="submission-editor-shell"><div class="page-heading"><div><p class="eyebrow">Personal TBR · Book {{ book.position }}</p><h1>{% if book.custom_cover %}Change Cover{% else %}Upload Cover{% endif %}</h1><p>{{ book.effective_display_title }} — {{ book.effective_display_author }}</p></div></div>
+<section class="form-card"><div class="review-book-cover">{% include 'core/includes/book_cover.html' with image_url=book.effective_display_cover_url title=book.effective_display_title %}</div><p>Artwork only. Your selected book, order, Hardcover association, qualifications and TBR lock remain unchanged. Removing a custom cover restores the existing cover or default artwork.</p>
+<form method="post" enctype="multipart/form-data" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary" name="action" value="upload">Save Cover</button>{% if book.custom_cover %}<button class="button secondary" name="action" value="remove">Remove Custom Cover</button>{% endif %}<a class="button secondary" href="{% url 'personal-tbr-detail' month.group.slug month.pk %}">Cancel</a></div></form></section></div>
+{% endblock %}

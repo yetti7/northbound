@@ -75,7 +75,7 @@ class DiscordNotificationTests(TestCase):
         self.assertEqual(self.client.post(self.url,{'remove_webhook':'on'}).status_code,403)
         with self.assertRaises(PermissionDenied):
             configure_notifications(group=self.group,actor=self.moderator,enabled=False,remove=True)
-        self.assertTrue(GroupDiscordNotification.objects.get(group=self.group).enabled)
+        self.assertTrue(GroupDiscordNotification.objects.get(group=self.group).moderator_enabled)
 
     def test_denied_roles_scopes_and_delegated_capabilities(self):
         moderator=self.members[self.moderator.pk]
