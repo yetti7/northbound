@@ -1,5 +1,11 @@
 # Release notes
 
+## Northbound v1.1.2
+
+Independent Discord consent and Challenge message isolation; Pending Theme decisions on Approved books; unified Immersive review cards; administrator-managed SMTP, local password recovery and navigation improvements. Apply migrations 0083 and 0084, preserve encryption material, and configure production email separately with email/recovery disabled by default. Development acceptance, including a real password reset and subsequent cleanup, is complete. Existing production proxy/logging decisions remain accepted; this entry does not indicate publication or deployment.
+
+See the [detailed release and upgrade notes](V1_1_2_RELEASE_NOTES.md) and [Email configuration guide](EMAIL_CONFIGURATION.md).
+
 ## Northbound v1.1.0
 
 A cumulative upgrade from v1.0.9.1, including the production title-only Personal TBR Recovery hotfix.
