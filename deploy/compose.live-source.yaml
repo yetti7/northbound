@@ -10,17 +10,15 @@ services:
       NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED: "0"
       NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED: "0"
       NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT: "0"
-    # Bypass the image startup script: live-source updates must not run migrations.
+    # Apply staged restores before migrations and the existing reload-enabled web server.
     command:
-      - gunicorn
-      - reading_challenge.wsgi:application
-      - --pid=/tmp/northbound-gunicorn.pid
-      - --bind=0.0.0.0:8000
-      - --workers=2
-      - --reload
-      - --reload-engine=poll
-      - --access-logfile=-
-      - --error-logfile=-
+      - /bin/sh
+      - -ec
+      - |
+        python manage.py restore_pending_backup
+        python manage.py migrate --noinput
+        python manage.py safeguard_restored_hardcover_sync
+        exec gunicorn reading_challenge.wsgi:application --pid=/tmp/northbound-gunicorn.pid --bind=0.0.0.0:8000 --workers=2 --reload --reload-engine=poll --access-logfile=- --error-logfile=-
     volumes:
       - /srv/docker/northbound-dev/source/core:/app/core:ro
       - /srv/docker/northbound-dev/source/reading_challenge:/app/reading_challenge:ro

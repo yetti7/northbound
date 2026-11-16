@@ -8,6 +8,7 @@ from . import global_search, views
 
 from . import immersive_ui, reader_submission_views, personal_tbr_cover_views
 
+from .email_views import email_settings
 from .discord_views import discord_notification_settings
 
 from .recap_views import recap_dashboard, recap_wrapped
@@ -115,6 +116,7 @@ urlpatterns = [
     path("config/recovery/hardcover/readers/<int:pk>/clear/", views.recovery_reader_hardcover_clear, name="recovery-reader-hardcover-clear"),
     path("config/recovery/hardcover/groups/<int:pk>/clear/", views.recovery_group_hardcover_clear, name="recovery-group-hardcover-clear"),
     path("config/settings/", views.platform_settings, name="platform-settings"),
+    path("config/settings/email/", email_settings, name="platform-email-settings"),
     path("config/settings/general/", views.platform_general_settings, name="platform-general-settings"),
     path("config/settings/hardcover-oauth/", views.platform_hardcover_oauth, name="platform-hardcover-oauth"),
     path("config/settings/status/", views.platform_system_status, name="platform-system-status"),

@@ -7250,6 +7250,7 @@ def submission_review(request, group_slug, month_pk, pk):
             "timeline": submission_timeline(request.user, submission),
             "voided_review": True,
         })
+    book_was_approved = submission.status == BookSubmission.Status.APPROVED
     from .submission_review_matching import matching_cards, MatchingReviewForm, apply_unified_review
     from . import reader_submissions as reader_service
     if request.method == 'POST' and request.POST.get('action') == 'reader-qualification-review':
@@ -7287,7 +7288,11 @@ def submission_review(request, group_slug, month_pk, pk):
         for field in ('status', 'approved_pages'):
             form.fields[field].disabled = True
         for claim_form in claim_formset.forms:
-            claim_form.fields['status'].disabled = True
+            claim_form.fields['status'].disabled = (claim_form.instance.status != ThemeClaim.Status.PENDING
+                or claim_form.instance.award_finalized
+                or bool(claim_form.instance.approved_bonus_pages)
+                or ModifierProvenance.objects.filter(source_type='theme_bonus',
+                    source_reference=f'theme_claim:{claim_form.instance.pk}').exists())
         for field in list(matching_form.fields):
             if field != 'matching_version':
                 matching_form.fields.pop(field)
@@ -7304,7 +7309,7 @@ def submission_review(request, group_slug, month_pk, pk):
         if submission.status == BookSubmission.Status.APPROVED:
             forged = (request.POST.get('status', submission.status) != submission.status
                 or request.POST.get('approved_pages', str(submission.approved_pages)) != str(submission.approved_pages)
-                or any(request.POST.get(f'{claim_form.prefix}-status', claim_form.instance.status) != claim_form.instance.status for claim_form in claim_formset.forms))
+                or any(claim_form.fields['status'].disabled and request.POST.get(f'{claim_form.prefix}-status', claim_form.instance.status) != claim_form.instance.status for claim_form in claim_formset.forms))
             if forged:
                 form.add_error(None, 'Approved scoring changes require the signed Edit Book correction preview. Nothing was saved.')
                 form_valid = False
@@ -7317,11 +7322,11 @@ def submission_review(request, group_slug, month_pk, pk):
                         version=matching_form.cleaned_data['matching_version'],
                         confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)],
                         prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)})
-                    AuditEvent.objects.create(actor=request.user, group=submission.month.group, action=f"submission.{reviewed.status}", object_type="BookSubmission", object_id=str(reviewed.pk), summary=f"{reviewed.get_status_display()}: {reviewed.title}; approved pages: {reviewed.approved_pages or 'none'}")
+                    # The scoring boundary records book or Theme decisions exactly once.
             except (ValidationError, PermissionDenied, DatabaseError):
                 form.add_error(None, 'This review could not be saved because the submission, matching or eligibility changed. Nothing was saved. Reload to check the current details, or approve without confirming uncertain credit.')
             else:
-                messages.success(request, "Review saved.")
+                messages.success(request, "Review saved. Pending Theme decisions were recorded; existing book approval and pages were preserved." if book_was_approved and getattr(reviewed, "_theme_decisions_count", 0) else "Review saved.")
                 for hold in getattr(reviewed, "late_approval_holds", ()):
                     messages.warning(request, hold)
                 if request.POST.get('workspace_return')=='1':

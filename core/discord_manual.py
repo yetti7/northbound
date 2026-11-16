@@ -30,6 +30,8 @@ FAILURES = {
     'rejected': 'Discord rejected the request. Check that the webhook still exists and can post in its channel.',
     'network_error': 'Discord could not be reached. Delivery may be uncertain; check the channel before sending again.',
     'delivery_failed': 'Delivery failed. Check the channel before sending again.',
+    'no_eligible_challenges': 'No challenges are opted into the selected Discord destination and eligible for reporting. Nothing was sent.',
+    'challenge_opted_out': 'A Challenge report was skipped because its current consent or delivery configuration changed. Other reports may already have been delivered.',
     'snapshot_unavailable': 'The current status could not be prepared. No message was sent.',
 }
 
@@ -161,7 +163,15 @@ def deliver_manual(*, group, actor, destination, action, request_id):
             failure = 'snapshot_unavailable'
         else:
             try:
+                from .discord_eligibility import ChallengeMessage
+                if action != 'test' and not any(isinstance(p,ChallengeMessage) for p in payloads):
+                    failure='no_eligible_challenges'
+                    payloads=[]
                 for payload in payloads:
+                    from .discord_eligibility import payload_eligible
+                    if not payload_eligible(payload):
+                        failure='challenge_opted_out'
+                        continue
                     status, cooldown = discord.send_webhook(url, payload, detailed=True)
                     if status != 'sent':
                         failure = status if status in FAILURES else 'delivery_failed'

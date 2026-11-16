@@ -216,7 +216,7 @@ def scheduled_payloads(schedule):
     if schedule.destination=='community':
         from .discord_community import community_embeds
         return pack(community_embeds(group,schedule.categories,send_empty=schedule.send_empty))
-    summary = deepcopy(discord.group_pending_review_counts(group))
+    summary = deepcopy(discord.group_pending_review_counts(group, include_empty=schedule.send_empty))
     selected = set(schedule.categories)
     rows = []
     for row in summary['challenges']:
@@ -228,7 +228,7 @@ def scheduled_payloads(schedule):
             if team['total']:teams.append(team)
         row['teams']=teams
         row['total']=sum(team['total'] for team in teams)
-        if row['total']:rows.append(row)
+        if row['total'] or schedule.send_empty:rows.append(row)
     summary['challenges']=rows
     summary['total']=sum(row['total'] for row in rows)
     if not summary['total'] and not schedule.send_empty:
@@ -312,6 +312,10 @@ def deliver_scheduled_report(schedule_id, *, now=None):
                     or (schedule.destination=='moderator' and latest.enabled)
                     or not settings.NORTHBOUND_DISCORD_SCHEDULER_ENABLED or not discord.delivery_enabled()):
                 failure='configuration_changed';break
+            from .discord_eligibility import payload_eligible
+            if not payload_eligible(payload):
+                failure='challenge_opted_out'
+                continue
             status,cooldown = discord.send_webhook(url,payload,detailed=True)
             if status!='sent':
                 failure=status if status in FAILURES else 'delivery_failed';break

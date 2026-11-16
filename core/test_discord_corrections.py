@@ -24,6 +24,8 @@ class DiscordCorrectionTransactionTests(TransactionTestCase):
 
     def setUp(self):
         fixture.SubmissionHotfixTests.setUp(self)
+        self.month.discord_moderator_opt_in=True
+        self.month.save(update_fields=['discord_moderator_opt_in'])
         self.editor = self.actor('host')
         administrator = self.actor('platform')
         configure_notifications(group=self.month.group, actor=administrator, destination='moderator',

@@ -148,6 +148,14 @@ def pack(embeds):
     payloads = []
     current = []
     size = 0
+    scope = None
+    from .discord_eligibility import ChallengeMessage
+    def message(values):
+        payload={'embeds':values,'allowed_mentions':deepcopy(MENTIONS)}
+        if isinstance(values[0],ChallengeMessage):
+            first=values[0]
+            return ChallengeMessage(payload,challenge_id=first.challenge_id,group_id=first.group_id,destination=first.destination,sensitive_categories=set().union(*(v.sensitive_categories for v in values)))
+        return payload
     for value in embeds:
         count = embed_units(value)
         fields = value.get('fields', [])
@@ -157,14 +165,16 @@ def pack(embeds):
                 or any(not field['name'] or not field['value'] or units(field['name']) > 256
                        or units(field['value']) > 1024 for field in fields)):
             raise ValidationError('A Discord embed exceeds the text limit.')
-        if len(current) == 10 or size + count > 6000:
-            payloads.append({'embeds': current, 'allowed_mentions': deepcopy(MENTIONS)})
+        current_scope=value.scope if isinstance(value,ChallengeMessage) else None
+        if current and (current_scope != scope or len(current) == 10 or size + count > 6000):
+            payloads.append(message(current))
             current = []
             size = 0
         current.append(value)
+        scope=current_scope
         size += count
     if current:
-        payloads.append({'embeds': current, 'allowed_mentions': deepcopy(MENTIONS)})
+        payloads.append(message(current))
     return payloads
 
 
@@ -184,18 +194,14 @@ def community_status_embed(group, timestamp, *, reason="no_eligible"):
 
 def moderator_status_embeds(group, timestamp, *, summary=None, selected_only=False):
     if summary is None:
-        summary = discord.group_pending_review_counts(group)
-    if not summary['total']:
-        scope = ' in the selected report categories' if selected_only else ''
-        value = embed(group=group, title='✅ All Caught Up!',
-            description=f'There are currently no pending reviews{scope} for **{clip(name(group.name, markdown=True), 1000)}**.',
-            color=SUCCESS_COLOR, timestamp=timestamp)
-        link = link_field('View Northbound', application_url('group-detail', [group.slug]))
-        if link:
-            value['fields'] = [link]
-        return [value]
+        summary = discord.group_pending_review_counts(group, include_empty=True)
     result = []
+    from .discord_eligibility import ChallengeMessage
     for row in summary['challenges']:
+        if not row['total']:
+            value=embed(group=group,title='✅ All Caught Up!',description='**'+name(row['challenge_name'],markdown=True)+'**\nThere are currently no pending reviews'+(' in the selected report categories.' if selected_only else '.'),color=SUCCESS_COLOR,timestamp=timestamp)
+            result.append(ChallengeMessage(value,challenge_id=row['challenge_id'],group_id=group.pk,destination='moderator'))
+            continue
         fields = []
         for team in row['teams']:
             lines = [f'{label} — {team[key]}' for key, label in REVIEW_FIELDS if team[key]]
@@ -220,9 +226,7 @@ def moderator_status_embeds(group, timestamp, *, summary=None, selected_only=Fal
         pages = paginate(value, fields, link)
         for continuation in pages[1:]:
             continuation['description'] = challenge + '\nReview tasks continued.' + scope
-        result.extend(pages)
-    if not result:
-        raise ValidationError('Pending review details are unavailable.')
+        result.extend(ChallengeMessage(page,challenge_id=row['challenge_id'],group_id=group.pk,destination='moderator') for page in pages)
     if len(result) > 1:
         for index, value in enumerate(result, 1):
             value['title'] += f' · {index}/{len(result)}'

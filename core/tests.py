@@ -959,7 +959,7 @@ class SubmissionWorkflowTests(TestCase):
         )
         self.client.force_login(self.mod)
         response = self.client.get(reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
-        self.assertContains(response, "Submission pending")
+        self.assertContains(response, "Book Submission · Pending")
         self.assertContains(response, "Review &amp; Scoring")
         self.assertNotContains(response, "Back to Month")
 
@@ -1102,7 +1102,7 @@ class ThemeScoringTests(TestCase):
         self.assertEqual(claim.response, "Carl")
         self.assertEqual(claim.status, ThemeClaim.Status.PENDING)
 
-    def test_approved_theme_change_requires_signed_correction(self):
+    def test_pending_theme_on_approved_book_can_receive_initial_decision(self):
         submission = BookSubmission.objects.create(month=self.month, participant=self.participant, title="Reviewed Theme Book", author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=date(2026, 8, 15), submitted_pages=320, approved_pages=300, status=BookSubmission.Status.APPROVED)
         claim = ThemeClaim.objects.create(submission=submission, theme=self.prompted, response="Carl")
         self.client.force_login(self.moderator)
@@ -1120,14 +1120,14 @@ class ThemeScoringTests(TestCase):
             "claims-0-submission": str(submission.pk),
             "claims-0-status": ThemeClaim.Status.APPROVED,
         })
-        self.assertContains(response, "signed Edit Book correction preview")
+        self.assertEqual(response.status_code,302)
         submission.refresh_from_db()
         claim.refresh_from_db()
         self.assertEqual(submission.approved_pages, 300)
-        self.assertEqual(submission.bonus_pages, 0)
-        self.assertEqual(submission.final_scored_pages, 300)
-        self.assertEqual(claim.approved_bonus_pages, 0)
-        self.assertEqual(claim.status, ThemeClaim.Status.PENDING)
+        self.assertEqual(submission.bonus_pages, 50)
+        self.assertEqual(submission.final_scored_pages, 350)
+        self.assertEqual(claim.approved_bonus_pages, 50)
+        self.assertEqual(claim.status, ThemeClaim.Status.APPROVED)
         self.assertEqual(submission.status, BookSubmission.Status.APPROVED)
 
     def test_rejected_submission_clears_bonus_but_preserves_approved_base_record(self):

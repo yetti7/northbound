@@ -1,11 +1,13 @@
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 from django.core.exceptions import PermissionDenied,ValidationError
 from django.test import TestCase,override_settings,RequestFactory
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
 from django.urls import reverse
+from django.utils import timezone
 from . import test_scavenger_photo_review as fixtures
 from .models import (BookSubmission,ScavengerPhotoSubmission,PromptClaim,PromptCompletion,ModifierProvenance,
     AuditEvent,ChallengeMonth,Membership,MonthEnrollment)
@@ -96,7 +98,8 @@ class PhotoManagementTests(TestCase):
             self.assertEqual(self.score()['modifier_pages'],amount)
             rows=ModifierProvenance.objects.filter(source_type='scavenger_prompt')
             self.assertEqual(rows.filter(is_active=True).count(),1)
-            self.assertEqual(rows.get(is_active=True).effective_date,photo.submitted_at.date())
+            self.assertEqual(rows.get(is_active=True).effective_date,
+                timezone.localtime(photo.submitted_at,ZoneInfo(self.group.timezone)).date())
             self.assertFalse(PromptCompletion.objects.exists())
         self.assertEqual(len(photo.prompt_claim.earning_evidence['history']),3)
         self.assertEqual(AuditEvent.objects.filter(action='scavenger_photo.prompt_corrected').count(),3)

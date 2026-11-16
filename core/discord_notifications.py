@@ -122,7 +122,7 @@ def _review_team_attribution(month):
     return attribution, teams
 
 
-def group_pending_review_counts(group):
+def group_pending_review_counts(group, *, include_empty=False):
     """Group-wide private task counts, using the existing review queue candidates.
 
     Book, Theme and prompt decisions are independent tasks. Resolved claims are
@@ -135,7 +135,9 @@ def group_pending_review_counts(group):
     from .prompt_scoring import pending_submission_ids
     rows = []
     for month in ChallengeMonth.objects.filter(group=group,
-            status__in=['active', 'finalizing', 'completed']).order_by('pk'):
+            status__in=['active', 'finalizing', 'completed'], discord_moderator_opt_in=True).order_by('pk'):
+        from .discord_eligibility import challenge_eligible
+        if not challenge_eligible(month,'moderator'):continue
         attribution, team_names = _review_team_attribution(month)
         buckets = {}
 
@@ -161,7 +163,7 @@ def group_pending_review_counts(group):
         add('immersive', (participant for _, participant in pending_review_requests(month=month)
             .values_list('pk', 'submission__participant_id')))
         total = sum(bucket['total'] for bucket in buckets.values())
-        if total:
+        if total or include_empty:
             grouped = sorted(buckets.values(), key=lambda row: (row['team_name'] == 'Unassigned / Group Reviews', row['team_name']))
             rows.append({'challenge_id': month.pk, 'challenge_name': month.name,
                          **{key: sum(row[key] for row in grouped) for key, _ in REVIEW_LABELS},
@@ -181,28 +183,29 @@ def digest_payloads(summary):
     def name(value):
         return re.sub(r'([\\`*_~|<>\[\]()])', r'\\\1', ' '.join(value.split()))
 
-    blocks = [f"**Northbound — Pending Reviews**\nOutstanding review tasks: {summary['total']}"]
-    for row in summary['challenges']:
-        link = f"{base}{row['review_path']}"
-        for team in row['teams']:
-            counts = '\n'.join(f"{label}: {team[key]}" for key, label in REVIEW_LABELS if team[key])
-            blocks.append(f"**{name(row['challenge_name'])}**\n**{name(team['team_name'])}**\n{counts}\n{link}")
-    blocks.append('Open Northbound to review pending submissions.')
-    messages = []
-    content = ''
+    from .discord_eligibility import ChallengeMessage
+    payloads=[]
     units = lambda value: len(value.encode('utf-16-le')) // 2
-    for block in blocks:
-        if units(block) > 1900:
-            raise ValidationError('A digest section exceeds Discord limits. Shorten the public URL or display names.')
-        combined = content + ('\n\n' if content else '') + block
-        if units(combined) > 1900:
-            messages.append(content)
-            content = block
-        else:
-            content = combined
-    if content: messages.append(content)
-    return [{'content': message, 'allowed_mentions': {'parse': [], 'users': [], 'roles': [], 'replied_user': False}}
-            for message in messages]
+    for row in summary['challenges']:
+        header=f"**{name(row['challenge_name'])} — Pending Reviews**"
+        blocks=[f"Outstanding review tasks: {row['total']}"]
+        link=f"{base}{row['review_path']}"
+        for team in row['teams']:
+            counts='\n'.join(f"{label}: {team[key]}" for key,label in REVIEW_LABELS if team[key])
+            blocks.append(f"**{name(team['team_name'])}**\n{counts}\n{link}")
+        blocks.append('Open Northbound to review pending submissions.')
+        def message(content):
+            return ChallengeMessage({'content':content,'allowed_mentions':{'parse':[],'users':[],'roles':[],'replied_user':False}},challenge_id=row['challenge_id'],group_id=summary['group_id'],destination='moderator')
+        content=header
+        for block in blocks:
+            if units(header+'\n\n'+block)>1900:raise ValidationError('A digest section exceeds Discord limits. Shorten the public URL or display names.')
+            combined=content+'\n\n'+block
+            if units(combined)>1900:
+                payloads.append(message(content))
+                content=header+'\n\n'+block
+            else:content=combined
+        payloads.append(message(content))
+    return payloads
 
 
 def digest_payload(summary):
@@ -292,10 +295,17 @@ def deliver_group_digest(group_id, *, now=None):
     # Persist reservation before external I/O; uncertain failures are never retried
     # inside this hour. A crash here leaves a visible, intentionally uncertain claim.
     try:
+        excluded=False
         for payload in payloads:
+            from .discord_eligibility import payload_eligible
+            if not payload_eligible(payload,legacy=True):
+                excluded=True
+                status,cooldown='failed',0
+                continue
             status, cooldown = send_webhook(url, payload)
             if status != 'sent':
                 break
+        if excluded:status='failed'
     except Exception:
         status, cooldown = 'failed', 0
     with transaction.atomic():

@@ -389,11 +389,13 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
     if current.status == BookSubmission.Status.APPROVED:
         # Approved book scoring is corrected only through the signed correction
         # service. Even a notes-only review must not resynchronize scoring.
-        statuses = dict(current.theme_claims.values_list('pk', 'status'))
-        if (submission.status != current.status
-                or submission.approved_pages != current.approved_pages
-                or any(statuses.get(claim.pk) != claim.status for claim in reviewed_claims)):
+        protected = ('status','approved_pages','title','author','book_format','completed_on',
+                     'submitted_pages','catalog_book_id','catalog_edition_id','scoring_catalog_edition_id',
+                     'participant_id','month_id','is_removed','verification_method')
+        if any(getattr(submission,field) != getattr(current,field) for field in protected):
             raise ValidationError('Approved scoring changes require the signed Edit Book correction preview.')
+        from .scoring import decide_pending_themes
+        current = decide_pending_themes(current, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
         changed = any(getattr(current, field) != getattr(submission, field)
                       for field in ('verification_url', 'review_notes'))
         if changed:

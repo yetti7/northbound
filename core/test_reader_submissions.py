@@ -435,6 +435,8 @@ class ReaderSubmissionTests(TestCase):
         with self.assertRaises(ValidationError):service.save_pending(submission=s,actor=self.reader.user,data=data)
 
     def test_outbox_and_audit_rollback_after_pending_edit_observation_failure(self):
+        self.month.discord_moderator_opt_in=True
+        self.month.save(update_fields=['discord_moderator_opt_in'])
         from . import discord_events
         from .discord_notifications import configure_notifications
         from .discord_scheduling import configure_report_schedule

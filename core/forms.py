@@ -620,9 +620,11 @@ class ChallengeCreateForm(forms.Form):
 class ChallengeGeneralSettingsForm(forms.ModelForm):
     class Meta:
         model = ChallengeMonth
-        fields = ("name", "description", "discord_community_opt_in")
-        labels = {"name": "Challenge Title", "discord_community_opt_in": "Include this Challenge in Discord announcements"}
-        help_texts = {"discord_community_opt_in": "Community announcements only. Public visibility restrictions still apply. Enabling this does not publish past announcements or activate immediate messages."}
+        fields = ("name", "description", "discord_community_opt_in", "discord_moderator_opt_in")
+        labels = {"name": "Challenge Title", "discord_community_opt_in": "Enable Community Discord Notifications",
+                  "discord_moderator_opt_in": "Enable Moderator Discord Notifications"}
+        help_texts = {"discord_community_opt_in": "Allow this challenge to appear in Community Discord announcements, immediate notifications, and Community reports when those notifications are enabled for the group.",
+                      "discord_moderator_opt_in": "Allow this challenge to appear in Moderator Discord notifications, pending-review summaries, and Moderator reports when those notifications are enabled for the group."}
         widgets = {"description": forms.Textarea(attrs={"rows": 4})}
 
 

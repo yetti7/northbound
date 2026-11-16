@@ -188,6 +188,59 @@ def preview_submission_score(submission):
 
 
 @transaction.atomic
+def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None):
+    """Initial Theme decisions only; caller has locked/revalidated book authority."""
+    locked = BookSubmission.objects.select_for_update().get(pk=submission.pk)
+    claims = {claim.pk: claim for claim in ThemeClaim.objects.select_for_update().select_related('theme').filter(submission=locked)}
+    changed = []
+    seen = set()
+    for proposed in reviewed_claims:
+        claim = claims.get(proposed.pk)
+        if claim is None or proposed.pk in seen:
+            raise ValidationError('Select distinct Theme claims belonging to this submission.')
+        seen.add(proposed.pk)
+        if proposed.status == claim.status:
+            continue
+        source = _theme_source_reference(claim)
+        if (claim.status != ThemeClaim.Status.PENDING or claim.award_finalized
+                or claim.approved_bonus_pages or ModifierProvenance.objects.filter(
+                    source_type=ModifierProvenance.SourceType.THEME_BONUS, source_reference=source).exists()):
+            raise ValidationError('Finalized Theme decisions require the signed Edit Book correction preview.')
+        if proposed.status not in {ThemeClaim.Status.APPROVED, ThemeClaim.Status.REJECTED}:
+            raise ValidationError('Choose approval or rejection for a Pending Theme claim.')
+        historical_rule = None
+        if proposed.status == ThemeClaim.Status.APPROVED:
+            if claim.pk in locked.late_approval_evidence.get('held_theme_claim_ids', ()):
+                raise ValidationError('A held historical Theme claim requires review of its original configuration.')
+            from .historical_restoration import permits_automatic_source
+            if not permits_automatic_source(locked, source):
+                raise ValidationError('Protected Theme history requires authorized correction review.')
+            if late_assignment is not None or locked.late_approval_evidence:
+                from .late_approval import theme_rule
+                historical_rule = theme_rule(locked, claim)
+                if historical_rule is None:
+                    raise ValidationError('A held historical Theme claim requires review of its original configuration.')
+        claim.submission = locked
+        claim.status = proposed.status
+        claim.reviewed_by = reviewer
+        claim.reviewed_at = reviewed_at
+        claim.full_clean()
+        claim.approved_bonus_pages = establish_theme_award(claim, historical_rule=historical_rule) if claim.status == ThemeClaim.Status.APPROVED else 0
+        claim.full_clean()
+        claim.save()
+        AuditEvent.objects.create(actor=reviewer, group=locked.month.group,
+            object_type='BookSubmission', object_id=str(locked.pk),
+            action='submission.theme_'+claim.status,
+            summary=json.dumps({'theme_claim_id':claim.pk,'theme_id':claim.theme_id,
+                'previous_status':'pending','status':claim.status,'awarded_pages':claim.approved_bonus_pages}))
+        changed.append(claim.pk)
+    if changed:
+        refresh_submission_score(locked, theme_claim_ids=changed)
+    locked._theme_decisions_count = len(changed)
+    return locked
+
+
+@transaction.atomic
 def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None):
     """Persist one submission/Theme review through the scoring boundary."""
     locked_submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
@@ -317,17 +370,21 @@ def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, 
 
 
 @transaction.atomic
-def refresh_submission_score(submission, *, earned_only=False, restore_earned=False, late_theme_claim_ids=None):
+def refresh_submission_score(submission, *, earned_only=False, restore_earned=False, late_theme_claim_ids=None, theme_claim_ids=None):
     """Synchronize Theme/Immersive provenance and persist submission score caches."""
     locked_submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
     from .immersive import synchronize_awards
-    if late_theme_claim_ids is None:
-        synchronize_awards(locked_submission, earned_only=earned_only, restore_earned=restore_earned)
-    else:
-        synchronize_awards(locked_submission, late_only=True)
+    # Theme-only decisions synchronize only their own sources and the score cache.
+    if theme_claim_ids is None:
+        if late_theme_claim_ids is None:
+            synchronize_awards(locked_submission, earned_only=earned_only, restore_earned=restore_earned)
+        else:
+            synchronize_awards(locked_submission, late_only=True)
     claims = ThemeClaim.objects.select_for_update(of=("self",)).select_related("theme", "reviewed_by").filter(
         submission=locked_submission,
     )
+    if theme_claim_ids is not None:
+        claims = claims.filter(pk__in=theme_claim_ids)
     for claim in claims:
         if late_theme_claim_ids is not None and claim.pk not in late_theme_claim_ids:
             continue

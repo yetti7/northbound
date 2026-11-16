@@ -85,7 +85,7 @@ class DiscordEmbedTests(TestCase):
         payloads=manual_payloads(self.group,'moderator','status');self.assert_valid(payloads)
         self.assertEqual(len(payloads),1);self.assertEqual(len(payloads[0]['embeds']),1)
         e=payloads[0]['embeds'][0];self.assertEqual(e['title'],'✅ All Caught Up!')
-        self.assertEqual(e['color'],SUCCESS_COLOR);self.assertIn(self.group.name,e['description'])
+        self.assertEqual(e['color'],SUCCESS_COLOR);self.assertIn(self.month.name,e['description'])
         self.assertNotIn('Team',json.dumps(e))
 
     def test_actual_team_and_unassigned_counts_and_task_totals(self):

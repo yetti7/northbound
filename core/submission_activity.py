@@ -8,6 +8,8 @@ from .models import AuditEvent, BookSubmission, BotmMatch, Membership, PersonalT
 from .permissions import can_view_challenge, membership_for, restricted_host_team_ids, scope_reviewable_submissions
 
 LABELS = {
+    "submission.theme_approved": "Theme approved",
+    "submission.theme_rejected": "Theme rejected",
     "submission.reader_edited": "Submission edited by Reader",
     "submission.qualification_requested": "Qualification review requested",
     "submission.qualification_withdrawn": "Qualification request withdrawn",
@@ -29,6 +31,7 @@ LABELS = {
     "botm.match_rejected": "Book of the Month match rejected",
 }
 READER_ACTIONS = {
+    "submission.theme_approved", "submission.theme_rejected",
     "submission.reader_edited", "submission.qualification_requested", "submission.qualification_withdrawn",
     "submission.qualification_confirmed", "submission.qualification_rejected",
     "submission.created", "submission.approved", "submission.rejected",
@@ -121,6 +124,10 @@ def _safe_details(event):
         if before.get("claims") != after.get("claims"):
             labels.append("Themes")
         return ["Changed " + ", ".join(labels) + "."] if labels else []
+    if event.action in {'submission.theme_approved','submission.theme_rejected'}:
+        claim_id, pages = data.get('theme_claim_id'), data.get('awarded_pages')
+        if isinstance(claim_id,int) and isinstance(pages,int):
+            return [f"Theme claim #{claim_id}: Pending → {'Approved' if event.action.endswith('approved') else 'Rejected'}; {pages} bonus pages."]
     if event.action in REVIEW_ACTIONS:
         statuses = dict(BookSubmission.Status.choices)
         old, new = data.get("previous_status"), data.get("status")

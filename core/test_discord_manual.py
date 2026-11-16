@@ -86,6 +86,7 @@ class DiscordManualTests(TestCase):
     @patch('core.discord_notifications.send_webhook',return_value=('sent',0))
     def test_manual_test_and_status_are_destination_specific_and_scheduler_independent(self,send):
         self.configure('community');self.configure();self.book()
+        self.month.discord_community_opt_in=True;self.month.save(update_fields=['discord_community_opt_in'])
         with patch.dict('os.environ',{'NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED':'0'}):
             for destination in ('community','moderator'):
                 for action in ('test','status'):
