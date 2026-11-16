@@ -51,7 +51,6 @@ class DevelopmentRuntimeTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);log=root/'commands'
             python=root/'python';python.write_text('#!/bin/sh\nprintf "python %s\\n" "$*" >> "$STARTUP_TEST_LOG"\n');python.chmod(0o700)
-            gunicorn=root/'gunicorn';gunicorn.write_text('#!/bin/sh\nprintf "gunicorn %s\\n" "$*" >> "$STARTUP_TEST_LOG"\nsleep 0.1\n');gunicorn.chmod(0o700)
             env=os.environ.copy();env['PATH']=str(root)+os.pathsep+env['PATH'];env['STARTUP_TEST_LOG']=str(log)
             for name in ('NORTHBOUND_BACKUP_SCHEDULER_ENABLED','NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED','NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED'):
                 env.pop(name,None)
@@ -59,17 +58,17 @@ class DevelopmentRuntimeTests(SimpleTestCase):
             subprocess.run(['/bin/sh',str(ROOT/'deploy/start.sh')],cwd=ROOT,env=env,check=True,timeout=5,capture_output=True)
             return log.read_text()
 
-    def test_startup_defaults_keep_all_three_background_processes(self):
+    def test_startup_hands_off_once_after_initialization(self):
         log=self.startup(False)
-        for name in ('run_backup_scheduler','run_challenge_scheduler','run_hardcover_sync_worker'):
-            self.assertIn(name,log)
-        self.assertIn('migrate --noinput',log);self.assertIn('gunicorn ',log)
+        self.assertIn('migrate --noinput',log)
+        self.assertEqual(log.count('python deploy/supervise.py'),1)
+        self.assertLess(log.index('safeguard_restored_hardcover_sync'),log.index('deploy/supervise.py'))
 
     def test_disabled_background_processes_keep_web_and_data_initialization(self):
         log=self.startup(True)
         for name in ('run_backup_scheduler','run_challenge_scheduler','run_hardcover_sync_worker'):
             self.assertNotIn(name,log)
-        for name in ('restore_pending_backup','migrate --noinput','safeguard_restored_hardcover_sync','gunicorn '):
+        for name in ('restore_pending_backup','migrate --noinput','safeguard_restored_hardcover_sync','deploy/supervise.py'):
             self.assertIn(name,log)
 
     @override_settings(NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED=False)
