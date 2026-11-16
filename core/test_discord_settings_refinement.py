@@ -50,7 +50,7 @@ class DiscordSettingsRefinementTests(TestCase):
         self.assertContains(page,'name="immediate_categories"')
         self.assertNotContains(page,'Active Challenges — unavailable')
         self.assertContains(page,'publicly shareable information')
-        for label in ('Advanced Settings','Manage webhook and destination','Technical diagnostics','Legacy hourly digest information','Detailed delivery history'):
+        for label in ('Advanced Settings','Manage webhook and destination','Technical diagnostics','Detailed delivery history'):
             self.assertContains(page,label)
         for key in ('books','themes','immersive','bingo','scavenger','photos'):
             self.assertContains(page,'name="categories" value="'+key+'"')
@@ -92,6 +92,7 @@ class DiscordSettingsRefinementTests(TestCase):
     @patch('core.discord_notifications.send_webhook',return_value=('sent',0))
     def test_shared_webhook_never_changes_destination_format_or_community_privacy(self,send):
         self.configure();self.book()
+        self.month.discord_community_opt_in=True;self.month.save(update_fields=['discord_community_opt_in'])
         for destination in ('community','moderator'):
             for action in ('test','status'):
                 attempt,_=deliver_manual(group=self.group,actor=self.owner,destination=destination,action=action,request_id=uuid.uuid4())

@@ -46,6 +46,9 @@ def enqueue(*, month, categories, source_kind, source_id, review_category='', pa
     enabled, secret = destination_fields(destination)
     if not category or not month.group.is_active or not getattr(config, enabled) or not getattr(config, secret):
         return None
+    from .discord_eligibility import challenge_eligible
+    if not challenge_eligible(month, destination):
+        return None
     if destination == 'community' and (not community_eligible(month) or (category=='results' and not results_visible(month))):
         return None
     now = timezone.now()
@@ -235,6 +238,9 @@ def eligible(row, schedule, now):
         return 'expired'
     if row.challenge.group_id != row.group_id:
         return 'unavailable'
+    from .discord_eligibility import challenge_eligible
+    if not challenge_eligible(row.challenge, row.destination):
+        return 'challenge_opted_out'
     if row.destination=='moderator':
         from .models import BookSubmission, ThemeClaim, ImmersiveRequest, PromptClaim, ScavengerPhotoSubmission
         models={'book':BookSubmission,'theme':ThemeClaim,'immersive':ImmersiveRequest,
@@ -300,7 +306,8 @@ def event_payload(row):
         link=link_field('Review Submission',application_url('review-queue',[month.group.slug,month.pk]))
     if link:fields.append(link)
     value['fields']=fields
-    return pack([value])[0]
+    from .discord_eligibility import scoped
+    return pack([scoped(value,month,row.destination,sensitive_categories=['results'] if row.category=='results' else [])])[0]
 
 
 @sensitive_variables()
@@ -343,8 +350,12 @@ def deliver_event(pk, *, now=None):
         failure=failure or error
         if failure:status='skipped'
         else:
-            status,delay=discord.send_webhook(url,payload,detailed=True,retryable=True)
-            failure='' if status=='sent' else status
+            from .discord_eligibility import payload_eligible
+            if not DiscordEventDelivery.objects.filter(pk=pk,state='claimed',claim_id=claim).exists() or not payload_eligible(payload):
+                status='skipped';failure='challenge_opted_out'
+            else:
+                status,delay=discord.send_webhook(url,payload,detailed=True,retryable=True)
+            failure='' if status=='sent' else failure or status
     except Exception:
         status='uncertain';failure='delivery_failed'
     state='sent' if status=='sent' else 'skipped' if status=='skipped' else \

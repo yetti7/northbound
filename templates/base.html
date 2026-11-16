@@ -33,7 +33,7 @@
           <div class="account-menu-panel">
             {% if user.is_superuser %}
               <a href="{% url 'config-dashboard' %}">Platform Administration</a>
-              <a href="{% url 'platform-owner-list' %}">Platform Owners</a>
+              {% if needs_attention.available %}<a href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
               <a href="{% url 'config-user-list' %}">Accounts</a>
               <a href="{% url 'config-audit' %}">Audit Activity</a>
               <a href="{% url 'account' %}">My Account</a>

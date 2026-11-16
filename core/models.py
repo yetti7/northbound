@@ -574,6 +574,7 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 class ChallengeMonth(models.Model):
     discord_community_opt_in = models.BooleanField(default=False)
+    discord_moderator_opt_in = models.BooleanField(default=False)
     gradient_enabled = models.BooleanField(default=False)
     gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
     gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
@@ -784,6 +785,7 @@ class ChallengeMonth(models.Model):
             actions.append(f"lifecycle_{target}")
         return actions
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         if self.group_id:
             group_timezone = ZoneInfo(self.group.timezone)
@@ -796,7 +798,12 @@ class ChallengeMonth(models.Model):
             if persisted_status is not None and persisted_status != self.status:
                 raise ValidationError({"status": "Use the authoritative Challenge lifecycle transition mechanism."})
         self.full_clean()
-        return super().save(*args, **kwargs)
+        result=super().save(*args, **kwargs)
+        written=kwargs.get('update_fields')
+        if written is None or {'discord_community_opt_in','discord_moderator_opt_in'} & set(written):
+            from .discord_eligibility import skip_disabled_events
+            skip_disabled_events(self)
+        return result
 
     def __str__(self):
         return f"{self.group}: {self.name}"
@@ -2849,3 +2856,31 @@ class RegistrationAgreementAcceptance(models.Model):
 
 # Shared optional prompt foundations; imported after related core models are defined.
 from .prompt_models import PromptCategory, ChallengePrompt, PromptClaim, PromptCompletion, ScavengerPhotoSubmission  # noqa: E402,F401
+
+
+class PlatformEmailSettings(models.Model):
+    """Installation SMTP configuration; secrets use the shared integration key."""
+    singleton_key = models.BooleanField(default=True, unique=True, editable=False)
+    enabled = models.BooleanField(default=False)
+    host = models.CharField(max_length=253, blank=True)
+    port = models.PositiveIntegerField(default=587)
+    encryption = models.CharField(max_length=8, choices=[('starttls', 'STARTTLS'), ('ssl', 'SSL/TLS'), ('none', 'None')], default='starttls')
+    username = models.CharField(max_length=254, blank=True)
+    encrypted_password = models.TextField(blank=True, editable=False)
+    sender_name = models.CharField(max_length=120, default='Northbound')
+    sender_email = models.EmailField(blank=True)
+    reply_to = models.EmailField(blank=True)
+    password_resets_enabled = models.BooleanField(default=False)
+    last_test_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_test_result = models.CharField(max_length=20, blank=True, editable=False)
+    last_test_error = models.CharField(max_length=200, blank=True, editable=False)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(singleton_key=True), name='platform_email_singleton_true')]
+
+
+class PasswordRecoveryLimit(models.Model):
+    """Short-lived keyed hashes, never raw email addresses or IPs."""
+    key = models.CharField(max_length=64, primary_key=True)
+    window = models.BigIntegerField()
+    attempts = models.PositiveIntegerField(default=0)

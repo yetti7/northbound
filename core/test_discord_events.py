@@ -295,6 +295,8 @@ class DiscordServiceIntegrationTests(TestCase):
 
     def setUp(self):
         photo_fixtures.PhotoFoundationTests.setUp(self)
+        self.month.discord_moderator_opt_in=True
+        self.month.save(update_fields=['discord_moderator_opt_in'])
         configure_notifications(group=self.group,actor=self.users['root'],destination='moderator',enabled=True,webhook_url=fixtures.WEBHOOK)
         form,_=configure_report_schedule(group=self.group,actor=self.users['root'],destination='moderator',
             data={'immediate_enabled':'on','immediate_categories':['new_submission','review_required','approved','rejected']})

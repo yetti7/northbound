@@ -8,8 +8,8 @@ from django.utils import timezone
 
 
 def community_eligible(month):
-    return bool(month.group.is_active and month.discord_community_opt_in
-        and month.status in {'upcoming','active','finalizing','completed','archived'})
+    from .discord_eligibility import challenge_eligible
+    return challenge_eligible(month, 'community')
 
 
 def participation_visible(month):
@@ -68,6 +68,9 @@ def community_embeds(group, categories, *, send_empty=False):
         if link:fields.append(link)
         value=embed(group=group,title=clip('📚 '+name(group.name)+' — Challenge Update',256),
             description='**'+name(month.name,markdown=True)+'**',color=COMMUNITY_COLOR,timestamp=timezone.now().isoformat())
-        value['fields']=fields;result.append(value)
+        from .discord_eligibility import scoped
+        value['fields']=fields
+        sensitive=[key for key,label in [('participation','Participation'),('results','Published Results')] if any(f['name']==label for f in fields)]
+        result.append(scoped(value,month,'community',sensitive_categories=sensitive))
     if not result and send_empty:result=[community_status_embed(group,timezone.now().isoformat(),reason=community_empty_reason(group,selected,months=months))]
     return result

@@ -101,7 +101,7 @@ class ScopedReviewAuthorityTests(TestCase):
     def test_host_sees_and_reviews_manual_submissions_and_claims_challenge_wide(self):
         response = self.assert_queue_scope(self.host_user, ("North Pending", "South Pending"))
         self.assertEqual(response.context["review_scope_label"], "Entire Challenge")
-        self.assertContains(response, "Entire Challenge. Review pending submissions, Theme claims and separate Immersive requests.")
+        self.assertContains(response, "Entire Challenge. Review pending submissions, Theme claims and Immersive requests.")
         submitted_at = self.submission_two.submitted_at
         result = self.client.post(self.review_url(self.submission_two), self.review_payload(self.submission_two, claim=self.claim_two))
         self.assertRedirects(result, self.queue_url)
@@ -119,7 +119,7 @@ class ScopedReviewAuthorityTests(TestCase):
         for user in (self.leader_one_user, self.leader_two_user):
             response = self.assert_queue_scope(user, ("North Pending",), ("South Pending",))
             self.assertEqual(response.context["review_scope_label"], "North Team")
-            self.assertContains(response, "North Team. Review pending submissions, Theme claims and separate Immersive requests.")
+            self.assertContains(response, "North Team. Review pending submissions, Theme claims and Immersive requests.")
             self.assertEqual(self.client.get(self.review_url(self.submission_two)).status_code, 403)
             self.assertEqual(self.client.post(self.review_url(self.submission_two), self.review_payload(self.submission_two, claim=self.claim_two)).status_code, 403)
         self.client.force_login(self.leader_one_user)

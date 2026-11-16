@@ -162,7 +162,7 @@ class DelegatedSubmissionPermissionsTests(TransactionTestCase):
         self.assertEqual(original,self.state());s.refresh_from_db()
         with self.assertRaises(ValidationError):apply_unified_review(s,[],a,timezone.now(),version=review_token(s,a),confirmations=['botm'])
         theme=MonthTheme.objects.create(month=self.month,name='Theme',starts_on=self.month.starts_on,ends_on=self.month.ends_on)
-        claim=ThemeClaim.objects.create(submission=s,theme=theme,status='pending');claim.status='approved'
+        claim=ThemeClaim.objects.create(submission=s,theme=theme,status='rejected');claim.status='approved'
         with self.assertRaises(ValidationError):review_submission_with_matches(s,[claim],a,timezone.now())
         s.review_notes='Verified evidence'
         with patch('core.scoring.refresh_submission_score',side_effect=AssertionError('No recalculation')):

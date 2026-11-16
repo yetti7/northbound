@@ -238,7 +238,7 @@ class LateApprovalTests(TestCase):
         self.assertFalse(BotmCompletionAward.objects.exists())
         self.assertFalse(ModifierProvenance.objects.filter(submission=book).exists())
         before = list(book.theme_claims.values())
-        with self.assertRaisesMessage(ValidationError, "signed Edit Book correction preview"):
+        with self.assertRaisesMessage(ValidationError, "held historical Theme"):
             self.approve(book, themes=True)
         self.assertEqual(list(book.theme_claims.values()), before)
         book.refresh_from_db()

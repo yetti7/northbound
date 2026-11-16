@@ -42,7 +42,7 @@ class DiscordNotificationTests(TestCase):
                            (self.host,'member'),(self.leader,'member')]:
             self.members[user.pk] = Membership.objects.create(group=self.group, user=user, role=role, display_name=user.username)
         Membership.objects.create(group=self.other,user=self.outsider,role='owner',display_name='Other')
-        self.month = ChallengeMonth.objects.create(group=self.group,name='November',status='active',
+        self.month = ChallengeMonth.objects.create(group=self.group,name='November',status='active',discord_moderator_opt_in=True,
             starts_on=date(2026,11,1),ends_on=date(2026,11,30))
         self.member = self.members[self.reader.pk]
         self.enrollment = MonthEnrollment.objects.create(month=self.month,participant=self.member)
@@ -151,7 +151,7 @@ class DiscordNotificationTests(TestCase):
         # Waiting for book approval is not yet a separately actionable Immersive task.
         for book in [pending,approved,rejected,removed]:
             ImmersiveRequest.objects.create(submission=book,requester=self.reader,captured_percent=100)
-        other_month=ChallengeMonth.objects.create(group=self.other,name='Other',status='active',starts_on=self.month.starts_on,ends_on=self.month.ends_on)
+        other_month=ChallengeMonth.objects.create(discord_moderator_opt_in=True,group=self.other,name='Other',status='active',starts_on=self.month.starts_on,ends_on=self.month.ends_on)
         other_member=Membership.objects.get(group=self.other,user=self.outsider)
         BookSubmission.objects.create(month=other_month,participant=other_member,title='Other',author='Other',book_format='ebook',completed_on=date(2026,11,3),submitted_pages=10)
         summary=group_pending_review_counts(self.group)
@@ -361,6 +361,8 @@ class TeamDigestReviewTests(TestCase):
 
     def setUp(self):
         self._fixtures.setUp(self)
+        self.month.discord_moderator_opt_in=True
+        self.month.save(update_fields=['discord_moderator_opt_in'])
         from .prompt_reservations import replace_selections
         self.bingo = self.prompt(kind='bingo')
         self.settings(kind='bingo', enabled=True)

@@ -5,6 +5,7 @@
   <p class="eyebrow">{{ platform_display_name }}</p>
   <h1>Sign In</h1>
   <form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Sign In</button></div></form>
+  <p><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
   {% if public_registration_enabled %}<p class="muted">New reader? <a href="{% url 'register' %}">Create an Account</a>.</p>{% else %}<p class="muted">Public registration is currently unavailable.</p>{% endif %}
 </section>
 {% endblock %}

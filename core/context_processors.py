@@ -65,6 +65,7 @@ NAVIGATION_PARENTS = {
  'challenge-visibility-settings': ('challenge-settings',
                                    {'group_slug': 'group_slug', 'month_pk': 'month_pk'}),
  'challenge-withdraw': ('month-detail', {'group_slug': 'group_slug', 'pk': 'month_pk'}),
+ 'platform-email-settings': ('config-dashboard', {}),
  'config-audit': ('config-dashboard', {}),
  'config-group-detail': ('config-group-list', {}),
  'config-group-list': ('config-dashboard', {}),

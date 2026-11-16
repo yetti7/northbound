@@ -231,3 +231,6 @@ NORTHBOUND_DISCORD_SCHEDULER_ENABLED = env_bool("NORTHBOUND_DISCORD_SCHEDULER_EN
 
 # Stage C is independently activated; saved categories never authorize a worker.
 NORTHBOUND_DISCORD_EVENTS_ENABLED = env_bool("NORTHBOUND_DISCORD_EVENTS_ENABLED", False)
+
+# Local account recovery links expire after twelve hours.
+PASSWORD_RESET_TIMEOUT = 43200
