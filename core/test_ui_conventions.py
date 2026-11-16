@@ -30,7 +30,8 @@ class SharedUiConventionTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'class="page-heading page-header"')
-        self.assertContains(response, "navigation-card", count=11)
+        self.assertContains(response, "navigation-card", count=12)
+        self.assertContains(response, "Email Settings")
         self.assertContains(response, "summary-card", count=2)
         self.assertNotContains(response, 'class="button primary"')
         for section in ("System Management", "Operations &amp; Data", "Governance &amp; Recovery"):
@@ -38,7 +39,7 @@ class SharedUiConventionTests(TestCase):
         for destination in (
             "config-user-list", "config-group-list", "platform-general-settings",
             "platform-hardcover-oauth", "platform-backups", "platform-system-status",
-            "platform-storage-maintenance",
+            "platform-storage-maintenance", "platform-email-settings",
         ):
             with self.subTest(destination=destination):
                 self.assertContains(response, reverse(destination))

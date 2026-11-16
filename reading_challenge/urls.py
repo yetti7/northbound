@@ -3,13 +3,12 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from core.email_views import email_settings, LocalPasswordResetView
+from core.email_views import LocalPasswordResetView
 from core.forms import RegularAuthenticationForm
 from core.views import NorthboundPasswordChangeView
 from reading_challenge.media import serve_media
 
 urlpatterns = [
-    path("config/settings/email/", email_settings, name="platform-email-settings"),
     path("accounts/password/reset/", LocalPasswordResetView.as_view(), name="password_reset"),
     path("accounts/password/reset/done/", auth_views.PasswordResetDoneView.as_view(template_name="registration/northbound_reset_done.html"), name="password_reset_done"),
     path("accounts/password/reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(template_name="registration/northbound_reset_confirm.html"), name="password_reset_confirm"),

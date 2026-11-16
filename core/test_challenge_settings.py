@@ -182,7 +182,7 @@ class ChallengeSettingsTests(TestCase):
         for field, expected in schedule_before.items():
             self.assertEqual(getattr(self.month, field), expected)
         form = self.client.get(self.general_url).context["form"]
-        self.assertEqual(set(form.fields), {"name", "description", "discord_community_opt_in"})
+        self.assertEqual(set(form.fields), {"name", "description", "discord_community_opt_in", "discord_moderator_opt_in"})
 
     def test_schedule_settings_updates_existing_scheduler_fields_without_touching_identity(self):
         self.client.force_login(self.owner_user)
