@@ -3,6 +3,8 @@ name: northbound
 services:
   web:
     image: ghcr.io/yetti7/northbound:latest
+    init: true
+    stop_grace_period: 45s
     restart: unless-stopped
     env_file: .env
     environment:

@@ -1,6 +1,9 @@
 # Append to the existing northbound-dev Compose file list; never use in production.
 services:
   web:
+    # Requires an image containing the v1.1.2a supervisor.
+    init: true
+    stop_grace_period: 45s
     environment:
       NORTHBOUND_LIVE_SOURCE: "1"
       DJANGO_DEBUG: "0"
@@ -10,15 +13,10 @@ services:
       NORTHBOUND_HARDCOVER_WRITEBACK_ENABLED: "0"
       NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED: "0"
       NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT: "0"
-    # Apply staged restores before migrations and the existing reload-enabled web server.
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        python manage.py restore_pending_backup
-        python manage.py migrate --noinput
-        python manage.py safeguard_restored_hardcover_sync
-        exec gunicorn reading_challenge.wsgi:application --pid=/tmp/northbound-gunicorn.pid --bind=0.0.0.0:8000 --workers=2 --reload --reload-engine=poll --access-logfile=- --error-logfile=-
+      NORTHBOUND_DISCORD_EVENTS_ENABLED: "0"
+      NORTHBOUND_DISCORD_SCHEDULER_ENABLED: "0"
+      GUNICORN_CMD_ARGS: "--reload --reload-engine poll"
+    command: ["./deploy/start.sh"]
     volumes:
       - /srv/docker/northbound-dev/source/core:/app/core:ro
       - /srv/docker/northbound-dev/source/reading_challenge:/app/reading_challenge:ro
