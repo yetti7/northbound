@@ -292,7 +292,7 @@ class ImmersiveMigrationTests(TransactionTestCase):
             executor.migrate([('core','0062_backfill_selection_display_metadata')])
             apps=executor.loader.project_state([('core','0062_backfill_selection_display_metadata')]).apps
             User=apps.get_model('auth','User')
-            user=User.objects.create(username='migration-reader')
+            user=User.objects.create(username='migration-reader', email='migration-reader@example.invalid')
             group=apps.get_model('core','ReadingGroup').objects.create(name='Existing',slug='existing')
             member=apps.get_model('core','Membership').objects.create(group=group,user=user,display_name='Reader')
             month=apps.get_model('core','ChallengeMonth').objects.create(group=group,name='Existing',status='active')

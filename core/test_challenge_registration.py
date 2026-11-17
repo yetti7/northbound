@@ -37,7 +37,7 @@ class ChallengeRegistrationMigrationTests(TransactionTestCase):
         MembershipOld = old_apps.get_model("core", "Membership")
         ChallengeMonthOld = old_apps.get_model("core", "ChallengeMonth")
         MonthEnrollmentOld = old_apps.get_model("core", "MonthEnrollment")
-        user = User.objects.create(username="registration-migration-reader")
+        user = User.objects.create(username="registration-migration-reader", email='registration-migration-reader@example.invalid')
         group = ReadingGroupOld.objects.create(name="Registration Migration", slug="registration-migration")
         member = MembershipOld.objects.create(group=group, user=user, display_name="Reader")
         month = ChallengeMonthOld.objects.create(
@@ -188,7 +188,7 @@ class ChallengeRegistrationTests(TestCase):
         self.assertContains(response, "Information automatically provided")
         self.assertContains(response, "Reader name")
         self.assertContains(response, "Email")
-        self.assertContains(response, "Discord username")
+        self.assertContains(response, "Display Name")
         self.assertContains(response, "Previous Challenges completed")
         self.assertContains(response, "Average Challenge pages for this Group")
         self.assertContains(response, "Previous/last Challenge pages")
@@ -370,22 +370,20 @@ class ChallengeRegistrationTests(TestCase):
         self.assertTrue(enrollment.is_active)
         self.assertEqual(enrollment.signup_answers.get(question=question).value, "Preserve me")
 
-    def test_registration_reuses_or_optionally_captures_discord_without_changing_privacy(self):
+    def test_registration_reuses_display_name_without_an_optional_identity_field(self):
         self.month.enrollments.all().delete()
         profile = self.reader_user.northbound_profile
+        profile.discord_username = "Existing Display Name"
         profile.discord_username_is_public = False
-        profile.save(update_fields=["discord_username_is_public"])
+        profile.save(update_fields=["discord_username", "discord_username_is_public"])
         self.client.force_login(self.reader_user)
         page = self.client.get(self.register_url())
-        self.assertContains(page, "Discord Username (Optional)")
-        self.submit_registration({"discord_username": "captured.reader"})
+        self.assertNotContains(page, 'name="discord_username"')
+        self.assertNotContains(page, 'name="display_name"')
+        self.submit_registration({"discord_username": "untrusted replacement"})
         profile.refresh_from_db()
-        self.assertEqual(profile.discord_username, "captured.reader")
+        self.assertEqual(profile.discord_username, "Existing Display Name")
         self.assertFalse(profile.discord_username_is_public)
-
-        self.month.enrollments.all().delete()
-        page = self.client.get(self.register_url())
-        self.assertNotContains(page, "Discord Username (Optional)")
 
     def test_registration_answers_are_private_with_bounded_staff_correction_visibility(self):
         question = self.question("Private plan", "short_text", position=1)

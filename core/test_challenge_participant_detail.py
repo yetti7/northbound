@@ -104,7 +104,7 @@ class ChallengeParticipantDetailTests(TestCase):
         profile = self.members["reader"].user.northbound_profile
         profile.discord_username = "private.reader"; profile.save(update_fields=["discord_username"])
         host = self.get_as("host")
-        self.assertContains(host, "cpd-reader — Stories Under Stars")
+        self.assertContains(host, "private.reader — Stories Under Stars")
         self.assertContains(host, "North")
         self.assertContains(host, "secret response")
         self.assertContains(host, "private.reader")
@@ -236,11 +236,12 @@ class ChallengeParticipantDetailTests(TestCase):
         self.client.force_login(self.users["leader"])
         url = reverse("month-participant-list", args=[self.group.slug, self.month.pk])
         response = self.client.get(url)
-        self.assertContains(response, "Search User")
-        self.assertContains(response, 'placeholder="Username or Discord name"')
-        self.assertContains(response, 'data-username="cpd-reader"', count=2)
+        self.assertContains(response, "Search Readers")
+        self.assertContains(response, 'placeholder="Display Name"')
+        self.assertContains(response, 'data-username="NorthVisible"', count=2)
         self.assertContains(response, 'data-discord="NorthVisible"', count=2)
-        self.assertNotContains(response, "SouthPrivate")
+        self.assertContains(response, "SouthPrivate")
+        self.assertNotContains(response, 'data-discord="SouthPrivate"')
         self.assertContains(response, "participant_search.js")
 
     def test_team_books_are_independent_of_scores_and_follow_current_assignment(self):
@@ -319,12 +320,13 @@ class ChallengeParticipantDetailTests(TestCase):
         south = reverse("team-detail", args=[self.group.slug, self.month.pk, self.south.pk])
         query = {"sort": "total", "from": "2026-08-03"}
         response = self.client.get(north, query)
-        self.assertContains(response, "Search User")
+        self.assertContains(response, "Search Readers")
         self.assertContains(response, 'data-discord="NorthVisible"', count=2)
         self.assertContains(response, 'name="from" value="2026-08-03"')
         self.assertEqual(response.context["sort_key"], "total")
         response = self.client.get(south, query)
-        self.assertNotContains(response, "SouthPrivate")
+        self.assertContains(response, "SouthPrivate")
+        self.assertNotContains(response, 'data-discord="SouthPrivate"')
         self.assertFalse(response.context["can_view_reader_scores"])
         self.assertEqual(response.context["sort_key"], "reader")
         self.assertNotContains(response, "<legend>Reporting</legend>", html=True)
@@ -413,14 +415,15 @@ class ChallengeParticipantDetailTests(TestCase):
         ):
             with self.subTest(route=route):
                 response = self.get_as("platform", route)
-                self.assertContains(response, "renamed-current-reader")
+                self.assertContains(response, "SeparateDiscordHandle")
                 self.assertNotContains(response, "Obsolete Membership Alias")
                 self.assertNotContains(response, "Private First")
-        self.assertEqual(self.search_as("platform", user.username)["Readers"][0]["label"], user.username)
+        self.assertEqual(self.search_as("platform", "SeparateDiscordHandle")["Readers"][0]["label"], "SeparateDiscordHandle")
         self.assertEqual(self.search_as("platform", member.display_name), {})
         self.assertEqual(self.search_as("other", "SeparateDiscordHandle"), {})
-        self.assertEqual(self.search_as("leader", "SeparateDiscordHandle")["Readers"][0]["label"], user.username)
-        self.assertNotContains(self.get_as("other", reverse("month-participant-list", args=args)), "SeparateDiscordHandle")
+        self.assertEqual(self.search_as("leader", "SeparateDiscordHandle")["Readers"][0]["label"], "SeparateDiscordHandle")
+        self.assertContains(self.get_as("other", reverse("month-participant-list", args=args)), "SeparateDiscordHandle")
+        self.assertNotContains(self.get_as("other", reverse("month-participant-list", args=args)), 'data-discord="SeparateDiscordHandle"')
         self.assertContains(self.get_as("leader", self.url), "SeparateDiscordHandle")
         member.refresh_from_db()
         self.submission.refresh_from_db()
@@ -443,9 +446,9 @@ class ChallengeParticipantDetailTests(TestCase):
 
         self.client.force_login(self.users["platform"])
         url = reverse("member-create", args=[group.slug])
-        self.assertNotContains(self.client.get(url), 'name="display_name"')
-        response = self.client.post(url, {
-            "username": "staff-created-reader", "email": "", "role": Membership.Role.MEMBER,
+        self.assertContains(self.client.get(url), 'name="display_name"')
+        response = self.client.post(url, {"display_name": "staff-created-reader",
+            "username": "staff-created-reader", "email": "staff-created@example.invalid", "role": Membership.Role.MEMBER,
             "temporary_password": "test-only-password-42",
         })
         self.assertEqual(response.status_code, 302)
@@ -463,15 +466,16 @@ class ChallengeParticipantDetailTests(TestCase):
         self.assertContains(self.get_as("platform", url), "Discord: PrivateDirectoryDiscord")
         self.assertContains(self.get_as("reader", url), "Discord: PrivateDirectoryDiscord")
         ordinary = self.get_as("other", url)
-        self.assertContains(ordinary, "directory-current-reader")
-        self.assertNotContains(ordinary, "PrivateDirectoryDiscord")
+        self.assertContains(ordinary, "PrivateDirectoryDiscord")
+        self.assertNotContains(ordinary, 'data-discord="PrivateDirectoryDiscord"')
         self.assertNotContains(ordinary, "@directory-current-reader")
         profile.discord_username_is_public = True
         profile.save(update_fields=["discord_username_is_public"])
         self.assertContains(self.get_as("other", url), "Discord: PrivateDirectoryDiscord")
         profile.discord_username = ""
         profile.save(update_fields=["discord_username"])
-        self.assertNotContains(self.get_as("platform", url), "Discord:")
+        self.assertNotContains(self.get_as("platform", url), "PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("platform", url), "directory-current-reader")
         nonmember = get_user_model().objects.create_user("directory-nonmember")
         self.client.force_login(nonmember)
         self.assertEqual(self.client.get(url).status_code, 403)

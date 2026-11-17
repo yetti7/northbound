@@ -37,11 +37,11 @@ class GroupRoleMigrationTests(TransactionTestCase):
         ThemeClaim = apps.get_model("core", "ThemeClaim")
         AuditEvent = apps.get_model("core", "AuditEvent")
 
-        owner_user = User.objects.create(username="legacy-owner")
-        admin_user = User.objects.create(username="legacy-admin")
-        moderator_user = User.objects.create(username="legacy-moderator")
-        game_manager_user = User.objects.create(username="legacy-game-manager")
-        reader_user = User.objects.create(username="legacy-reader")
+        owner_user = User.objects.create(username="legacy-owner", email='legacy-owner@example.invalid')
+        admin_user = User.objects.create(username="legacy-admin", email='legacy-admin@example.invalid')
+        moderator_user = User.objects.create(username="legacy-moderator", email='legacy-moderator@example.invalid')
+        game_manager_user = User.objects.create(username="legacy-game-manager", email='legacy-game-manager@example.invalid')
+        reader_user = User.objects.create(username="legacy-reader", email='legacy-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Legacy Group", slug="legacy-group")
 
         self.owner_id = Membership.objects.create(

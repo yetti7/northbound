@@ -18,7 +18,7 @@ class PromptFoundationTests(TestCase):
         User=get_user_model()
         self.group=ReadingGroup.objects.create(name='Prompt fixtures',slug='prompt-fixtures')
         self.month=ChallengeMonth.objects.create(group=self.group,name='Future Challenge',status='active',starts_on=date(2027,1,1),ends_on=date(2027,1,31))
-        self.users={k:User.objects.create_user('prompt-'+k,is_superuser=k=='root') for k in ['root','host','participating','owner','moderator','floater','leader','reader','outsider']}
+        self.users={k:User.objects.create_user('prompt-'+k,is_superuser=k=='root', email=('prompt-'+k) + "@example.invalid") for k in ['root','host','participating','owner','moderator','floater','leader','reader','outsider']}
         self.members={k:Membership.objects.create(group=self.group,user=u,display_name=k,role='owner' if k=='owner' else 'moderator' if k=='moderator' else 'member') for k,u in self.users.items() if k not in ['root','outsider']}
         self.team=Team.objects.create(month=self.month,name='One')
         self.other_team=Team.objects.create(month=self.month,name='Two')
@@ -216,7 +216,7 @@ class PromptMigrationSafetyTests(TransactionTestCase):
         group=Group.objects.create(name='Legacy',slug='guildwars')
         month=Month.objects.create(group=group,name='November',status='active',starts_on=date(2026,11,1),ends_on=date(2026,11,30))
         User=apps.get_model('auth','User');Member=apps.get_model('core','Membership');Book=apps.get_model('core','BookSubmission')
-        user=User.objects.create(username='migration-prompt-reader');member=Member.objects.create(group=group,user=user,display_name='Legacy')
+        user=User.objects.create(username='migration-prompt-reader', email='migration-prompt-reader@example.invalid');member=Member.objects.create(group=group,user=user,display_name='Legacy')
         Book.objects.create(month=month,participant=member,title='Legacy book',author='Author',book_format='ebook',completed_on=date(2026,11,4),submitted_pages=368,approved_pages=368,final_scored_pages=368,status='approved')
         before=list(Book.objects.order_by('pk').values())
         executor=MigrationExecutor(connection);executor.migrate([('core','0074_prompt_foundations')])

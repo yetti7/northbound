@@ -150,7 +150,7 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertNotContains(teams, "member-chip")
         self.assertNotContains(teams, "hierarchy-reader")
         self.assertNotContains(teams, "hierarchy-reader-b")
-        self.assertContains(teams, "Team Leaders: hierarchy-leader-a, hierarchy-leader-z")
+        self.assertContains(teams, "Team Leaders: private-leader, hierarchy-leader-z")
         self.assertContains(teams, "Edit Team")
         self.assertContains(teams, "Manage Team Leaders")
 
@@ -171,11 +171,11 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertContains(response, ">430<")
         self.assertEqual(
             [assignment.participant.user.username for assignment in response.context["roster"]],
-            ["hierarchy-leader-a", "hierarchy-leader-z", "hierarchy-reader", "hierarchy-reader-b"],
+            ["hierarchy-leader-z", "hierarchy-leader-a", "hierarchy-reader-b", "hierarchy-reader"],
         )
         self.assertEqual(
             [assignment.membership.user.username for assignment in response.context["current_leaders"]],
-            ["hierarchy-leader-a", "hierarchy-leader-z"],
+            ["hierarchy-leader-z", "hierarchy-leader-a"],
         )
         self.assertEqual(response.context["logical_parent_url"], self.teams_url)
         reader_assignment = next(assignment for assignment in response.context["roster"] if assignment.participant_id == self.reader.pk)
@@ -227,12 +227,12 @@ class TeamPlanningFoundationTests(TestCase):
     def test_team_detail_numeric_sorting_ignores_roles_and_default_preserves_priority(self):
         self.client.force_login(self.host_user)
         expectations = {
-            ("reader", "asc"): ["hierarchy-leader-a", "hierarchy-leader-z", "hierarchy-reader", "hierarchy-reader-b"],
-            ("reader", "desc"): ["hierarchy-leader-z", "hierarchy-leader-a", "hierarchy-reader-b", "hierarchy-reader"],
+            ("reader", "asc"): ["hierarchy-leader-z", "hierarchy-leader-a", "hierarchy-reader-b", "hierarchy-reader"],
+            ("reader", "desc"): ["hierarchy-leader-a", "hierarchy-leader-z", "hierarchy-reader", "hierarchy-reader-b"],
             ("base", "asc"): ['hierarchy-leader-z', 'hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a'],
             ("base", "desc"): ['hierarchy-leader-a', 'hierarchy-reader', 'hierarchy-reader-b', 'hierarchy-leader-z'],
-            ("modifier", "asc"): ['hierarchy-leader-a', 'hierarchy-leader-z', 'hierarchy-reader', 'hierarchy-reader-b'],
-            ("modifier", "desc"): ['hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a', 'hierarchy-leader-z'],
+            ("modifier", "asc"): ['hierarchy-leader-z', 'hierarchy-leader-a', 'hierarchy-reader', 'hierarchy-reader-b'],
+            ("modifier", "desc"): ['hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-z', 'hierarchy-leader-a'],
             ("total", "asc"): ['hierarchy-leader-z', 'hierarchy-reader-b', 'hierarchy-reader', 'hierarchy-leader-a'],
             ("total", "desc"): ['hierarchy-leader-a', 'hierarchy-reader', 'hierarchy-reader-b', 'hierarchy-leader-z'],
         }
@@ -259,7 +259,8 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertNotContains(reader_response, "Edit Team")
         self.assertNotContains(reader_response, "Manage Team Leaders")
         self.assertNotContains(reader_response, "Remove from Team")
-        self.assertNotContains(reader_response, "private-leader")
+        self.assertContains(reader_response, "private-leader")
+        self.assertNotContains(reader_response, 'data-discord="private-leader"')
         self.assertNotContains(reader_response, "Avg Pages")
         self.assertNotContains(reader_response, ">Base</a>")
         self.assertNotContains(reader_response, "Show Bonuses")

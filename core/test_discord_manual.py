@@ -219,8 +219,9 @@ class DiscordManualTests(TestCase):
         with override_settings(NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED=False,NORTHBOUND_DEVELOPMENT_BANNER=True,NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT=False):
             status=destination_diagnostics(config,'community',group=self.group)
             self.assertTrue(any('No webhook' in n for n in status['notices']))
-            self.assertTrue(any('disabled' in n for n in status['notices']))
-            self.assertTrue(any('blocked' in n for n in status['notices']))
+            self.assertEqual(status['global_source'], 'environment')
+            self.assertFalse(status['global_enabled'])
+            self.assertTrue(any('inherited environment setting' in n for n in status['notices']))
 
     @patch('core.discord_notifications.send_webhook')
     def test_invalid_encrypted_url_inactive_group_and_snapshot_failure(self,send):

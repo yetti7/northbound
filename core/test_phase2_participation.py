@@ -27,7 +27,7 @@ class DurableParticipationMigrationTests(TransactionTestCase):
         TeamOld = old_apps.get_model("core", "Team")
         TeamAssignmentOld = old_apps.get_model("core", "TeamAssignment")
 
-        user = User.objects.create(username="migration-reader")
+        user = User.objects.create(username="migration-reader", email='migration-reader@example.invalid')
         group = ReadingGroupOld.objects.create(name="Migration Group", slug="migration-group")
         member = MembershipOld.objects.create(group=group, user=user, role="member", display_name="Reader")
         month = ChallengeMonthOld.objects.create(

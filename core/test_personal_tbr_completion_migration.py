@@ -29,7 +29,7 @@ class PersonalTbrCompletionMigrationTests(TransactionTestCase):
         MonthEnrollment = apps.get_model("core", "MonthEnrollment")
         PersonalTBR = apps.get_model("core", "PersonalTBR")
         PersonalTBRBook = apps.get_model("core", "PersonalTBRBook")
-        user = User.objects.create(username="pre-tbr-completion-reader")
+        user = User.objects.create(username="pre-tbr-completion-reader", email='pre-tbr-completion-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Pre-completion Group", slug="pre-completion-group")
         reader = Membership.objects.create(group=group, user=user, display_name="Reader")
         month = ChallengeMonth.objects.create(

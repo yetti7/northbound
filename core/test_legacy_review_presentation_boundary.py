@@ -203,7 +203,7 @@ class RetireReviewSubmissionsMigrationTests(TransactionTestCase):
         User = old_apps.get_model("auth", "User")
         ReadingGroup = old_apps.get_model("core", "ReadingGroup")
         Membership = old_apps.get_model("core", "Membership")
-        user = User.objects.create(username="review-retirement-user")
+        user = User.objects.create(username="review-retirement-user", email='review-retirement-user@example.invalid')
         group = ReadingGroup.objects.create(name="Review Retirement", slug="review-retirement")
         self.membership_id = Membership.objects.create(
             group=group,

@@ -311,7 +311,7 @@ class PhotoMigrationTests(TransactionTestCase):
         apps=executor.loader.project_state([('core','0076_team_branding')]).apps
         group=apps.get_model('core','ReadingGroup').objects.create(name='Migration',slug='photo-migration')
         month=apps.get_model('core','ChallengeMonth').objects.create(group=group,name='Legacy',status='active')
-        user=apps.get_model('auth','User').objects.create(username='photo-migration-reader')
+        user=apps.get_model('auth','User').objects.create(username='photo-migration-reader', email='photo-migration-reader@example.invalid')
         member=apps.get_model('core','Membership').objects.create(group=group,user=user)
         book=apps.get_model('core','BookSubmission').objects.create(month=month,participant=member,title='Preserved',author='Author',book_format='ebook',completed_on='2027-01-03',submitted_pages=100,status='approved',approved_pages=100)
         category=apps.get_model('core','PromptCategory').objects.create(month=month,kind='scavenger',enabled=True)

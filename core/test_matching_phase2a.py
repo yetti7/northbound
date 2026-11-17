@@ -268,7 +268,7 @@ class MatchingEvidenceMigrationTests(TransactionTestCase):
         try:
             apps=executor.loader.project_state(old_target).apps
             def model(name):return apps.get_model('core',name)
-            user=apps.get_model('auth','User').objects.create(username='historical-match')
+            user=apps.get_model('auth','User').objects.create(username='historical-match', email='historical-match@example.invalid')
             group=model('ReadingGroup').objects.create(name='History',slug='history')
             member=model('Membership').objects.create(group=group,user=user,display_name='Reader')
             month=model('ChallengeMonth').objects.create(group=group,name='History',status='active',

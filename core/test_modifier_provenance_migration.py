@@ -37,8 +37,8 @@ class ModifierProvenanceMigrationTests(TransactionTestCase):
         ProgressCheckpoint = apps.get_model("core", "ProgressCheckpoint")
         ProgressCheckpointResult = apps.get_model("core", "ProgressCheckpointResult")
 
-        reviewer = User.objects.create(username="provenance-reviewer")
-        reader = User.objects.create(username="provenance-reader")
+        reviewer = User.objects.create(username="provenance-reviewer", email='provenance-reviewer@example.invalid')
+        reader = User.objects.create(username="provenance-reader", email='provenance-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Provenance Group", slug="provenance-group")
         participant = Membership.objects.create(
             group=group,
@@ -243,7 +243,7 @@ class ModifierProvenanceConstraintTests(TestCase):
 
         from core.models import ChallengeMonth, Membership, ModifierProvenance, ReadingGroup
 
-        user = get_user_model().objects.create_user("modifier-constraint")
+        user = get_user_model().objects.create_user("modifier-constraint", email='modifier-constraint@example.invalid')
         group = ReadingGroup.objects.create(name="Constraint Group", slug="constraint-group")
         participant = Membership.objects.create(
             group=group,
@@ -296,7 +296,7 @@ class ModifierProvenanceIntegrityMigrationTests(TransactionTestCase):
         MonthTheme = apps.get_model("core", "MonthTheme")
         ThemeClaim = apps.get_model("core", "ThemeClaim")
 
-        user = User.objects.create(username="inconsistent-provenance")
+        user = User.objects.create(username="inconsistent-provenance", email='inconsistent-provenance@example.invalid')
         group = ReadingGroup.objects.create(name="Integrity Group", slug="integrity-group")
         participant = Membership.objects.create(
             group=group,

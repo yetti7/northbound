@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 from django.utils import timezone
 

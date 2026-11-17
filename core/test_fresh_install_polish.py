@@ -109,19 +109,11 @@ class ImageTagPolicyTests(SimpleTestCase):
         from django.conf import settings
 
         workflow = (Path(settings.BASE_DIR) / ".github/workflows/container.yml").read_text()
-        step = workflow.split("id: image-tags", 1)[1].split("      - name:", 1)[0]
-        script = "\n".join(line[10:] for line in step.split("run: |\n", 1)[1].splitlines())
-        cases = [("branch", "main", True), ("branch", "dev", False)]
-        cases += [("tag", tag, expected) for tag, expected in (
-            ("v1.0.1", True), ("v0.0.0", True), ("v12.34.56", True),
-            ("v1.0.1-rc.1", False), ("v1.0.1-beta", False), ("v1.0.1+build", False),
-            ("v01.0.1", False), ("v1.0", False), ("latest", False),
-        )]
-        for ref_type, ref_name, expected in cases:
-            with self.subTest(ref=ref_name), tempfile.NamedTemporaryFile() as output:
-                subprocess.run(["bash", "-e", "-c", script], check=True, env={**os.environ, "REF_TYPE": ref_type, "REF_NAME": ref_name, "GITHUB_OUTPUT": output.name})
-                self.assertEqual(Path(output.name).read_text().strip(), f"latest={str(expected).lower()}")
+        self.assertIn("run: python .github/scripts/release_channels.py select", workflow)
+        self.assertIn("run: python .github/scripts/release_channels.py promote", workflow)
+        self.assertIn("github.event.release.draft == false", workflow)
+        self.assertIn("github.event.release.prerelease == false", workflow)
         self.assertIn("flavor: latest=false", workflow)
-        self.assertIn("type=ref,event=tag", workflow)
+        self.assertIn("type=raw,value=${{ steps.image-tags.outputs.version }}", workflow)
         self.assertIn("type=sha", workflow)
         self.assertIn("tags: ${{ steps.meta.outputs.tags }}", workflow)

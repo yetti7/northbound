@@ -32,7 +32,7 @@ class BotmMatchingMigrationTests(TransactionTestCase):
         MonthEnrollment = apps.get_model("core", "MonthEnrollment")
         BotmBook = apps.get_model("core", "BotmBook")
         BookSubmission = apps.get_model("core", "BookSubmission")
-        user = User.objects.create(username="pre-match-reader")
+        user = User.objects.create(username="pre-match-reader", email='pre-match-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Pre-match Group", slug="pre-match-group")
         reader = Membership.objects.create(group=group, user=user, display_name="Reader")
         month = ChallengeMonth.objects.create(

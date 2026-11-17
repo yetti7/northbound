@@ -13,7 +13,7 @@ class HardcoverSyncFoundationMigrationTests(TransactionTestCase):
         executor.migrate(self.migrate_from)
         old_apps = executor.loader.project_state(self.migrate_from).apps
         User = old_apps.get_model("auth", "User")
-        self.user_id = User.objects.create(username="existing-hc3-reader").pk
+        self.user_id = User.objects.create(username="existing-hc3-reader", email='existing-hc3-reader@example.invalid').pk
 
         executor = MigrationExecutor(connection)
         executor.migrate(self.migrate_to)

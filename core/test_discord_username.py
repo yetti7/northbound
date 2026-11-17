@@ -2,6 +2,7 @@ from datetime import date
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 
 from .models import AuditEvent, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, ReadingGroup, UserProfile
@@ -54,24 +55,25 @@ class DiscordUsernameTests(TestCase):
             "first_name": self.reader.first_name,
             "last_name": self.reader.last_name,
             "email": self.reader.email,
-            "discord_username": "updated.reader",
+            "display_name": "updated.reader",
         }
         payload.update(overrides)
         return payload
 
-    def test_user_can_update_and_clear_own_optional_discord_username(self):
+    def test_user_can_update_display_name_and_cannot_clear_it(self):
         self.client.force_login(self.reader)
         response = self.client.post(reverse("account"), self.account_payload())
         self.assertRedirects(response, reverse("account"))
         self.reader.northbound_profile.refresh_from_db()
         self.assertEqual(self.reader.northbound_profile.discord_username, "updated.reader")
 
-        response = self.client.post(reverse("account"), self.account_payload(discord_username=""))
-        self.assertRedirects(response, reverse("account"))
+        response = self.client.post(reverse("account"), self.account_payload(display_name=""))
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response.context["form"], "display_name", "This field is required.")
         self.reader.northbound_profile.refresh_from_db()
-        self.assertEqual(self.reader.northbound_profile.discord_username, "")
+        self.assertEqual(self.reader.northbound_profile.discord_username, "updated.reader")
 
-    def test_visibility_preference_defaults_private_and_user_can_change_it(self):
+    def test_legacy_visibility_flag_cannot_be_changed_from_account(self):
         self.assertFalse(self.reader.northbound_profile.discord_username_is_public)
         self.client.force_login(self.reader)
         profile_url = reverse(
@@ -85,7 +87,7 @@ class DiscordUsernameTests(TestCase):
         )
         self.assertRedirects(response, reverse("account"))
         self.reader.northbound_profile.refresh_from_db()
-        self.assertTrue(self.reader.northbound_profile.discord_username_is_public)
+        self.assertFalse(self.reader.northbound_profile.discord_username_is_public)
 
         response = self.client.post(reverse("account"), self.account_payload())
         self.assertRedirects(response, reverse("account"))
@@ -103,7 +105,7 @@ class DiscordUsernameTests(TestCase):
         )
         response = self.client.post(
             edit_url,
-            self.account_payload(discord_username="corrected.reader"),
+            self.account_payload(display_name="corrected.reader"),
         )
         self.assertRedirects(response, reverse("config-user-detail", kwargs={"pk": original_user_id}))
         self.reader.refresh_from_db()
@@ -112,7 +114,7 @@ class DiscordUsernameTests(TestCase):
         self.assertEqual(self.reader_membership.pk, original_membership_id)
         self.assertEqual(self.reader.northbound_profile.discord_username, "corrected.reader")
         audit = AuditEvent.objects.get(action="account.identity_updated", object_id=str(original_user_id))
-        self.assertIn("Discord username", audit.summary)
+        self.assertIn("Display Name", audit.summary)
         self.assertNotIn("corrected.reader", audit.summary)
 
     def test_platform_owner_cannot_change_visibility_preference(self):
@@ -122,7 +124,7 @@ class DiscordUsernameTests(TestCase):
         response = self.client.post(
             reverse("config-user-edit", kwargs={"pk": self.reader.pk}),
             self.account_payload(
-                discord_username="corrected.reader",
+                display_name="corrected.reader",
                 discord_username_is_public="on",
             ),
         )
@@ -139,7 +141,7 @@ class DiscordUsernameTests(TestCase):
         self.assertContains(self.client.get(url), "northbound.reader")
 
         self.client.force_login(self.other_reader)
-        self.assertNotContains(self.client.get(url), "northbound.reader")
+        self.assertContains(self.client.get(url), "northbound.reader")
 
         profile = self.reader.northbound_profile
         profile.discord_username_is_public = True
@@ -157,7 +159,7 @@ class DiscordUsernameTests(TestCase):
                 self.assertContains(self.client.get(url), "northbound.reader")
 
         self.client.force_login(self.other_reader)
-        self.assertNotContains(self.client.get(url), "northbound.reader")
+        self.assertContains(self.client.get(url), "northbound.reader")
 
     def test_group_and_challenge_staff_have_no_account_edit_authority(self):
         edit_url = reverse("config-user-edit", kwargs={"pk": self.reader.pk})
