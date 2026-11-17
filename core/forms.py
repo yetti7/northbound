@@ -2,7 +2,7 @@ from django import forms
 from django.forms import BaseFormSet, formset_factory
 from django.core import signing
 from django.core.validators import URLValidator
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import transaction
 from django.utils.text import slugify
@@ -10,6 +10,7 @@ from django.conf import settings
 from zoneinfo import available_timezones
 
 from .models import BookSubmission, BotmBook, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverOAuthApplication, Membership, MonthEnrollment, MonthTheme, PlatformBackupSettings, PlatformSettings, ProgressCheckpoint, ReaderHardcoverSyncPreference, ReadingGroup, Team, TeamAssignment, ThemeClaim, UserProfile, normalize_book_identity
+from .identity import IdentifierValidationMixin, resolve_identifier, public_name_order, lock_identifier_writes, validate_identifiers
 from .permissions import DELEGABLE_CAPABILITIES
 from .widgets import MidnightDateTimeInput
 
@@ -72,7 +73,27 @@ class AvatarFieldsMixin(forms.Form):
         return profile
 
 
-class RootAuthenticationForm(AuthenticationForm):
+class IdentifierAuthenticationForm(AuthenticationForm):
+    username = forms.CharField(label="Username or Email", max_length=254)
+
+    def clean(self):
+        identifier = self.cleaned_data.get("username")
+        password = self.cleaned_data.get("password")
+        if identifier and password:
+            user_id = resolve_identifier(identifier)
+            candidate = get_user_model().objects.filter(pk=user_id).first() if user_id else None
+            if candidate is None:
+                # Match Django's unknown-user password hashing work.
+                get_user_model()().set_password(password)
+                raise self.get_invalid_login_error()
+            self.user_cache = authenticate(self.request, username=candidate.username, password=password)
+            if self.user_cache is None:
+                raise self.get_invalid_login_error()
+            self.confirm_login_allowed(self.user_cache)
+        return self.cleaned_data
+
+
+class RootAuthenticationForm(IdentifierAuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
         "not_root": "The credentials entered are not authorized for platform owner access.",
@@ -81,10 +102,10 @@ class RootAuthenticationForm(AuthenticationForm):
     def confirm_login_allowed(self, user):
         super().confirm_login_allowed(user)
         if not user.is_superuser:
-            raise forms.ValidationError(self.error_messages["not_root"], code="not_root")
+            raise self.get_invalid_login_error()
 
 
-class RegularAuthenticationForm(AuthenticationForm):
+class RegularAuthenticationForm(IdentifierAuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
         "root_account": "Platform owner accounts must use the separate owner sign-in.",
@@ -93,86 +114,91 @@ class RegularAuthenticationForm(AuthenticationForm):
     def confirm_login_allowed(self, user):
         super().confirm_login_allowed(user)
         if user.is_superuser:
-            raise forms.ValidationError(self.error_messages["root_account"], code="root_account")
+            raise self.get_invalid_login_error()
 
 
-class AccountProfileForm(AvatarFieldsMixin, forms.ModelForm):
-    discord_username = forms.CharField(
-        label="Discord Username",
-        required=False,
-        max_length=100,
-        help_text="Optional. Shared with appropriate Group and Challenge staff for registration and team planning.",
-    )
-    discord_username_is_public = forms.BooleanField(
-        label="Make Discord username public",
-        required=False,
-        help_text="Allow other members of your Groups to see it on your Group Participant Profile.",
-    )
+class AccountProfileForm(IdentifierValidationMixin, AvatarFieldsMixin, forms.ModelForm):
+    display_name = forms.CharField(label="Display Name", max_length=100)
 
     class Meta:
         model = get_user_model()
         fields = ("username", "first_name", "last_name", "email")
-        labels = {"first_name": "First Name", "last_name": "Last Name"}
-
-    def clean_email(self):
-        email = self.cleaned_data["email"].strip()
-        if not email:
-            raise forms.ValidationError("An email address is required for account recovery.")
-        return email
+        labels = {"first_name": "First Name (Optional)", "last_name": "Last Name (Optional)"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["email"].required = True
         self.setup_avatar_fields(self.instance)
-        if self.instance.pk:
-            profile, _ = UserProfile.objects.get_or_create(user=self.instance)
-            self.fields["discord_username"].initial = profile.discord_username
-            self.fields["discord_username_is_public"].initial = profile.discord_username_is_public
+        profile, _ = UserProfile.objects.get_or_create(user=self.instance)
+        self.fields["display_name"].initial = profile.discord_username
 
+    @transaction.atomic
     def save(self, commit=True):
-        user = super().save(commit=commit)
+        if not commit:
+            raise ValueError("Account profile updates must be committed atomically.")
+        user = super().save(commit=True)
         profile = self.save_avatar(user)
-        profile.discord_username = self.cleaned_data["discord_username"]
-        profile.discord_username_is_public = self.cleaned_data["discord_username_is_public"]
-        profile.save(update_fields=["discord_username", "discord_username_is_public"])
-        return user
-
-
-class PlatformAccountIdentityForm(forms.ModelForm):
-    discord_username = forms.CharField(
-        label="Discord Username",
-        required=False,
-        max_length=100,
-        help_text="Optional reusable profile data. This does not change Group access or participation.",
-    )
-
-    class Meta:
-        model = get_user_model()
-        fields = ("username", "first_name", "last_name", "email")
-        labels = {"first_name": "First Name", "last_name": "Last Name"}
-
-    def clean_email(self):
-        email = self.cleaned_data["email"].strip()
-        if not email:
-            raise forms.ValidationError("An email address is required for account recovery.")
-        if get_user_model().objects.filter(email__iexact=email).exclude(pk=self.instance.pk).exists():
-            raise forms.ValidationError("An account with this email address already exists.")
-        return email
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if self.instance.pk:
-            profile, _ = UserProfile.objects.get_or_create(user=self.instance)
-            self.fields["discord_username"].initial = profile.discord_username
-
-    def save(self, commit=True):
-        user = super().save(commit=commit)
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-        profile.discord_username = self.cleaned_data["discord_username"]
+        profile.discord_username = self.cleaned_data["display_name"]
         profile.save(update_fields=["discord_username"])
         return user
 
 
-class FirstRunSetupForm(UserCreationForm):
+class PlatformAccountIdentityForm(IdentifierValidationMixin, forms.ModelForm):
+    display_name = forms.CharField(label="Display Name", max_length=100)
+
+    class Meta:
+        model = get_user_model()
+        fields = ("username", "first_name", "last_name", "email")
+        labels = {"first_name": "First Name (Optional)", "last_name": "Last Name (Optional)"}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["email"].required = True
+        profile, _ = UserProfile.objects.get_or_create(user=self.instance)
+        self.fields["display_name"].initial = profile.discord_username
+
+    @transaction.atomic
+    def save(self, commit=True):
+        user = super().save(commit=commit)
+        if commit:
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.discord_username = self.cleaned_data["display_name"]
+            profile.save(update_fields=["discord_username"])
+        return user
+
+
+class DisplayNameConfirmationForm(forms.Form):
+    display_name = forms.CharField(label="Display Name", max_length=100)
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        self.fields["display_name"].initial = profile.discord_username
+
+    @transaction.atomic
+    def save(self):
+        from django.utils import timezone
+        profile, _ = UserProfile.objects.select_for_update().get_or_create(user=self.user)
+        profile.discord_username = self.cleaned_data["display_name"]
+        if profile.display_name_confirmed_at is None:
+            profile.display_name_confirmed_at = timezone.now()
+        profile.save(update_fields=["discord_username", "display_name_confirmed_at"])
+        return profile
+
+
+class NewAccountIdentityMixin(IdentifierValidationMixin, forms.Form):
+    display_name = forms.CharField(label="Display Name", max_length=100)
+
+    def save_identity(self, user):
+        from django.utils import timezone
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.discord_username = self.cleaned_data["display_name"]
+        profile.display_name_confirmed_at = timezone.now()
+        profile.save(update_fields=["discord_username", "display_name_confirmed_at"])
+
+
+class FirstRunSetupForm(NewAccountIdentityMixin, UserCreationForm):
     email = forms.EmailField()
 
     class Meta(UserCreationForm.Meta):
@@ -185,6 +211,7 @@ class FirstRunSetupForm(UserCreationForm):
             raise forms.ValidationError("An account with this email address already exists.")
         return email
 
+    @transaction.atomic
     def save(self, commit=True):
         user = super().save(commit=False)
         user.email = self.cleaned_data["email"]
@@ -192,6 +219,7 @@ class FirstRunSetupForm(UserCreationForm):
         user.is_superuser = True
         if commit:
             user.save()
+            self.save_identity(user)
         return user
 
 
@@ -233,7 +261,7 @@ class PlatformOwnerStatusForm(forms.Form):
         return password
 
 
-class PlatformOwnerAcceptanceForm(UserCreationForm):
+class PlatformOwnerAcceptanceForm(NewAccountIdentityMixin, UserCreationForm):
     email = forms.EmailField()
 
     class Meta(UserCreationForm.Meta):
@@ -246,6 +274,7 @@ class PlatformOwnerAcceptanceForm(UserCreationForm):
             raise forms.ValidationError("An account with this email address already exists.")
         return email
 
+    @transaction.atomic
     def save(self, commit=True):
         user = super().save(commit=False)
         user.email = self.cleaned_data["email"]
@@ -253,6 +282,7 @@ class PlatformOwnerAcceptanceForm(UserCreationForm):
         user.is_superuser = True
         if commit:
             user.save()
+            self.save_identity(user)
         return user
 
 
@@ -287,6 +317,22 @@ class PlatformBackupSettingsForm(forms.ModelForm):
 
 
 class PlatformSettingsForm(forms.ModelForm):
+    discord_notifications_override = forms.TypedChoiceField(
+        label="Global Discord Notifications", choices=(("on", "On"), ("off", "Off")),
+        coerce=lambda value: value == "on",
+        help_text="Enable or disable Discord notifications across Northbound. Individual Group notification settings remain unchanged.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        value = self.instance.discord_notifications_override
+        if value is None:
+            value = settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED
+        self.initial["discord_notifications_override"] = "on" if value else "off"
+        # A settings form opened before the upgrade must not reset the new policy.
+        if self.is_bound and "discord_notifications_override" not in self.data:
+            self.fields.pop("discord_notifications_override")
+
     timezone = forms.ChoiceField(
         label="Platform Timezone",
         choices=[(name, name) for name in sorted(available_timezones())],
@@ -300,6 +346,7 @@ class PlatformSettingsForm(forms.ModelForm):
             "timezone",
             "allow_public_registration",
             "allow_user_group_creation",
+            "discord_notifications_override",
         )
         labels = {
             "display_name": "Platform Display Name",
@@ -347,7 +394,7 @@ class HardcoverOAuthApplicationForm(forms.ModelForm):
         return cleaned
 
 
-class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):
+class PublicRegistrationForm(NewAccountIdentityMixin, AvatarFieldsMixin, UserCreationForm):
     email = forms.EmailField()
 
     class Meta(UserCreationForm.Meta):
@@ -358,11 +405,13 @@ class PublicRegistrationForm(AvatarFieldsMixin, UserCreationForm):
         super().__init__(*args, **kwargs)
         self.setup_avatar_fields()
 
+    @transaction.atomic
     def save(self, commit=True):
         user = super().save(commit=False)
         user.email = self.cleaned_data["email"]
         if commit:
             user.save()
+            self.save_identity(user)
             self.save_avatar(user)
         return user
 
@@ -595,7 +644,7 @@ class ChallengeCreateForm(forms.Form):
         self.fields["hosts"].queryset = group.memberships.filter(
             is_active=True,
             user__is_superuser=False,
-        ).order_by("user__username", "pk")
+        ).order_by(public_name_order('user'), "pk")
 
     def save(self, *, created_by):
         with transaction.atomic():
@@ -883,10 +932,10 @@ ChallengeSignupQuestionFormSet = formset_factory(
 
 class ChallengeRegistrationForm(forms.Form):
     discord_username = forms.CharField(
-        label="Discord Username (Optional)",
+        label="Display Name",
         required=False,
         max_length=100,
-        help_text="Saved as reusable profile data. This does not change your public/private preference.",
+        help_text="Your public name throughout Northbound.",
     )
 
     def __init__(self, *args, month, profile, enrollment=None, include_discord=True, answers_editable=True, **kwargs):
@@ -1299,7 +1348,7 @@ class GameRewardApplyForm(forms.Form):
                 team_id__in=host_teams, ended_at__isnull=True,
             ).values("participant_id"))
             teams = teams.filter(pk__in=host_teams)
-        self.fields["target_participant"].queryset = participants.order_by("user__username", "pk")
+        self.fields["target_participant"].queryset = participants.order_by(public_name_order('user'), "pk")
         self.fields["target_team"].queryset = teams.order_by("name", "pk")
 
     def clean_amount(self):
@@ -1470,9 +1519,10 @@ class TeamForm(forms.ModelForm):
         widgets = {"color": forms.TextInput(attrs={"type": "color"})}
 
 
-class MemberCreateForm(forms.Form):
+class MemberCreateForm(IdentifierValidationMixin, forms.Form):
+    display_name = forms.CharField(label="Display Name", max_length=100)
     username = forms.CharField(max_length=150)
-    email = forms.EmailField(required=False)
+    email = forms.EmailField()
     role = forms.ChoiceField(choices=Membership.Role.choices, initial=Membership.Role.MEMBER)
     temporary_password = forms.CharField(label="Temporary Password", widget=forms.PasswordInput, min_length=12)
 
@@ -1491,11 +1541,15 @@ class MemberCreateForm(forms.Form):
 
     @transaction.atomic
     def save(self, group):
+        lock_identifier_writes()
+        validate_identifiers(self.cleaned_data["username"], self.cleaned_data["email"])
         user = get_user_model().objects.create_user(
             username=self.cleaned_data["username"],
             email=self.cleaned_data["email"],
             password=self.cleaned_data["temporary_password"],
         )
+        from django.utils import timezone
+        UserProfile.objects.update_or_create(user=user, defaults={"discord_username": self.cleaned_data["display_name"], "display_name_confirmed_at": timezone.now()})
         return Membership.objects.create(
             group=group,
             user=user,

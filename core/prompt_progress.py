@@ -1,4 +1,5 @@
 """Read-only prompt progress, scoped before any private claim is fetched."""
+from .identity import public_name_order
 from django.core.exceptions import PermissionDenied
 from django.db.models import Prefetch, Q, F
 from .models import (PromptCategory,ChallengePrompt,PromptClaim,PromptCompletion,MonthEnrollment,TeamAssignment,Membership)
@@ -37,7 +38,7 @@ def enrollments_and_scope(user,month,*,staff=False):
     if scope is None:raise PermissionDenied
     if scope[0]=='team':
         query=query.filter(is_active=True,participant_id__in=TeamAssignment.objects.filter(month=month,ended_at__isnull=True,team_id__in=scope[1]).values('participant_id'))
-    return query.order_by('participant__user__username','pk'),scope
+    return query.order_by(public_name_order('participant__user'),'pk'),scope
 
 
 def enrollments(user,month,*,staff=False):

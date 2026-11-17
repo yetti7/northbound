@@ -33,6 +33,7 @@ class UserProfile(models.Model):
     discord_username = models.CharField(max_length=100, blank=True)
     discord_username_is_public = models.BooleanField(default=False)
     must_change_password = models.BooleanField(default=False)
+    display_name_confirmed_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     @property
     def avatar_url(self):
@@ -97,6 +98,7 @@ def default_platform_timezone():
 
 
 class PlatformSettings(models.Model):
+    discord_notifications_override = models.BooleanField(null=True, default=None, blank=True)
     display_name = models.CharField(max_length=120, default="My Northbound")
     timezone = models.CharField(max_length=64, default=default_platform_timezone)
     allow_public_registration = models.BooleanField(default=True)
@@ -563,7 +565,7 @@ class Membership(models.Model):
         return user.username[:cls._meta.get_field("display_name").max_length]
 
     def __str__(self):
-        return f"{self.user.username} — {self.group}"
+        return f"{self.user.public_name} — {self.group}"
 
 
 DEFAULT_REGISTRATION_AGREEMENT = (

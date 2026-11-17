@@ -18,7 +18,7 @@
       <div class="host-picker-row">
         <select id="host-picker" data-host-picker>
           <option value="">Select a Group member</option>
-          {% for membership in eligible_hosts %}<option value="{{ membership.pk }}">{{ membership.user.username }}</option>{% endfor %}
+          {% for membership in eligible_hosts %}<option value="{{ membership.pk }}">{{ membership.user.public_name }}</option>{% endfor %}
         </select>
         <button class="button" type="button" data-add-host disabled>Add Host</button>
       </div>

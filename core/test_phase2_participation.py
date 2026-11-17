@@ -134,7 +134,7 @@ class SelfRegistrationAndParticipationTests(TestCase):
                 self.assertEqual(MonthEnrollment.objects.filter(month=month, participant=self.reader).count(), 1)
                 self.assertEqual(MonthEnrollment.objects.get(month=month, participant=self.reader).pk, enrollment_pk)
                 self.assertFalse(MonthEnrollment.objects.filter(month=month, participant=self.other).exists())
-                self.assertContains(self.client.get(month.get_absolute_url()), ">Withdraw</a>", html=False)
+                self.assertContains(self.client.get(month.get_absolute_url()), ">Withdraw from Challenge</a>", html=False)
 
     def test_closed_registration_blocks_self_registration(self):
         self.client.force_login(self.reader_user)
@@ -158,7 +158,7 @@ class SelfRegistrationAndParticipationTests(TestCase):
                     "challenge-withdraw",
                     kwargs={"group_slug": self.group.slug, "month_pk": month.pk},
                 )
-                self.assertContains(self.client.get(month.get_absolute_url()), ">Withdraw</a>", html=False)
+                self.assertContains(self.client.get(month.get_absolute_url()), ">Withdraw from Challenge</a>", html=False)
                 self.assertRedirects(self.client.post(withdraw_url), month.get_absolute_url())
                 enrollment.refresh_from_db()
                 self.assertFalse(enrollment.is_active)
@@ -176,7 +176,7 @@ class SelfRegistrationAndParticipationTests(TestCase):
                     "challenge-withdraw",
                     kwargs={"group_slug": self.group.slug, "month_pk": month.pk},
                 )
-                self.assertNotContains(self.client.get(month.get_absolute_url()), ">Withdraw</a>", html=False)
+                self.assertNotContains(self.client.get(month.get_absolute_url()), ">Withdraw from Challenge</a>", html=False)
                 self.assertRedirects(self.client.post(withdraw_url), month.get_absolute_url())
                 enrollment.refresh_from_db()
                 self.assertTrue(enrollment.is_active)

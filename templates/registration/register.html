@@ -5,6 +5,7 @@
 <form method="post" enctype="multipart/form-data" class="stacked-form standard-form">{% csrf_token %}
   {{ form.non_field_errors }}
   <p>{{ form.username.label_tag }}{{ form.username }}{{ form.username.errors }}<span class="helptext">{{ form.username.help_text }}</span></p>
+  <p>{{ form.display_name.label_tag }}{{ form.display_name }}{{ form.display_name.errors }}</p>
   <p>{{ form.email.label_tag }}{{ form.email }}{{ form.email.errors }}</p>
   <p>{{ form.password1.label_tag }}{{ form.password1 }}{{ form.password1.errors }}<span class="helptext">{{ form.password1.help_text }}</span></p>
   <p>{{ form.password2.label_tag }}{{ form.password2 }}{{ form.password2.errors }}<span class="helptext">{{ form.password2.help_text }}</span></p>

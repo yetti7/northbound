@@ -11,6 +11,7 @@ import hashlib
 import inspect
 import uuid
 
+from .discord_policy import POLICY_BLOCKS, delivery_policy
 from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
@@ -230,7 +231,10 @@ def eligible(row, schedule, now):
     if row.category not in schedule.immediate_categories:
         return 'category_disabled'
     config = schedule.configuration
-    if not config.group.is_active or _blocking_reason(config,row.destination):
+    reason = _blocking_reason(config,row.destination)
+    if reason in POLICY_BLOCKS:
+        return reason
+    if not config.group.is_active or reason:
         return 'destination_disabled'
     if fingerprint(config,row.destination) != row.webhook_fingerprint:
         return 'webhook_changed'
@@ -325,6 +329,8 @@ def deliver_event(pk, *, now=None):
         schedule=DiscordReportSchedule.objects.select_related('configuration__group').filter(
             configuration__group_id=row.group_id,destination=row.destination).first()
         reason=eligible(row,schedule,now)
+        if reason in POLICY_BLOCKS:
+            return 'environment_disabled'
         if reason:
             DiscordEventDelivery.objects.filter(pk=pk,state='pending').update(state='skipped',failure_category=reason,finished_at=now)
             return 'skipped'
@@ -344,15 +350,18 @@ def deliver_event(pk, *, now=None):
         schedule=DiscordReportSchedule.objects.select_related('configuration__group').get(
             configuration__group_id=row.group_id,destination=row.destination)
         failure=eligible(row,schedule,timezone.now())
-        if not settings.NORTHBOUND_DISCORD_EVENTS_ENABLED or not discord.delivery_enabled():failure='environment_disabled'
+        if not settings.NORTHBOUND_DISCORD_EVENTS_ENABLED:failure='environment_disabled'
+        elif not discord.delivery_enabled():failure=delivery_policy().blocking_reason or 'policy_unavailable'
         payload=event_payload(row) if not failure else None
         url,error=_webhook(schedule.configuration,row.destination) if not failure else ('','')
         failure=failure or error
-        if failure:status='skipped'
+        if failure:status=failure if failure in POLICY_BLOCKS else 'skipped'
         else:
             from .discord_eligibility import payload_eligible
             if not DiscordEventDelivery.objects.filter(pk=pk,state='claimed',claim_id=claim).exists() or not payload_eligible(payload):
-                status='skipped';failure='challenge_opted_out'
+                policy = delivery_policy()
+                status=policy.blocking_reason if not policy.allowed else 'skipped'
+                failure=status if status in POLICY_BLOCKS else 'challenge_opted_out'
             else:
                 status,delay=discord.send_webhook(url,payload,detailed=True,retryable=True)
             failure='' if status=='sent' else failure or status
@@ -361,6 +370,13 @@ def deliver_event(pk, *, now=None):
     state='sent' if status=='sent' else 'skipped' if status=='skipped' else \
         'pending' if status in {'rate_limited','server_error'} and row.attempts<MAX_ATTEMPTS else \
         'uncertain' if status in {'timeout','network_error','uncertain'} else 'failed'
+    if status in POLICY_BLOCKS:
+        # A suppressed request is not an uncertain network failure or a retry.
+        with transaction.atomic():
+            DiscordEventDelivery.objects.filter(pk=pk,state='claimed',claim_id=claim).update(
+                state='pending', claim_id=None, claimed_at=None, attempts=row.attempts-1,
+                failure_category=failure, finished_at=None)
+        return 'pending'
     with transaction.atomic():
         updated=DiscordEventDelivery.objects.filter(pk=pk,state='claimed',claim_id=claim).update(state=state,
             failure_category=failure,finished_at=None if state=='pending' else now,
@@ -402,7 +418,7 @@ def event_diagnostics(group,destination):
     readiness='Disabled — immediate notifications are disabled in preferences.'
     if enabled:
         if reason:readiness='Paused — '+FAILURES[reason]
-        elif not active:readiness='Paused — global immediate delivery gate is disabled.'
+        elif not active:readiness='Paused — immediate-event worker capability is unavailable.'
         elif not worker_active:readiness='Worker inactive — no recent recurring event-worker heartbeat.'
         else:readiness='Running — recent recurring event-worker heartbeat.'
     return {'readiness':readiness,'global_enabled':active,'worker_active':worker_active,'enabled':bool(schedule and schedule.immediate_enabled),'worker':

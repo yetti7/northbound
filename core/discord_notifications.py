@@ -19,6 +19,7 @@ from django.views.decorators.debug import sensitive_variables
 from .integrations.secrets import encrypt_token, decrypt_token, TokenDecryptionError
 from .models import (AuditEvent, BookSubmission, ChallengeMonth, DiscordDigestDelivery,
                      GroupDiscordNotification, ReadingGroup, ThemeClaim)
+from .discord_policy import delivery_policy
 from .permissions import can_configure_discord_notifications
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,10 @@ def send_webhook(url, payload, *, detailed=False, retryable=False):
         validate_webhook(url)
         request = Request(url, data=json.dumps(payload).encode(),
             headers={'Content-Type': 'application/json', 'User-Agent': 'Northbound review digest'}, method='POST')
+        # Re-read for every POST, including generic tests and multipart pages.
+        policy = delivery_policy()
+        if not policy.allowed:
+            return (policy.blocking_reason if detailed else 'disabled'), 0
         with build_opener(NoRedirect()).open(request, timeout=10) as response:
             return ('sent', 0) if 200 <= response.status < 300 else ('rejected' if detailed else 'failed', 0)
     except HTTPError as exc:
@@ -252,8 +257,7 @@ def send_webhook(url, payload, *, detailed=False, retryable=False):
 
 
 def delivery_enabled():
-    return (settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED and
-        (not (settings.DEBUG or settings.NORTHBOUND_DEVELOPMENT_BANNER) or settings.NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT))
+    return delivery_policy().allowed
 
 
 @sensitive_variables()

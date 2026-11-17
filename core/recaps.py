@@ -105,11 +105,11 @@ def filter_choices(viewer, *, perspective='reader', group_id=None, challenge_id=
         # Reader audience checks currently depend on the team, not the individual.
         score_access = {team.pk: can_view_reader_scores(viewer, month, team=team) for team in month_teams}
         score_access[None] = can_view_reader_scores(viewer, month)
-        for member in Membership.objects.filter(group=month.group, month_enrollments__month=month).select_related('user').distinct():
+        for member in Membership.objects.filter(group=month.group, month_enrollments__month=month).select_related('user__northbound_profile').distinct():
             team_id = current.get(member.pk)
             if (member.user_id != viewer.pk and score_access.get(team_id, False)
                     and (broad_details or roster_read_scope_includes(scope, team_id))):
-                readers[member.user_id] = member.user.username
+                readers[member.user_id] = member.user.public_name
     return {'groups': list(groups.items()), 'challenges': challenges, 'readers': sorted(readers.items(), key=lambda row: (row[1].casefold(), row[0])), 'teams': teams}
 
 
@@ -200,7 +200,7 @@ def _team_members(month):
     current = dict(TeamAssignment.objects.filter(month=month, ended_at__isnull=True,
         team__month=month).values_list('participant_id', 'team_id'))
     result = {}
-    for enrollment in month.enrollments.filter(participant__group_id=month.group_id).select_related('participant__user'):
+    for enrollment in month.enrollments.filter(participant__group_id=month.group_id).select_related('participant__user__northbound_profile'):
         team_id = current.get(enrollment.participant_id) if enrollment.is_active else None
         if not enrollment.is_active or enrollment.awaiting_scoring_team:
             team_id = current.get(enrollment.participant_id) or enrollment.credited_team_id
@@ -270,7 +270,7 @@ def build_recap(*, viewer, perspective='reader', target_id=None, group_id=None, 
             cards, works = _reading_cards(month, [member.pk], bounds, achievements=True)
             score = challenge_score_totals(month=month, participant_ids=[member.pk], effective_from=bounds[0], effective_to=bounds[1])[member.pk]
             base['cards'] = cards + _score_cards(score)
-            base['subject'] = f'{member.user.username} — My Reading'
+            base['subject'] = f'{member.user.public_name} — My Reading'
             all_works.update(works)
             for card in base['cards']:
                 if card['key'] != 'works':
@@ -333,8 +333,8 @@ def build_recap(*, viewer, perspective='reader', target_id=None, group_id=None, 
                            or m.user_id == viewer.pk or broad_details
                            or roster_read_scope_includes(scope, current.get(m.pk))]
                 scores = challenge_score_totals(month=month, participant_ids=[m.pk for m in allowed], effective_from=bounds[0], effective_to=bounds[1])
-                allowed.sort(key=lambda m: (-scores[m.pk]['total_pages'], m.user.username.casefold(), m.pk))
-                section['contributions'] = [{'reader': m.user.username, 'points': scores[m.pk]['total_pages']} for m in allowed]
+                allowed.sort(key=lambda m: (-scores[m.pk]['total_pages'], m.user.public_name.casefold(), m.pk))
+                section['contributions'] = [{'reader': m.user.public_name, 'points': scores[m.pk]['total_pages']} for m in allowed]
             if section['cards'] or section['contributions']:
                 if include_book_highlights:
                     section['books'] = _book_highlights(viewer, month, [m.pk for m in members], bounds)
@@ -342,7 +342,7 @@ def build_recap(*, viewer, perspective='reader', target_id=None, group_id=None, 
     summary = [_card(key, row['label'], row['value']) for key, row in combined.items()] if perspective in {'reader', 'challenge'} and len(sections) > 1 else []
     if summary and all_works:
         summary.append(_card('works', 'Verified catalog works across selected Challenges', len(all_works), 'Only trusted identities; not a universal books-read total.'))
-    heading = (f'{viewer.username} — My Reading' if target_id == viewer.pk else sections[0]['subject'] if sections else 'My Reading') if perspective == 'reader' else ('Team Wide' if perspective == 'team' else 'Challenge Wide')
+    heading = (f'{viewer.public_name} — My Reading' if target_id == viewer.pk else sections[0]['subject'] if sections else 'My Reading') if perspective == 'reader' else ('Team Wide' if perspective == 'team' else 'Challenge Wide')
     labels = {s['group'] for s in sections}
     if perspective != 'reader' and len(labels) == 1:
         heading = f'{next(iter(labels))} — {"Team Wrapped" if perspective == "team" else "Challenge Wrapped"}'

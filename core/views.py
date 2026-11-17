@@ -39,9 +39,10 @@ from pathlib import Path
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from .forms import AccountProfileForm, BookSubmissionForm, BotmBookForm, BotmReactivateForm, ChallengeAnnouncementForm, ChallengeBotmSettingsForm, ChallengeCreateForm, ChallengeFloaterAssignmentForm, ChallengeGamesSettingsForm, ChallengeGeneralSettingsForm, ChallengeHostAssignmentForm, ChallengeMonthForm, ChallengeRegistrationForm, ChallengeRegistrationSettingsForm, ChallengeScheduleForm, ChallengeSignupQuestionFormSet, ChallengeTbrSettingsForm, ChallengeTeamLeaderAssignmentForm, CompetitionVisibilityForm, FirstRunSetupForm, GameForm, GameRewardApplyForm, GameRewardVoidForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, HardcoverOAuthApplicationForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PersonalTbrRegistrationBookFormSet, PlatformAccountIdentityForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformSettingsForm, ProgressCheckpointFormSet, PublicRegistrationForm, ReaderHardcoverConnectionForm, ReaderHardcoverSyncPreferenceForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, ThemeClaimReviewForm
+from .forms import DisplayNameConfirmationForm, AccountProfileForm, BookSubmissionForm, BotmBookForm, BotmReactivateForm, ChallengeAnnouncementForm, ChallengeBotmSettingsForm, ChallengeCreateForm, ChallengeFloaterAssignmentForm, ChallengeGamesSettingsForm, ChallengeGeneralSettingsForm, ChallengeHostAssignmentForm, ChallengeMonthForm, ChallengeRegistrationForm, ChallengeRegistrationSettingsForm, ChallengeScheduleForm, ChallengeSignupQuestionFormSet, ChallengeTbrSettingsForm, ChallengeTeamLeaderAssignmentForm, CompetitionVisibilityForm, FirstRunSetupForm, GameForm, GameRewardApplyForm, GameRewardVoidForm, GroupAccessCodeForm, GroupCreateForm, GroupEditForm, GroupJoinForm, HardcoverConnectionForm, HardcoverOAuthApplicationForm, MemberCreateForm, MembershipPermissionsForm, MembershipRoleForm, MonthEnrollmentForm, MonthParticipantEditForm, MonthThemeForm, PersonalTbrRegistrationBookFormSet, PlatformAccountIdentityForm, PlatformBackupSettingsForm, PlatformOwnerAcceptanceForm, PlatformOwnerInvitationForm, PlatformSettingsForm, ProgressCheckpointFormSet, PublicRegistrationForm, ReaderHardcoverConnectionForm, ReaderHardcoverSyncPreferenceForm, RootAuthenticationForm, SubmissionReviewForm, TeamAssignmentForm, TeamForm, ThemeClaimReviewForm
 from .integrations.hardcover import HardcoverConnectionError, HardcoverLinkError, list_book_editions, lookup_edition, lookup_hardcover_url, resolve_scoring_edition, search_books, test_catalog_connection
 from .integrations.secrets import TokenDecryptionError, decrypt_token, encrypt_token
+from .identity import public_name_order, public_name_expression
 from .models import AuditEvent, BookSubmission, BotmBook, BotmCompletionAward, BotmMatch, CatalogEdition, ChallengeMonth, ChallengeSignupAnswer, ChallengeSignupQuestion, ChallengeStaffAssignment, Game, GameRewardApplication, HardcoverConnection, HardcoverOAuthApplication, Membership, ModifierProvenance, MonthEnrollment, MonthTheme, PersonalTBR, PersonalTBRBook, PersonalTBRCompletionAward, PersonalTBRMatch, PlatformBackupSettings, PlatformOwnerInvitation, ProgressCheckpoint, ProgressCheckpointResult, ReaderHardcoverConnection, ReaderHardcoverSyncPreference, ReadingGroup, RecoveryOperation, Team, TeamAssignment, ThemeClaim, UserProfile, audit_action_label, hash_platform_owner_invitation_token, safe_audit_summary
 from .permissions import (
     can_view_challenge_card_statistics, challenge_history_locked,
@@ -228,11 +229,28 @@ class NorthboundPasswordChangeView(PasswordChangeView):
 
 @login_required
 def account(request):
-    form = AccountProfileForm(request.POST or None, request.FILES or None, instance=request.user)
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    confirming = (profile.display_name_confirmed_at is None
+                  and (request.method != "POST" or "confirm_display_name" in request.POST
+                       or "username" not in request.POST))
+    form_class = DisplayNameConfirmationForm if confirming else AccountProfileForm
+    account_data = request.POST.copy() if request.method == "POST" else None
+    if account_data is not None and "discord_username" in account_data and "display_name" not in account_data:
+        account_data["display_name"] = account_data["discord_username"]
+    form = form_class(account_data,
+                      **({"user": request.user} if confirming else {"files": request.FILES or None, "instance": request.user}))
     if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Your account details were updated.")
-        return redirect("account")
+        try:
+            form.save()
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These account details could not be saved. Please check your sign-in identifiers and try again.")
+        else:
+            messages.success(request, "Your Display Name has been confirmed." if confirming else "Your account details were updated.")
+            if confirming:
+                request.session.pop("display_name_return_to", None)
+            return redirect("account")
+    if confirming:
+        return render(request, "core/display_name_confirmation.html", {"form": form})
     connection = ReaderHardcoverConnection.objects.filter(user=request.user).first()
     oauth_application = HardcoverOAuthApplication.objects.first()
     oauth_urls = canonical_oauth_urls()
@@ -242,6 +260,7 @@ def account(request):
     sync_write_available, sync_unavailable_reason = reader_sync_capability(connection)
     return render(request, "core/account.html", {
         "form": form,
+        "confirming_display_name": confirming,
         "reader_hardcover_form": ReaderHardcoverConnectionForm(),
         "reader_hardcover_connection": connection,
         "reader_hardcover_oauth_available": oauth_status["key"] == "configured",
@@ -737,7 +756,7 @@ def recovery_challenge_detail(request, pk):
     if denied:
         return denied
     month = get_object_or_404(ChallengeMonth.objects.select_related("group"), pk=pk)
-    enrollments = list(month.enrollments.select_related("participant__user").order_by("participant__user__username"))
+    enrollments = list(month.enrollments.select_related("participant__user__northbound_profile").order_by("participant__user__username"))
     host_ids = set(month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.HOST, ended_at__isnull=True,
     ).values_list("membership_id", flat=True))
@@ -803,7 +822,7 @@ def recovery_group_detail(request, pk):
     group = get_object_or_404(ReadingGroup, pk=pk)
     return render(request, "core/recovery_group_detail.html", {
         "group": group,
-        "memberships": group.memberships.select_related("user").order_by("user__username"),
+        "memberships": group.memberships.select_related("user__northbound_profile").order_by("user__username"),
     })
 
 
@@ -2153,7 +2172,7 @@ def recovery_hardcover_list(request):
         HardcoverConnection.objects.select_related("group").order_by("group__name", "pk")
     )
     reader_connections = list(
-        ReaderHardcoverConnection.objects.select_related("user").order_by("user__username", "pk")
+        ReaderHardcoverConnection.objects.select_related("user__northbound_profile").order_by("user__username", "pk")
     )
     for connection in (*group_connections, *reader_connections):
         connection.recovery_status = sanitized_credential_status(connection)
@@ -2221,7 +2240,7 @@ def recovery_reader_hardcover_clear(request, pk):
     if denied:
         return denied
     connection = get_object_or_404(
-        ReaderHardcoverConnection.objects.select_related("user"), pk=pk,
+        ReaderHardcoverConnection.objects.select_related("user__northbound_profile"), pk=pk,
     )
     return _recovery_credential_clear_page(
         request, connection=connection, owner_type="Reader",
@@ -2246,7 +2265,7 @@ def _platform_group_directory(group_slug=None):
         is_active=True,
         role=Membership.Role.OWNER,
         user__is_superuser=False,
-    ).select_related("user")
+    ).select_related("user__northbound_profile")
     current_months = ChallengeMonth.objects.exclude(
         status=ChallengeMonth.Status.ARCHIVED
     ).order_by("-starts_on")
@@ -2346,24 +2365,28 @@ def platform_owner_accept(request, token):
 
     form = PlatformOwnerAcceptanceForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
-            invitation = PlatformOwnerInvitation.objects.select_for_update().get(pk=invitation.pk)
-            if not invitation.is_valid:
-                return render(request, "core/platform_owner_invitation_invalid.html", status=410)
-            owner = form.save()
-            invitation.redeemed_at = timezone.now()
-            invitation.redeemed_by = owner
-            invitation.save(update_fields=["redeemed_at", "redeemed_by"])
-            AuditEvent.objects.create(
-                actor=owner,
-                action="platform.owner_invitation_redeemed",
-                object_type="PlatformOwnerInvitation",
-                object_id=str(invitation.pk),
-                summary=f"Redeemed a platform owner invitation as {owner.username}.",
-            )
-        login(request, owner)
-        messages.success(request, "Your Platform Owner account is ready.")
-        return redirect("config-dashboard")
+        try:
+            with transaction.atomic():
+                with transaction.atomic():
+                    invitation = PlatformOwnerInvitation.objects.select_for_update().get(pk=invitation.pk)
+                    if not invitation.is_valid:
+                        return render(request, "core/platform_owner_invitation_invalid.html", status=410)
+                    owner = form.save()
+                    invitation.redeemed_at = timezone.now()
+                    invitation.redeemed_by = owner
+                    invitation.save(update_fields=["redeemed_at", "redeemed_by"])
+                    AuditEvent.objects.create(
+                        actor=owner,
+                        action="platform.owner_invitation_redeemed",
+                        object_type="PlatformOwnerInvitation",
+                        object_id=str(invitation.pk),
+                        summary=f"Redeemed a platform owner invitation as {owner.username}.",
+                    )
+                login(request, owner)
+                messages.success(request, "Your Platform Owner account is ready.")
+                return redirect("config-dashboard")
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These sign-in identifiers could not be saved. Please review them and try again.")
     return render(request, "core/platform_owner_accept.html", {"form": form, "invitation": invitation})
 
 
@@ -2409,7 +2432,7 @@ def config_user_list(request):
 def config_user_detail(request, pk):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Platform owner access is required.")
-    account_user = get_object_or_404(get_user_model(), pk=pk, is_superuser=False)
+    account_user = get_object_or_404(get_user_model(), pk=pk)
     profile, _ = UserProfile.objects.get_or_create(user=account_user)
     current_statuses = (
         ChallengeMonth.Status.UPCOMING,
@@ -2448,36 +2471,40 @@ def config_user_edit(request, pk):
         "first_name": account_user.first_name,
         "last_name": account_user.last_name,
         "email": account_user.email,
-        "discord_username": UserProfile.objects.get_or_create(user=account_user)[0].discord_username,
+        "display_name": UserProfile.objects.get_or_create(user=account_user)[0].discord_username,
     }
     form = PlatformAccountIdentityForm(request.POST or None, instance=account_user)
     if request.method == "POST" and form.is_valid():
-        changes = []
-        field_labels = {
-            "username": "username",
-            "first_name": "first name",
-            "last_name": "last name",
-            "email": "email address",
-            "discord_username": "Discord username",
-        }
-        for field_name, label in field_labels.items():
-            if original_identity[field_name] != form.cleaned_data[field_name]:
-                changes.append(label)
-        with transaction.atomic():
-            updated = form.save()
-            if changes:
-                AuditEvent.objects.create(
-                    actor=request.user,
-                    action="account.identity_updated",
-                    object_type="User",
-                    object_id=str(updated.pk),
-                    summary=f"Updated identity fields for account {updated.username}: {', '.join(changes)}.",
-                )
-        if changes:
-            messages.success(request, f"Account identity for {updated.username} was updated.")
-        else:
-            messages.info(request, f"No identity changes were needed for {updated.username}.")
-        return redirect("config-user-detail", pk=updated.pk)
+        try:
+            with transaction.atomic():
+                changes = []
+                field_labels = {
+                    "username": "username",
+                    "first_name": "first name",
+                    "last_name": "last name",
+                    "email": "email address",
+                    "display_name": "Display Name",
+                }
+                for field_name, label in field_labels.items():
+                    if original_identity[field_name] != form.cleaned_data[field_name]:
+                        changes.append(label)
+                with transaction.atomic():
+                    updated = form.save()
+                    if changes:
+                        AuditEvent.objects.create(
+                            actor=request.user,
+                            action="account.identity_updated",
+                            object_type="User",
+                            object_id=str(updated.pk),
+                            summary=f"Updated identity fields for account {updated.username}: {', '.join(changes)}.",
+                        )
+                if changes:
+                    messages.success(request, f"Account identity for {updated.username} was updated.")
+                else:
+                    messages.info(request, f"No identity changes were needed for {updated.username}.")
+                return redirect("config-user-detail", pk=updated.pk)
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These sign-in identifiers could not be saved. Please review them and try again.")
     return render(request, "core/config_user_edit.html", {
         "account_user": account_user,
         "form": form,
@@ -2657,14 +2684,20 @@ def platform_general_settings(request):
             "timezone",
             "allow_public_registration",
             "allow_user_group_creation",
+            "discord_notifications_override",
         )
     }
     form = PlatformSettingsForm(request.POST or None, instance=platform_settings)
     if request.method == "POST" and form.is_valid():
         changed_fields = list(form.changed_data)
+        if (original_values["discord_notifications_override"] is None
+                and form.cleaned_data.get("discord_notifications_override") is not None
+                and "discord_notifications_override" not in changed_fields):
+            changed_fields.append("discord_notifications_override")
         form.save()
         if changed_fields:
             field_labels = {
+                "discord_notifications_override": "Global Discord notifications",
                 "display_name": "Platform display name",
                 "timezone": "Platform timezone",
                 "allow_public_registration": "Public registration",
@@ -2672,7 +2705,7 @@ def platform_general_settings(request):
             }
 
             def display_value(value):
-                return "Enabled" if value is True else "Disabled" if value is False else str(value)
+                return "Inherited from environment" if value is None else "Enabled" if value is True else "Disabled" if value is False else str(value)
 
             changes = "; ".join(
                 f"{field_labels[field]} changed from {display_value(original_values[field])} to "
@@ -2690,7 +2723,13 @@ def platform_general_settings(request):
         else:
             messages.info(request, "General Settings were already up to date.")
         return redirect("platform-general-settings")
-    return render(request, "core/platform_general_settings.html", {"form": form})
+    from .discord_policy import delivery_policy
+    from .discord_manual import FAILURES
+    policy = delivery_policy()
+    return render(request, "core/platform_general_settings.html", {
+        "form": form, "discord_policy": policy,
+        "discord_delivery_notice": FAILURES.get(policy.blocking_reason, "Delivery permitted, subject to Group preferences, consent, and available workers."),
+    })
 
 
 @login_required(login_url="config-login")
@@ -3110,20 +3149,24 @@ def setup(request):
         return redirect("config-login")
     form = FirstRunSetupForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
-            if get_user_model().objects.filter(is_superuser=True).exists():
-                return redirect("config-login")
-            user = form.save()
-            AuditEvent.objects.create(
-                actor=user,
-                action="platform.initial_owner_created",
-                object_type="User",
-                object_id=str(user.pk),
-                summary="Completed first-run setup and created the initial platform owner.",
-            )
-        login(request, user)
-        messages.success(request, "Platform setup complete.")
-        return redirect("config-dashboard")
+        try:
+            with transaction.atomic():
+                with transaction.atomic():
+                    if get_user_model().objects.filter(is_superuser=True).exists():
+                        return redirect("config-login")
+                    user = form.save()
+                    AuditEvent.objects.create(
+                        actor=user,
+                        action="platform.initial_owner_created",
+                        object_type="User",
+                        object_id=str(user.pk),
+                        summary="Completed first-run setup and created the initial platform owner.",
+                    )
+                login(request, user)
+                messages.success(request, "Platform setup complete.")
+                return redirect("config-dashboard")
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These sign-in identifiers could not be saved. Please review them and try again.")
     return render(request, "core/setup.html", {"form": form})
 
 
@@ -3135,13 +3178,17 @@ def register(request):
         return render(request, "registration/registration_unavailable.html", status=403)
     form = PublicRegistrationForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
-        user = form.save()
-        login(request, user)
-        if platform_settings.allow_user_group_creation:
-            messages.success(request, "Account created. You can create a reading group or join one with its access code.")
-        else:
-            messages.success(request, "Account created. Join an existing reading group with its access code.")
-        return redirect("dashboard")
+        try:
+            with transaction.atomic():
+                user = form.save()
+                login(request, user)
+                if platform_settings.allow_user_group_creation:
+                    messages.success(request, "Account created. You can create a reading group or join one with its access code.")
+                else:
+                    messages.success(request, "Account created. Join an existing reading group with its access code.")
+                return redirect("dashboard")
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These sign-in identifiers could not be saved. Please review them and try again.")
     return render(request, "registration/register.html", {"form": form})
 
 
@@ -3384,15 +3431,8 @@ def group_announcement_update(request, group_slug):
 
 
 def _group_discord_username(user, viewer_membership, participant, *, directory_access):
-    profile = getattr(participant.user, "northbound_profile", None)
-    if not profile:
-        return ""
-    if profile.discord_username_is_public or (directory_access and (
-        user.is_superuser or participant.user_id == user.pk
-        or (viewer_membership and viewer_membership.role in {Membership.Role.OWNER, Membership.Role.MODERATOR})
-    )):
-        return profile.discord_username
-    return ""
+    # Display Name is now public within the existing authorized profile surface.
+    return participant.user.public_name
 
 
 @login_required
@@ -3401,7 +3441,7 @@ def participant_list(request, group_slug):
     membership = membership_for(request.user, group)
     if not request.user.is_superuser and not membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
-    participants = list(group.memberships.filter(user__is_superuser=False).select_related("user__northbound_profile").order_by("user__username", "pk"))
+    participants = list(group.memberships.filter(user__is_superuser=False).select_related("user__northbound_profile").order_by(public_name_order('user'), "pk"))
     participant_ids = group_directory_visible_member_ids(request.user, group, participants)
     planning_by_participant = historical_reader_planning_data(
         group=group,
@@ -3421,7 +3461,7 @@ def participant_detail(request, group_slug, pk):
     viewer_membership = membership_for(request.user, group)
     if not request.user.is_superuser and not viewer_membership:
         return HttpResponseForbidden("You are not a member of this reading group.")
-    participant = get_object_or_404(Membership.objects.select_related("user"), pk=pk, group=group, user__is_superuser=False)
+    participant = get_object_or_404(Membership.objects.select_related("user__northbound_profile"), pk=pk, group=group, user__is_superuser=False)
     directory_access = participant.pk in group_directory_visible_member_ids(request.user, group, [participant])
     can_view_discord_username = bool(_group_discord_username(
         request.user, viewer_membership, participant, directory_access=directory_access,
@@ -3512,13 +3552,7 @@ def challenge_participant_detail(request, group_slug, month_pk, pk):
     )
     profile = getattr(participant.user, "northbound_profile", None)
     viewer_membership = membership_for(request.user, month.group)
-    discord_access = (
-        request.user.is_superuser or is_self or roster_access or can_operate_challenge(request.user, month)
-        or bool(viewer_membership and viewer_membership.role in {Membership.Role.OWNER, Membership.Role.MODERATOR})
-        or bool(profile and profile.discord_username_is_public)
-    )
-    if not host_scope_allows_reader(request.user, month, participant.pk):
-        discord_access = is_self or bool(profile and profile.discord_username_is_public)
+    discord_access = True
     staff_roles = list(ChallengeStaffAssignment.objects.filter(
         month=month, membership=participant, ended_at__isnull=True
     ).values_list("role", flat=True))
@@ -3597,9 +3631,9 @@ def participant_role_edit(request, group_slug, pk):
         previous_role = participant.role
         updated = form.save()
         AuditEvent.objects.create(actor=request.user, group=group, action="membership.role_changed", object_type="Membership", object_id=str(updated.pk), summary=f"Changed {updated.user.username} from {previous_role} to {updated.role}; active={updated.is_active}")
-        messages.success(request, f"Updated {updated.user.username}'s access.")
+        messages.success(request, f"Updated {updated.user.public_name}'s access.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.user.username}", "eyebrow": "Platform Owner Control"})
+    return render(request, "core/form_page.html", {"form": form, "title": f"Adjust Role: {participant.user.public_name}", "eyebrow": "Platform Owner Control"})
 
 
 @login_required
@@ -3607,7 +3641,7 @@ def participant_permissions_edit(request, group_slug, pk):
     group = get_object_or_404(ReadingGroup, slug=group_slug)
     if not can_manage_permissions(request.user, group):
         return HttpResponseForbidden("Group owner or platform root access is required.")
-    participant = get_object_or_404(Membership.objects.select_related("user"), pk=pk, group=group, user__is_superuser=False)
+    participant = get_object_or_404(Membership.objects.select_related("user__northbound_profile"), pk=pk, group=group, user__is_superuser=False)
     if participant.user_id == request.user.id and not request.user.is_superuser:
         messages.error(request, "You cannot change your own permission set.")
         return redirect("participant-list", group_slug=group.slug)
@@ -3624,7 +3658,7 @@ def participant_permissions_edit(request, group_slug, pk):
             object_id=str(updated.pk),
             summary=f"Changed {updated.user.username} permissions; role {previous_role} to {updated.role}; overrides {previous_overrides} to {updated.permission_overrides}.",
         )
-        messages.success(request, f"Updated {updated.user.username}'s permissions.")
+        messages.success(request, f"Updated {updated.user.public_name}'s permissions.")
         return redirect("participant-list", group_slug=group.slug)
     return render(request, "core/permissions_edit.html", {"form": form, "group": group, "participant": participant})
 
@@ -3716,7 +3750,7 @@ def team_detail(request, group_slug, month_pk, pk):
 
     current_leaders = list(team.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.TEAM_LEADER, ended_at__isnull=True,
-    ).select_related("membership").order_by("membership__user__username", "membership_id"))
+    ).select_related("membership").order_by(public_name_order('membership__user'), "membership_id"))
     leader_ids = {assignment.membership_id for assignment in current_leaders}
     full_roster = list(team.assignments.filter(
         ended_at__isnull=True,
@@ -3852,16 +3886,16 @@ def team_detail(request, group_slug, month_pk, pk):
         if sort_key == "themes": return assignment.theme_completed
         if sort_key == "tbr": return assignment.tbr_completed / assignment.tbr_total if assignment.tbr_total else None
         if sort_key == "botm": return assignment.botm_completed / assignment.botm_total if assignment.botm_total else None
-        return assignment.participant.user.username.casefold()
+        return assignment.participant.user.public_name.casefold()
 
     def sorted_role_group(assignments):
         if sort_key == "reader":
-            return sorted(assignments, key=lambda item: (item.participant.user.username.casefold(), item.participant_id), reverse=direction == "desc")
+            return sorted(assignments, key=lambda item: (item.participant.user.public_name.casefold(), item.participant_id), reverse=direction == "desc")
         available = [item for item in assignments if sort_value(item) is not None]
         unavailable = [item for item in assignments if sort_value(item) is None]
-        available.sort(key=lambda item: (item.participant.user.username.casefold(), item.participant_id))
+        available.sort(key=lambda item: (item.participant.user.public_name.casefold(), item.participant_id))
         available.sort(key=sort_value, reverse=direction == "desc")
-        unavailable.sort(key=lambda item: (item.participant.user.username.casefold(), item.participant_id))
+        unavailable.sort(key=lambda item: (item.participant.user.public_name.casefold(), item.participant_id))
         return available + unavailable
 
     if sort_key in {"base", "modifier", "total", "themes", "tbr", "botm"}:
@@ -3944,8 +3978,8 @@ def _team_book_values(team):
     return BookSubmission.objects.filter(
         month=team.month, participant_id__in=roster, is_removed=False,
         status__in=[BookSubmission.Status.PENDING, BookSubmission.Status.APPROVED],
-    ).order_by("-submitted_at", "-pk").values(
-        "pk", "title", "author", "participant__user__username", "catalog_book__cover_url", "submitted_at", "status",
+    ).order_by("-submitted_at", "-pk").annotate(reader_public_name=public_name_expression("participant__user")).values(
+        "reader_public_name", "pk", "title", "author", "participant__user__username", "participant__user__northbound_profile__discord_username", "catalog_book__cover_url", "submitted_at", "status",
         "submitted_pages", "approved_pages", "reference_url",
     )
 
@@ -4030,9 +4064,9 @@ def participant_deactivate(request, group_slug, pk):
         participant.is_active = False
         participant.save(update_fields=["is_active"])
         AuditEvent.objects.create(actor=request.user, group=group, action="membership.deactivated", object_type="Membership", object_id=str(participant.pk), summary=f"Deactivated {participant.user.username}. Reason: {reason or 'Not provided'}")
-        messages.success(request, f"{participant.user.username} was removed from active participation. Historical records were preserved.")
+        messages.success(request, f"{participant.user.public_name} was removed from active participation. Historical records were preserved.")
         return redirect("participant-list", group_slug=group.slug)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {participant.user.username}?", "description": "This deactivates the participant while preserving historical teams, books, and statistics.", "cancel_url": reverse("participant-list", kwargs={"group_slug": group.slug})})
+    return render(request, "core/confirm_remove.html", {"title": f"Remove {participant.user.public_name}?", "description": "This deactivates the participant while preserving historical teams, books, and statistics.", "cancel_url": reverse("participant-list", kwargs={"group_slug": group.slug})})
 
 
 @login_required
@@ -4060,7 +4094,7 @@ def team_assignment_remove(request, group_slug, month_pk, pk):
         )
         messages.success(request, "Participant removed from the team. Their reading history was not deleted.")
         return redirect("team-list", group_slug=group.slug, month_pk=month.pk)
-    return render(request, "core/confirm_remove.html", {"title": f"Remove {assignment.participant.user.username} from {assignment.team.name}?", "description": "The reader remains in the participant database and can be assigned to another team.", "cancel_url": reverse("team-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
+    return render(request, "core/confirm_remove.html", {"title": f"Remove {assignment.participant.user.public_name} from {assignment.team.name}?", "description": "The reader remains in the participant database and can be assigned to another team.", "cancel_url": reverse("team-list", kwargs={"group_slug": group_slug, "month_pk": month_pk})})
 
 
 @login_required
@@ -4808,10 +4842,14 @@ def member_create(request, group_slug):
         request.POST or None, can_assign_roles=can_manage_permissions(request.user, group),
     )
     if request.method == "POST" and form.is_valid():
-        membership = form.save(group)
-        AuditEvent.objects.create(actor=request.user, group=group, action="membership.created", object_type="Membership", object_id=str(membership.pk), summary=f"Added {membership.user.username} as {membership.get_role_display()}")
-        messages.success(request, f"{membership.user.username} can now sign in with the temporary password.")
-        return redirect("group-detail", group_slug=group.slug)
+        try:
+            with transaction.atomic():
+                membership = form.save(group)
+                AuditEvent.objects.create(actor=request.user, group=group, action="membership.created", object_type="Membership", object_id=str(membership.pk), summary=f"Added {membership.user.username} as {membership.get_role_display()}")
+                messages.success(request, f"{membership.user.public_name} can now sign in with the temporary password.")
+                return redirect("group-detail", group_slug=group.slug)
+        except (ValidationError, DatabaseError):
+            form.add_error(None, "These sign-in identifiers could not be saved. Please review them and try again.")
     return render(request, "core/form_page.html", {"form": form, "title": "Add Member", "eyebrow": group.name})
 
 
@@ -5056,7 +5094,7 @@ def challenge_host_list(request, group_slug, month_pk):
             object_id=str(assignment.pk),
             summary=f"Assigned {assignment.membership.user.username} as a Host for {month.name}.",
         )
-        messages.success(request, f"{assignment.membership.user.username} is now a Host for {month.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is now a Host for {month.name}.")
         return redirect("challenge-host-list", group_slug=group_slug, month_pk=month_pk)
     assignments = month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.HOST,
@@ -5105,14 +5143,14 @@ def challenge_host_end(request, group_slug, month_pk, pk):
             object_id=str(assignment.pk),
             summary=f"Ended {assignment.membership.user.username}'s Host assignment for {assignment.month.name}.",
         )
-        messages.success(request, f"{assignment.membership.user.username} is no longer a current Host for {assignment.month.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is no longer a current Host for {assignment.month.name}.")
         return redirect("challenge-host-list", group_slug=group_slug, month_pk=month_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Challenge Host",
-            "title": f"Remove {assignment.membership.user.username} as Host?",
+            "title": f"Remove {assignment.membership.user.public_name} as Host?",
             "description": "Their Host assignment will end, but its dates and attribution will remain in staffing history.",
             "cancel_url": reverse("challenge-host-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
             "action_label": "Remove Host",
@@ -5167,7 +5205,7 @@ def challenge_floater_list(request, group_slug, month_pk):
             object_id=str(assignment.pk),
             summary=f"Assigned {assignment.membership.user.username} as a Floater for {month.name}.",
         )
-        messages.success(request, f"{assignment.membership.user.username} is now a non-competing Floater for {month.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is now a non-competing Floater for {month.name}.")
         return redirect("challenge-floater-list", group_slug=group_slug, month_pk=month_pk)
     assignments = month.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.FLOATER,
@@ -5214,14 +5252,14 @@ def challenge_floater_end(request, group_slug, month_pk, pk):
             object_id=str(assignment.pk),
             summary=f"Ended {assignment.membership.user.username}'s Floater assignment for {assignment.month.name}.",
         )
-        messages.success(request, f"{assignment.membership.user.username} is no longer a current Floater for {assignment.month.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is no longer a current Floater for {assignment.month.name}.")
         return redirect("challenge-floater-list", group_slug=group_slug, month_pk=month_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Challenge Floater",
-            "title": f"Remove {assignment.membership.user.username} as Floater?",
+            "title": f"Remove {assignment.membership.user.public_name} as Floater?",
             "description": "Their non-competing staffing assignment will end, but its dates and attribution will remain in staffing history.",
             "cancel_url": reverse("challenge-floater-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
             "action_label": "Remove Floater",
@@ -5264,7 +5302,7 @@ def team_leader_list(request, group_slug, month_pk, team_pk):
                 f"in {team.month.name}."
             ),
         )
-        messages.success(request, f"{assignment.membership.user.username} is now a Team Leader for {team.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is now a Team Leader for {team.name}.")
         return redirect("team-leader-list", group_slug=group_slug, month_pk=month_pk, team_pk=team_pk)
     assignments = team.staff_assignments.filter(
         role=ChallengeStaffAssignment.Role.TEAM_LEADER,
@@ -5316,14 +5354,14 @@ def team_leader_end(request, group_slug, month_pk, team_pk, pk):
                 f"{assignment.team.name} in {assignment.month.name}."
             ),
         )
-        messages.success(request, f"{assignment.membership.user.username} is no longer a Team Leader for {assignment.team.name}.")
+        messages.success(request, f"{assignment.membership.user.public_name} is no longer a Team Leader for {assignment.team.name}.")
         return redirect("team-leader-list", group_slug=group_slug, month_pk=month_pk, team_pk=team_pk)
     return render(
         request,
         "core/confirm_remove.html",
         {
             "eyebrow": "Team Leader",
-            "title": f"Remove {assignment.membership.user.username} as Team Leader?",
+            "title": f"Remove {assignment.membership.user.public_name} as Team Leader?",
             "description": "Their staffing assignment will end, but they will remain enrolled and assigned to the team.",
             "cancel_url": reverse(
                 "team-leader-list",
@@ -5558,12 +5596,12 @@ def month_participant_list(request, group_slug, month_pk):
             return enrollment.planning.last_challenge_pages if enrollment.planning else None
         if sort_key == "completed":
             return enrollment.planning.completed_challenges if enrollment.planning else None
-        return enrollment.participant.user.username.casefold()
+        return enrollment.participant.user.public_name.casefold()
 
     available = [enrollment for enrollment in enrollments if value_for(enrollment) is not None]
     unavailable = [enrollment for enrollment in enrollments if value_for(enrollment) is None]
     available.sort(
-        key=lambda enrollment: (value_for(enrollment), enrollment.participant.user.username.casefold(), enrollment.pk),
+        key=lambda enrollment: (value_for(enrollment), enrollment.participant.user.public_name.casefold(), enrollment.pk),
         reverse=direction == "desc",
     )
     enrollments = available + unavailable
@@ -5606,7 +5644,7 @@ def month_participant_add(request, group_slug, month_pk):
         else:
             team = form.cleaned_data.get("team")
             team_message = f" and was assigned to {team.name}" if team else " without a team assignment"
-            messages.success(request, f"{enrollment.participant.user.username} was added to {month.name}{team_message}.")
+            messages.success(request, f"{enrollment.participant.user.public_name} was added to {month.name}{team_message}.")
             return redirect("month-participant-list", group_slug=month.group.slug, month_pk=month.pk)
     return render(request, "core/form_page.html", {"form": form, "title": "Add Participant to Month", "eyebrow": month.name})
 
@@ -5625,9 +5663,9 @@ def month_participant_edit(request, group_slug, month_pk, pk):
         except ValidationError as exc:
             _add_validation_error(form, exc)
         else:
-            messages.success(request, f"Updated {enrollment.participant.user.username}'s team assignment.")
+            messages.success(request, f"Updated {enrollment.participant.user.public_name}'s team assignment.")
             return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
-    return render(request, "core/form_page.html", {"form": form, "title": f"Edit {enrollment.participant.user.username}", "eyebrow": enrollment.month.name})
+    return render(request, "core/form_page.html", {"form": form, "title": f"Edit {enrollment.participant.user.public_name}", "eyebrow": enrollment.month.name})
 
 
 @login_required
@@ -5647,7 +5685,7 @@ def month_participant_remove(request, group_slug, month_pk, pk):
             note=request.POST.get("reason", "").strip(),
             ordinary_staff_removal=True,
         )
-        messages.success(request, f"{participant.user.username} was removed from active participation in {enrollment.month.name}.")
+        messages.success(request, f"{participant.user.public_name} was removed from active participation in {enrollment.month.name}.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
     description = "They will leave the current roster and can no longer submit. Existing submissions, approved pages, and team history will be preserved."
     if enrollment.month.staff_assignments.filter(
@@ -5655,7 +5693,7 @@ def month_participant_remove(request, group_slug, month_pk, pk):
     ).exists():
         description += " Removing this Host from Reader participation restores their challenge-wide Host authority."
     return render(request, "core/confirm_remove.html", {
-        "title": f"Remove {enrollment.participant.user.username} from {enrollment.month.name}?",
+        "title": f"Remove {enrollment.participant.user.public_name} from {enrollment.month.name}?",
         "description": description,
         "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
     })
@@ -5682,11 +5720,11 @@ def month_participant_reactivate(request, group_slug, month_pk, pk):
             actor=request.user,
             origin=MonthEnrollment.Origin.STAFF,
         )
-        messages.success(request, f"{enrollment.participant.user.username} was reactivated without a team assignment.")
+        messages.success(request, f"{enrollment.participant.user.public_name} was reactivated without a team assignment.")
         return redirect("month-participant-list", group_slug=group_slug, month_pk=month_pk)
     return render(request, "core/confirm_remove.html", {
         "eyebrow": "Challenge Participation",
-        "title": f"Reactivate {enrollment.participant.user.username}?",
+        "title": f"Reactivate {enrollment.participant.user.public_name}?",
         "description": "They will return to active participation without restoring a previous team or Team Leader assignment.",
         "cancel_url": reverse("month-participant-list", kwargs={"group_slug": group_slug, "month_pk": month_pk}),
         "action_label": "Reactivate Reader",
@@ -6526,7 +6564,7 @@ def botm_match_list(request, group_slug, month_pk):
         return HttpResponseForbidden("Only a current Host or Platform Owner may view BOTM match history.")
     matches = month.botm_matches.select_related(
         "botm_book", "participant", "submission", "reviewer"
-    ).order_by("status", "botm_book__position", "participant__user__username", "pk")
+    ).order_by("status", "botm_book__position", public_name_order('participant__user'), "pk")
     submissions = scope_reviewable_submissions(request.user, month, month.submissions.all())
     matches = matches.filter(submission__in=submissions)
     host_teams = restricted_host_team_ids(request.user, month)
@@ -6534,7 +6572,7 @@ def botm_match_list(request, group_slug, month_pk):
         "participant"
     ).filter(
         **({"participant_id__in": submissions.values("participant_id")} if host_teams is not None else {})
-    ).prefetch_related("configured_books").order_by("participant__user__username", "-qualified_at", "pk"))
+    ).prefetch_related("configured_books").order_by(public_name_order('participant__user'), "-qualified_at", "pk"))
     for award in completion_awards:
         frozen_book_ids = [snapshot.botm_book_id for snapshot in award.configured_books.all()]
         award.current_completed_count = BotmMatch.objects.filter(
@@ -6609,7 +6647,7 @@ def personal_tbr_match_list(request, group_slug, month_pk):
     visible_submissions = scope_reviewable_submissions(request.user, month, month.submissions.all())
     matches = month.personal_tbr_matches.filter(submission__in=visible_submissions).select_related(
         "personal_tbr_book", "participant", "submission", "reviewer",
-    ).order_by("status", "participant__user__username", "personal_tbr_book__position", "pk")
+    ).order_by("status", public_name_order('participant__user'), "personal_tbr_book__position", "pk")
     return render(request, "core/personal_tbr_match_list.html", {"month": month, "matches": matches})
 
 

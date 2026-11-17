@@ -1,4 +1,5 @@
 """Read-only search over existing Northbound destinations and scopes."""
+from .identity import public_name_order
 from collections import defaultdict
 
 from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
@@ -134,7 +135,7 @@ def global_search(request):
             if managing and not editable:
                 continue
             add("Actions" if managing else "Submissions", f"Manage Submission: {book.title}" if managing else book.title, "submission-manage" if editable else "submission-history",
-                (*args, book.pk), context=f"{context} · {book.participant.user.username}", group=group, month=month,
+                (*args, book.pk), context=f"{context} · {book.participant.user.public_name}", group=group, month=month,
                 terms=(book.author, "manage submissions" if editable else ""))
 
         matching_readers = month.submissions.filter(
@@ -167,7 +168,7 @@ def global_search(request):
                     continue
                 for book in _team_book_values(team).filter(matches_book).order_by(book_rank, "-submitted_at", "-pk")[:RESULT_LIMIT]:
                     add("Books", book["title"], "team-book-detail", (*team_args, book["pk"]),
-                        context=f"{team_context} · {book['participant__user__username']}",
+                        context=f"{team_context} · {book['reader_public_name']}",
                         group=group, month=month, terms=(book["author"],))
 
         readers = MonthEnrollment.objects.filter(month=month, is_active=True, participant__is_active=True)
@@ -181,17 +182,15 @@ def global_search(request):
         if member and not (scope and scope[0] == "challenge"):
             scope_match |= Q(participant=member)
         discord = Q(participant__user__northbound_profile__discord_username__icontains=query)
-        if not scope:
-            discord &= Q(participant=member) if member else Q(pk__in=[])
         for row in readers.filter(scope_match).filter(
                 Q(participant__user__username__icontains=query) | discord
         ).select_related("participant__user__northbound_profile").distinct().order_by(
-            _database_rank(query, "participant__user__username",
-                           "participant__user__northbound_profile__discord_username"),
-            "participant__user__username", "pk",
+            _database_rank(query, "participant__user__northbound_profile__discord_username",
+                           "participant__user__username"),
+            public_name_order("participant__user"), "pk",
         )[:RESULT_LIMIT]:
             profile = getattr(row.participant.user, "northbound_profile", None)
-            add("Readers", row.participant.user.username, "challenge-participant-detail", (*args, row.participant_id),
+            add("Readers", row.participant.user.public_name, "challenge-participant-detail", (*args, row.participant_id),
                 context=context, group=group, month=month, terms=(profile.discord_username if profile else "",))
 
     return JsonResponse({"results": [

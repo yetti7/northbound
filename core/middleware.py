@@ -75,3 +75,28 @@ class RequirePasswordChangeMiddleware:
             if profile.must_change_password and not request.path.startswith(self.EXEMPT_PREFIXES):
                 return redirect("password-change")
         return self.get_response(request)
+
+
+class RequireDisplayNameConfirmationMiddleware:
+    """Gate document navigations, never mutations, subrequests or downloads."""
+    EXEMPT_PREFIXES = ('/account/', '/accounts/', '/health/', '/static/', '/media/', '/search/', '/api/',
+                       '/platform-admin/login/', '/platform-admin/logout/', '/platform-admin/password_change/')
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        destination = request.headers.get('Sec-Fetch-Dest')
+        mode = request.headers.get('Sec-Fetch-Mode')
+        document = (destination == 'document' or
+                    (destination is None and 'text/html' in request.headers.get('Accept', '')
+                     and mode in (None, 'navigate')))
+        if (request.method == 'GET' and document and request.user.is_authenticated
+                and not request.headers.get('X-Requested-With')
+                and not request.path.startswith(self.EXEMPT_PREFIXES)
+                and '/export/' not in request.path):
+            profile = getattr(request.user, 'northbound_profile', None)
+            if profile is None or profile.display_name_confirmed_at is None:
+                request.session['display_name_return_to'] = request.get_full_path()
+                return redirect('account')
+        return self.get_response(request)

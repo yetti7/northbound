@@ -6,7 +6,7 @@
     {% for radio in form.selected_avatar %}
       <label class="avatar-option">
         {{ radio.tag }}
-        {% if radio.data.value %}<img src="{% static 'avatars/'|add:radio.data.value %}" alt="{{ radio.choice_label }}">{% else %}<span class="profile-picture profile-picture-fallback avatar-choice-fallback">{{ user.username|default:'?'|first|upper }}</span>{% endif %}
+        {% if radio.data.value %}<img src="{% static 'avatars/'|add:radio.data.value %}" alt="{{ radio.choice_label }}">{% else %}<span class="profile-picture profile-picture-fallback avatar-choice-fallback">{{ user.public_name|default:'?'|first|upper }}</span>{% endif %}
         <span>{{ radio.choice_label }}</span>
       </label>
     {% endfor %}

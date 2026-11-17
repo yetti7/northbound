@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
 from . import discord_notifications as discord
+from .discord_policy import delivery_policy
 from .integrations.secrets import decrypt_token, TokenDecryptionError
 from .models import DiscordManualDelivery, GroupDiscordNotification, ReadingGroup, DiscordReportSchedule
 from .permissions import can_configure_discord_notifications
@@ -21,7 +22,9 @@ ACTIONS = dict(DiscordManualDelivery.Action.choices)
 FAILURES = {
     'missing_webhook': 'No webhook configured.',
     'destination_disabled': 'This destination is disabled.',
-    'global_disabled': 'Global Discord delivery is disabled.',
+    'global_disabled': 'Global Discord delivery is disabled through the inherited environment setting.',
+    'global_disabled_gui': 'Global Discord delivery is disabled through Platform Administration.',
+    'policy_unavailable': 'The global Discord policy is unavailable. Delivery is suppressed.',
     'development_blocked': 'Development delivery is blocked.',
     'unreadable_webhook': 'The saved webhook cannot be read. Ask a Platform Administrator to check the encryption configuration or replace it.',
     'invalid_webhook': 'The saved webhook URL is invalid. Replace it with a URL copied from Discord.',
@@ -72,11 +75,7 @@ def _blocking_reason(config, destination):
         return 'missing_webhook'
     if not getattr(config, enabled):
         return 'destination_disabled'
-    if not settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED:
-        return 'global_disabled'
-    if (settings.DEBUG or settings.NORTHBOUND_DEVELOPMENT_BANNER) and not settings.NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT:
-        return 'development_blocked'
-    return ''
+    return delivery_policy().blocking_reason
 
 
 @sensitive_variables()
@@ -87,9 +86,9 @@ def destination_diagnostics(config, destination, *, group):
     active = bool(config and getattr(config, enabled))
     if not configured: notices.append(FAILURES['missing_webhook'])
     if not active: notices.append(FAILURES['destination_disabled'])
-    if not settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED: notices.append(FAILURES['global_disabled'])
-    if (settings.DEBUG or settings.NORTHBOUND_DEVELOPMENT_BANNER) and not settings.NORTHBOUND_DISCORD_ALLOW_DEVELOPMENT:
-        notices.append(FAILURES['development_blocked'])
+    policy = delivery_policy()
+    if policy.blocking_reason:
+        notices.append(FAILURES[policy.blocking_reason])
     if configured:
         _, failure = _webhook(config, destination)
         if failure: notices.append(FAILURES[failure])
@@ -106,7 +105,7 @@ def destination_diagnostics(config, destination, *, group):
     scheduler = ('Scheduler disabled; manual messages do not require it.'
         if os.getenv('NORTHBOUND_CHALLENGE_SCHEDULER_ENABLED', '1').strip().lower() not in {'1','true','yes','on'}
         else 'Scheduler availability is not verified here; manual messages do not require it.')
-    return {'configured': configured, 'enabled': active, 'notices': notices, 'last_result': last_result,
+    return {'configured': configured, 'enabled': active, 'global_source': policy.source, 'global_enabled': policy.globally_enabled, 'notices': notices, 'last_result': last_result,
         'last_attempt': latest.attempted_at if latest else None,
         'last_action': latest.get_action_display() if latest else '', 'scheduler': scheduler,
         'legacy_digest_enabled': bool(config and config.enabled) if destination == 'moderator' else False}

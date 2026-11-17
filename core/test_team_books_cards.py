@@ -39,7 +39,7 @@ class TeamBooksCardsTests(TestCase):
         BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(approved_pages=352,bonus_pages=999,final_scored_pages=1351,notes='PRIVATE READER NOTES',review_notes='PRIVATE STAFF NOTES')
         before=list(ModifierProvenance.objects.values())
         html=self.gallery(self.page())
-        for text in ('Alpha Early','Author','352 pages',self.alpha_user.username):self.assertIn(text,html)
+        for text in ('Alpha Early','Author','352 pages',self.alpha_user.public_name):self.assertIn(text,html)
         for text in ('<time','class="pill"','>Approved<','>Pending<','999','1351','PRIVATE READER NOTES','PRIVATE STAFF NOTES'):self.assertNotIn(text,html)
         self.assertEqual(before,list(ModifierProvenance.objects.values()))
 
@@ -95,7 +95,7 @@ class TeamBooksCardsTests(TestCase):
         self.assertIn('class="team-book-identity"',html)
         self.assertIn('<span class="team-book-title-text">'+title+'</span>',html)
         self.assertIn('<summary>Full title<span class="sr-only"> for '+title+'</span></summary><p>'+title+'</p>',html)
-        self.assertIn('369 pages</span> · <span class="team-book-reader">'+self.alpha_user.username+'</span>',html)
+        self.assertIn('369 pages</span> · <span class="team-book-reader">'+self.alpha_user.public_name+'</span>',html)
         self.assertNotIn('<time',html);self.assertNotIn('class="pill"',html)
 
     def test_absent_reader_omits_separator_and_keeps_page_fallback(self):
