@@ -31,7 +31,7 @@ def reporting_scope(user,month):
 
 def enrollments_and_scope(user,month,*,staff=False):
     if not user.is_active or not can_view_challenge(user,month):raise PermissionDenied
-    query=MonthEnrollment.objects.filter(month=month,participant__group=month.group).select_related('participant__user','credited_team')
+    query=MonthEnrollment.objects.filter(month=month,participant__group=month.group).select_related('participant__user__northbound_profile','credited_team')
     if not staff:
         return query.filter(participant__user=user),None
     scope=reporting_scope(user,month)
