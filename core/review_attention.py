@@ -1,3 +1,4 @@
+from .identity import public_name_order
 from .immersive import review_queue_requests
 from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, ProgressCheckpointResult, ThemeClaim
 from .permissions import challenge_review_scope, is_challenge_host, scope_reviewable_submissions, restricted_host_team_ids
@@ -88,7 +89,7 @@ def needs_attention_summary(user):
                     participant__month_enrollments__is_active=True,
                 )
             checkpoint_results = list(checkpoints.select_related("checkpoint", "participant").order_by(
-                "checkpoint__scheduled_at", "participant__user__username"
+                "checkpoint__scheduled_at", public_name_order('participant__user')
             ))
         if not review_count and not checkpoint_results and not month_host_notices:
             continue

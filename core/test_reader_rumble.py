@@ -47,8 +47,8 @@ class ReaderRumbleTests(TestCase):
         self.assertEqual([r['value'] for r in bonus['rows']],[200,120,110])
         self.assertEqual(bonus['metric'],'Total Challenge Points')
         ModifierProvenance.objects.create(month=self.month,participant=self.reader_b,source_type='game_reward',source_reference='rank-switch',source_label='Fixture',amount=200,effective_date=date(2026,9,15))
-        self.assertEqual(self.data(bonuses=True)['rows'][0]['username'],self.reader_b_user.username)
-        self.assertEqual(self.data()['rows'][0]['username'],self.leader_a_user.username)
+        self.assertEqual(self.data(bonuses=True)['rows'][0]['display_name'],self.reader_b_user.public_name)
+        self.assertEqual(self.data()['rows'][0]['display_name'],self.leader_a_user.public_name)
 
     def test_limits_rank_all_readers_first_and_include_zero_values_without_placeholders(self):
         self.more_reader('rank-last-created-highest',1000)
@@ -56,17 +56,20 @@ class ReaderRumbleTests(TestCase):
         for limit in (5,10,15,20,25):
             data=self.data(top=limit,include_zero=True)
             self.assertEqual(len(data['rows']),limit)
-            self.assertEqual(data['rows'][0]['username'],'rank-last-created-highest')
+            self.assertEqual(data['rows'][0]['display_name'],'rank-last-created-highest')
             self.assertEqual([r['rank'] for r in data['rows']],list(range(1,limit+1)))
             if limit>5:self.assertEqual(data['rows'][-1]['value'],0)
         for bad in [0,6,26,'20',True]:
             with self.assertRaises(ValidationError):self.data(top=bad)
 
     def test_fewer_readers_and_case_insensitive_stable_ties(self):
-        self.more_reader('alpha');self.more_reader('Alpha')
+        first=self.more_reader('alpha');second=self.more_reader('alpha-second')
+        from .models import UserProfile
+        UserProfile.objects.create(user=first.user,discord_username='Same Name')
+        UserProfile.objects.create(user=second.user,discord_username='Same Name')
         for limit in (5,10,15,20,25):self.assertEqual(len(self.data(top=limit,include_zero=True)['rows']),min(limit,6))
-        zeroes=[r['username'] for r in self.data(include_zero=True)['rows'] if r['value']==0]
-        self.assertEqual(zeroes,['alpha','Alpha','hierarchy-leader-z'])
+        zeroes=[r['display_name'] for r in self.data(include_zero=True)['rows'] if r['value']==0]
+        self.assertEqual(zeroes,['hierarchy-leader-z','Same Name','Same Name'])
         empty=build_reader_rumble(actor=self.host_user,team=self.other_team)
         self.assertEqual(empty['rows'],[])
 
@@ -85,11 +88,11 @@ class ReaderRumbleTests(TestCase):
         assignment=TeamAssignment.objects.get(month=self.month,participant=self.reader)
         assignment.ended_at=timezone.now();assignment.save(update_fields=['ended_at'])
         TeamAssignment.objects.create(month=self.month,participant=self.reader,team=self.other_team)
-        self.assertNotIn(self.reader_user.username,[r['username'] for r in self.data()['rows']])
+        self.assertNotIn(self.reader_user.username,[r['display_name'] for r in self.data()['rows']])
         transferred=build_reader_rumble(actor=self.host_user,team=self.other_team,bonuses=True)
         self.assertEqual(transferred['rows'][0]['value'],120)
         MonthEnrollment.objects.filter(month=self.month,participant=self.reader_b).update(is_active=False,credited_team=self.team)
-        self.assertNotIn(self.reader_b_user.username,[r['username'] for r in self.data()['rows']])
+        self.assertNotIn(self.reader_b_user.username,[r['display_name'] for r in self.data()['rows']])
         from .score_aggregation import challenge_team_totals
         self.assertEqual(challenge_team_totals(month=self.month,team_ids=[self.team.pk])[self.team.pk],310)
 
@@ -116,10 +119,11 @@ class ReaderRumbleTests(TestCase):
         before=(list(BookSubmission.objects.values()),list(ModifierProvenance.objects.values()),list(TeamAssignment.objects.values()),AuditEvent.objects.count())
         response=self.client.get(self.url);self.assertEqual(response.status_code,200)
         payload=response.context['rumble'];self.assertEqual(payload['timezone'],self.group.timezone)
-        self.assertEqual(set(payload['rows'][0]),{'rank','username','value'})
+        self.assertEqual(set(payload['rows'][0]),{'rank','participant_id','display_name','value'})
         body=response.content.decode()
-        for secret in ['private-reader','private-leader','hardcover','Discord Message','approved_pages']:
+        for secret in ['hardcover','Discord Message','approved_pages']:
             self.assertNotIn(secret,body)
+        self.assertContains(response,'private-reader');self.assertContains(response,'private-leader')
         self.assertContains(response,'Download PNG');self.assertNotContains(response,'name="bonuses" checked')
         self.assertIn('no-store',response['Cache-Control'])
         self.assertContains(response,'Back to Team')
@@ -173,14 +177,14 @@ class ReaderRumbleTests(TestCase):
         self.assertFalse(response.context['form'].cleaned_data['include_zero'])
         self.assertContains(response,'Include Zero-Score Readers')
         self.assertLess(response.content.index(b'Include Bonuses'),response.content.index(b'Include Zero-Score Readers'))
-        self.assertNotIn(self.leader_z_user.username,[r['username'] for r in response.context['rumble']['rows']])
+        self.assertNotIn(self.leader_z_user.username,[r['display_name'] for r in response.context['rumble']['rows']])
         ModifierProvenance.objects.create(month=self.month,participant=self.leader_z,source_type='game_reward',source_reference='bonus-only-zero-test',source_label='Fixture',amount=100,effective_date=date(2026,9,15))
-        self.assertNotIn(self.leader_z_user.username,[r['username'] for r in self.data()['rows']])
+        self.assertNotIn(self.leader_z_user.username,[r['display_name'] for r in self.data()['rows']])
         bonus=self.data(bonuses=True)['rows']
-        self.assertEqual(next(r['value'] for r in bonus if r['username']==self.leader_z_user.username),100)
+        self.assertEqual(next(r['value'] for r in bonus if r['display_name']==self.leader_z_user.username),100)
         self.assertEqual([r['value'] for r in bonus],[200,120,110,100])
         included=self.data(include_zero=True)['rows']
-        self.assertEqual(included[-1],{'rank':4,'username':self.leader_z_user.username,'value':0})
+        self.assertEqual(included[-1],{'rank':4,'participant_id':self.leader_z.pk,'display_name':self.leader_z_user.public_name,'value':0})
 
     def test_zero_filter_precedes_limit_and_all_top_sizes_preserve_ranking(self):
         # Twenty-two eligible Readers, seventeen nonzero Base totals.
@@ -203,7 +207,7 @@ class ReaderRumbleTests(TestCase):
             rows=response.context['rumble']['rows']
             import re,html
             accessible=[(html.unescape(name),int(value)) for name,value in re.findall(r'<li><span>(.*?)</span><strong>(\d+)</strong></li>',response.content.decode())]
-            self.assertEqual(accessible,[(row['username'],row['value']) for row in rows])
+            self.assertEqual(accessible,[(row['display_name'],row['value']) for row in rows])
         BookSubmission.objects.filter(month=self.month).update(status='pending')
         response=self.client.get(self.url)
         self.assertEqual(response.status_code,200);self.assertEqual(response.context['rumble']['rows'],[])

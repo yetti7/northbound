@@ -109,10 +109,10 @@ class ParticipatingHostScopeTests(TestCase):
         self.assertEqual(self.client.get(signup_url).status_code, 200)
         self.assertEqual(self.client.post(signup_url, {"action": "save_tbr_settings"}).status_code, 403)
         self.assertNotContains(self.client.get(self.url("review-queue")), self.other_book.title)
-        self.assertNotContains(self.client.get(self.url("team-detail", self.b.pk), {
+        self.assertContains(self.client.get(self.url("team-detail", self.b.pk), {
             "show_discord": "1", "show_average": "1",
         }), "private-team-b-reader")
-        self.assertNotContains(self.client.get(self.url("month-participant-list"), {"sort": "average"}),
+        self.assertContains(self.client.get(self.url("month-participant-list"), {"sort": "average"}),
                                "private-team-b-reader")
         self.month.team_standings_visibility = ChallengeMonth.CompetitionVisibility.EVERYBODY
         self.assertTrue(can_view_team_standings(self.host.user, self.month, self.b))
@@ -284,7 +284,8 @@ class ParticipatingHostScopeTests(TestCase):
                 self.assertIsNone(row.planning)
                 profile = self.client.get(profile_url, {"show_discord": "1"})
                 self.assertContains(profile, self.reader.user.username)
-                self.assertNotContains(profile, "private-team-b-reader")
+                self.assertContains(profile, "private-team-b-reader")
+                self.assertNotContains(profile, 'data-discord="private-team-b-reader"')
                 self.assertNotContains(profile, "Verified Pages")
                 self.assertNotContains(profile, "Approved Books")
                 with self.assertRaises(KeyError):

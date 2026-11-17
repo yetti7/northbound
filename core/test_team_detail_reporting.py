@@ -129,16 +129,16 @@ class TeamDetailReportingTests(TestCase):
             submitted_pages=150, approved_pages=150, status=BookSubmission.Status.APPROVED,
         )
         default = self.get_as(self.host_user)
-        for heading in ("Discord Username", "Average Pages", "Last Challenge", "Challenges Completed"):
+        for heading in ("Average Pages", "Last Challenge", "Challenges Completed"):
             self.assertNotContains(default, f"<th>{heading}</th>", html=True)
         response = self.get_as(self.host_user, {
             "show_discord": "1", "show_average": "1", "show_last": "1", "show_completed": "1",
         })
-        for heading in ("Discord Username", "Average Pages", "Last Challenge", "Challenges Completed"):
+        for heading in ("Average Pages", "Last Challenge", "Challenges Completed"):
             self.assertContains(response, f"<th>{heading}</th>", html=True)
             self.assertContains(response, f"<dt>{heading}</dt>", html=True)
         self.assertContains(response, "AlphaDiscord")
-        self.assertContains(response, 'name="show_discord" value="1" checked')
+        self.assertNotContains(response, 'name="show_discord" value="1" checked')
         self.assertContains(response, 'name="show_average" value="1" checked')
         self.assertContains(response, 'name="show_last" value="1" checked')
         self.assertContains(response, 'name="show_completed" value="1" checked')
@@ -213,8 +213,10 @@ class TeamDetailReportingTests(TestCase):
     def test_hidden_score_and_discord_controls_do_not_leak(self):
         response = self.get_as(self.ordinary_user, {"show_discord": "1", "from": "2026-08-05", "bonuses": "1"})
         self.assertNotContains(response, "From Date")
-        self.assertNotContains(response, "Discord Username")
-        self.assertNotContains(response, "AlphaDiscord")
+        self.assertFalse(response.context['can_filter_discord'])
+        self.assertNotContains(response, 'type="checkbox" name="show_discord"')
+        self.assertContains(response, "AlphaDiscord")
+        self.assertNotContains(response, 'data-discord="AlphaDiscord"')
         self.assertNotContains(response, "<th>Base</th>", html=True)
         self.assertNotContains(response, "<th>Modifier</th>", html=True)
         self.assertNotContains(response, "<th>Total</th>", html=True)
@@ -285,10 +287,12 @@ class TeamDetailReportingTests(TestCase):
                     self.assertContains(listing, "OutsideTeamDiscord")
                     self.assertContains(other, "947")
                 else:
-                    self.assertNotContains(listing, "OutsideTeamDiscord")
+                    self.assertContains(listing, "OutsideTeamDiscord")
+                    self.assertNotContains(listing, 'data-discord="OutsideTeamDiscord"')
                     self.assertNotContains(listing, "947")
                     self.assertNotContains(other, "Show Columns")
-                    self.assertNotContains(other, "OutsideTeamDiscord")
+                    self.assertContains(other, "OutsideTeamDiscord")
+                    self.assertNotContains(other, 'data-discord="OutsideTeamDiscord"')
                     self.assertEqual(self.client.get(reverse(
                         "challenge-participant-detail", args=[*month_args, self.ordinary.pk],
                     )).status_code, 403)
@@ -302,5 +306,6 @@ class TeamDetailReportingTests(TestCase):
 
         response = self.get_as(self.ordinary_user, query)
         self.assertNotContains(response, "Show Columns")
-        self.assertNotContains(response, "AlphaDiscord")
+        self.assertContains(response, "AlphaDiscord")
+        self.assertNotContains(response, 'data-discord="AlphaDiscord"')
         self.assertNotContains(response, "731")

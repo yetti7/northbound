@@ -277,11 +277,13 @@ class ChallengeParticipantsPlanningViewTests(TestCase):
                     self.assertContains(response, "history-reader")
                 else:
                     self.assertNotContains(response, "Avg Pages")
-                    self.assertNotContains(response, "history-reader")
+                    self.assertContains(response, "history-reader")
+                    self.assertNotContains(response, 'data-discord="history-reader"')
                 if challenge_wide:
                     self.assertContains(response, "unassigned-private-discord")
                 else:
-                    self.assertNotContains(response, "unassigned-private-discord")
+                    self.assertContains(response, "unassigned-private-discord")
+                    self.assertNotContains(response, 'data-discord="unassigned-private-discord"')
                 self.assertNotContains(response, "Favorite snack?")
                 self.assertNotContains(response, "View Registration")
                 if challenge_wide:

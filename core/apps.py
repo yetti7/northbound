@@ -9,3 +9,6 @@ class CoreConfig(AppConfig):
     def ready(self):
         from .email_logging import install_reset_log_redaction
         install_reset_log_redaction()
+        from django.contrib.auth import get_user_model
+        from .identity import public_name
+        get_user_model().add_to_class("public_name", property(public_name))

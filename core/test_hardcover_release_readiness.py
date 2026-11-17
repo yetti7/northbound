@@ -15,6 +15,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.db import transaction
 from django.test import TestCase, TransactionTestCase, override_settings
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -318,7 +319,7 @@ class HardcoverReleaseMigrationTests(TransactionTestCase):
         old_target = [("core", "0058_hardcover_read_occurrence_sync")]
         executor.migrate(old_target)
         old = executor.loader.project_state(old_target).apps
-        user = old.get_model("auth", "User").objects.create(username="hc7-migration")
+        user = old.get_model("auth", "User").objects.create(username="hc7-migration", email='hc7-migration@example.invalid')
         ciphertext = encrypt_token("migration-fixture")
         saved = old.get_model("core", "ReaderHardcoverConnection").objects.create(user_id=user.pk, encrypted_token=ciphertext, is_valid=True)
         executor = MigrationExecutor(connection)

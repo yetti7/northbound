@@ -33,7 +33,7 @@ class PersonalTbrMatchingMigrationTests(TransactionTestCase):
         PersonalTBR = apps.get_model("core", "PersonalTBR")
         PersonalTBRBook = apps.get_model("core", "PersonalTBRBook")
         BookSubmission = apps.get_model("core", "BookSubmission")
-        user = User.objects.create(username="pre-tbr-match-reader")
+        user = User.objects.create(username="pre-tbr-match-reader", email='pre-tbr-match-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Pre-match TBR Group", slug="pre-match-tbr-group")
         reader = Membership.objects.create(group=group, user=user, display_name="Reader")
         month = ChallengeMonth.objects.create(

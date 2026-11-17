@@ -97,7 +97,7 @@ class GroupCapabilityCleanupTests(TestCase):
         self.grant("manage_participants")
         url = reverse("member-create", args=[self.group.slug])
         payload = {
-            "username": "new-owner", "display_name": "New Owner",
+            "username": "new-owner", "display_name": "New Owner", "email": "new-owner@example.invalid",
             "temporary_password": "synthetic-password", "role": Membership.Role.OWNER,
         }
         response = self.client.post(url, payload)
@@ -105,7 +105,7 @@ class GroupCapabilityCleanupTests(TestCase):
         self.assertFalse(get_user_model().objects.filter(username="new-owner").exists())
         role_url = reverse("participant-role-edit", args=[self.group.slug, self.reader_membership.pk])
         self.assertEqual(self.client.post(role_url, {"role": Membership.Role.OWNER, "is_active": True}).status_code, 403)
-        response = self.client.post(url, {**payload, "username": "new-member", "role": Membership.Role.MEMBER})
+        response = self.client.post(url, {**payload, "username": "new-member", "email": "new-member@example.invalid", "role": Membership.Role.MEMBER})
         self.assertEqual(response.status_code, 302)
         self.assertTrue(self.group.memberships.filter(user__username="new-member", role=Membership.Role.MEMBER).exists())
 
@@ -114,7 +114,7 @@ class GroupCapabilityCleanupTests(TestCase):
         self.assertTrue(self.group.memberships.filter(user__username="new-owner", role=Membership.Role.OWNER).exists())
         root = get_user_model().objects.create_superuser("cleanup-root")
         self.client.force_login(root)
-        self.assertEqual(self.client.post(url, {**payload, "username": "root-created-owner"}).status_code, 302)
+        self.assertEqual(self.client.post(url, {**payload, "username": "root-created-owner", "email": "root-created-owner@example.invalid"}).status_code, 302)
         self.assertTrue(self.group.memberships.filter(user__username="root-created-owner", role=Membership.Role.OWNER).exists())
 
     def test_manage_months_controls_core_month_and_host_management_not_themes(self):
@@ -186,7 +186,7 @@ class RetireManageTeamsMigrationTests(TransactionTestCase):
         User = old_apps.get_model("auth", "User")
         ReadingGroup = old_apps.get_model("core", "ReadingGroup")
         Membership = old_apps.get_model("core", "Membership")
-        user = User.objects.create(username="migration-cleanup-user")
+        user = User.objects.create(username="migration-cleanup-user", email='migration-cleanup-user@example.invalid')
         group = ReadingGroup.objects.create(name="Migration Cleanup", slug="migration-cleanup")
         self.membership_id = Membership.objects.create(
             group=group,

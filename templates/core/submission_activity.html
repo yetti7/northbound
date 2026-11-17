@@ -11,7 +11,7 @@
   {% if voided_review %}<p class="notice neutral">This submission has been voided. This page is read-only.</p>{% endif %}
   {% timezone month.group.timezone %}
   <section class="card submission-compact-summary">
-    <h2>{% include "core/includes/submission_title.html" %}</h2><p>{{ submission.author }} · {{ submission.participant.user.username }}</p>
+    <h2>{% include "core/includes/submission_title.html" %}</h2><p>{{ submission.author }} · {{ submission.participant.user.public_name }}</p>
     <p>{% if submission.is_removed %}<span class="pill status-warning">Voided</span>{% else %}<span class="pill">{{ submission.get_status_display }}</span>{% endif %}</p>
     {% if submission.is_removed %}
     <p>Original status: {{ submission.get_status_display }} · {{ submission.submitted_pages }} submitted pages{% if user.is_superuser or user.pk == submission.participant.user_id %}{% if submission.approved_pages != None %} · {{ submission.approved_pages }} approved pages{% endif %}{% endif %}</p>
@@ -26,7 +26,7 @@
     {% timezone card.submission.month.group.timezone %}
     <article class="card submission-compact-summary">
       <span class="pill">{{ card.label }}</span>
-      {% if not submission %}<h2>{{ card.submission.title }}</h2><p>{{ card.submission.participant.user.username }} · Current status: {{ card.submission.get_status_display }}</p>{% endif %}
+      {% if not submission %}<h2>{{ card.submission.title }}</h2><p>{{ card.submission.participant.user.public_name }} · Current status: {{ card.submission.get_status_display }}</p>{% endif %}
       {% if card.actor %}<p>By {{ card.actor }}</p>{% endif %}
       {% for detail in card.details %}<p>{{ detail }}</p>{% endfor %}
       <p><time datetime="{{ card.timestamp|date:'c' }}">{{ card.timestamp|date:"F j, Y · g:i A" }}</time></p>

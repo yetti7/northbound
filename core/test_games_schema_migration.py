@@ -36,7 +36,7 @@ class GamesSchemaMigrationTests(TransactionTestCase):
         ProgressCheckpoint = apps.get_model("core", "ProgressCheckpoint")
         ProgressCheckpointResult = apps.get_model("core", "ProgressCheckpointResult")
 
-        user = User.objects.create(username="pre-games-reader")
+        user = User.objects.create(username="pre-games-reader", email='pre-games-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Pre-Games Group", slug="pre-games-group")
         participant = Membership.objects.create(group=group, user=user, role="member", display_name="Pre-Games Reader")
         month = ChallengeMonth.objects.create(

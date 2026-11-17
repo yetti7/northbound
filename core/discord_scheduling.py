@@ -385,7 +385,7 @@ def schedule_diagnostics(schedule, *, group, now=None, community_months=None):
         reason=_blocking_reason(schedule.configuration,schedule.destination)
         if reason:readiness='Paused — '+FAILURES[reason]
         elif not settings.NORTHBOUND_DISCORD_SCHEDULER_ENABLED:
-            readiness='Paused — global scheduling gate is disabled.'
+            readiness='Paused — scheduled-report worker capability is unavailable.'
         elif schedule.cooldown_until and schedule.cooldown_until>now:readiness='Paused — '+FAILURES['rate_limited']
         elif error:readiness='Paused — '+error
         elif schedule.destination=='moderator' and schedule.configuration.enabled:

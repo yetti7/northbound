@@ -110,11 +110,11 @@
         const nameSize=podium?(index===0?36:index<3?32:30):font;
         const maxLines=Math.max(1,Math.min(3,Math.floor((height-(podium?20:8))/(nameSize*1.18))));
         const nameWeight=index<3?'600':'400';
-        const actualLines=Math.min(maxLines,lines(row.username,nameSize,nameWidth,'Arial',nameWeight).length);
+        const actualLines=Math.min(maxLines,lines(row.display_name,nameSize,nameWidth,'Arial',nameWeight).length);
         const top=rowY+(height-actualLines*nameSize*1.18)/2;
         if(featured)medal(row.rank,x+49,rowY+height/2-(index===0?5:3),index===0?32:27);
         else text(String(row.rank),x+12,top,podium?28:font-2,podium?56:columns===2?32:48,{color:index<3?accent:MUTED,minSize:18,weight:index<3?'700':'400'});
-        text(row.username,nameX,top,nameSize,nameWidth,{maxLines,weight:nameWeight});
+        text(row.display_name,nameX,top,nameSize,nameWidth,{maxLines,weight:nameWeight});
         const value=Number(row.value).toLocaleString('en-US');let valueSize=podium?(index===0?44:index<3?36:32):font;
         const valueWeight=index<3?'700':'500';ctx.font=`${valueWeight} ${valueSize}px Arial`;
         while(ctx.measureText(value).width>numericWidth&&valueSize>10){valueSize--;ctx.font=`${valueWeight} ${valueSize}px Arial`;}

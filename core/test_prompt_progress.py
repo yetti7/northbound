@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from . import test_prompt_reservations as fixture
 from .models import (BookSubmission,PromptClaim,PromptCompletion,PromptCategory,ModifierProvenance,AuditEvent,
-    MonthEnrollment,TeamAssignment,Membership,ChallengeMonth)
+    MonthEnrollment,TeamAssignment,Membership,ChallengeMonth,UserProfile)
 from .prompt_progress import categories,enrollments,progress_rows
 from .prompt_scoring import review_prompts
 from .permissions import can_review_submission
@@ -160,12 +160,17 @@ class PromptProgressTests(TransactionTestCase):
         with CaptureQueriesContext(connection) as small:self.route(staff=True)
         for i in range(30):
             user=get_user_model().objects.create_user('bulk-reader-'+str(i));member=Membership.objects.create(group=self.group,user=user)
+            if i==0:UserProfile.objects.create(user=user,discord_username='Bulk Display Name')
+            elif i==1:UserProfile.objects.create(user=user)
             MonthEnrollment.objects.create(month=self.month,participant=member)
             book=BookSubmission.objects.create(month=self.month,participant=member,title='Bulk pending book',author='Author',book_format='ebook',completed_on=date(2027,1,3),submitted_pages=368)
             PromptClaim.objects.create(category=self.bingo[0].category,prompt=self.bingo[0],participant=member,submission=book)
         with CaptureQueriesContext(connection) as many:response=self.route(staff=True)
         self.assertLessEqual(len(many),len(small)+4);self.assertLess(len(many),75)
         self.assertEqual(len(response.context['page_obj']),25);self.assertContains(response,'Next')
+        self.assertContains(response,'Bulk Display Name')
+        self.assertContains(response,'>bulk-reader-1</option>')  # Blank profile name falls back.
+        self.assertContains(response,'>bulk-reader-2</option>')  # Missing profile also falls back.
 
     def test_mobile_markup_and_challenge_navigation(self):
         response=self.route();self.assertContains(response,'prompt-progress-grid');self.assertContains(response,'<progress');self.assertContains(response,'<summary>Prompt details</summary>',html=True)

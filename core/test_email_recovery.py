@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.test import TestCase, override_settings, Client
+from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -161,9 +162,10 @@ class EmailRecoveryTests(TestCase):
         ResetLinkRedaction().filter(record);self.assertNotIn('secret-token',record.getMessage());self.assertIn('[redacted]',record.getMessage())
 
     @patch('core.email_views.send_configured_email',return_value='')
-    def test_duplicate_emails_follow_django_eligible_account_behavior(self,send):
-        get_user_model().objects.create_user('second','reader@example.org','password')
-        self.reset();self.assertEqual(send.call_count,2)
+    def test_duplicate_emails_are_blocked_and_recovery_still_delivers(self,send):
+        with self.assertRaises(IntegrityError),transaction.atomic():
+            get_user_model().objects.create_user('second','READER@example.org','password')
+        self.reset();self.assertEqual(send.call_count,1)
 
     @patch('core.email_configuration.EmailBackend')
     def test_tls_modes_and_provider_changes(self,backend):

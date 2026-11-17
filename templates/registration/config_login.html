@@ -6,5 +6,6 @@
   <h1>Owner Sign In</h1>
   <form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="form-actions"><button class="button primary">Open Platform Administration</button></div></form>
   <p><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
+  <p class="muted"><small><a href="{% url 'login' %}">← Reader Login</a></small></p>
 </section>
 {% endblock %}

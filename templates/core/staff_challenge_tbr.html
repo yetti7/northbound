@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Manage TBR · {{ participant.user.username }}{% endblock %}
+{% block title %}Manage TBR · {{ participant.user.public_name }}{% endblock %}
 {% block content %}
 <section class="form-card">
-<p class="eyebrow"><a href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">{{ month.name }} · {{ participant.user.username }}</a></p>
+<p class="eyebrow"><a href="{% url 'challenge-participant-detail' month.group.slug month.pk participant.pk %}">{{ month.name }} · {{ participant.user.public_name }}</a></p>
 <h1>Manage TBR</h1>
-<p class="lede">Help {{ participant.user.username }} with their Challenge TBR. Saving or completing this list does not complete registration.</p>
+<p class="lede">Help {{ participant.user.public_name }} with their Challenge TBR. Saving or completing this list does not complete registration.</p>
 {% if personal_tbr.confirmed_at %}<p class="notice">This TBR is complete. Staff may correct selections after the Reader lock. Books with match or award history must retain their selection and position.</p>{% endif %}
-{% if latest_change %}<p class="muted">Last updated by {{ latest_change.actor.get_username|default:"a former member" }} · {{ latest_change.created_at|date:"M j, Y, g:i a" }} · {% if latest_change.action == 'challenge_tbr.staff_updated' %}Staff-assisted{% else %}Reader-managed{% endif %}</p>{% endif %}
+{% if latest_change %}<p class="muted">Last updated by {{ latest_change.actor.public_name|default:"a former member" }} · {{ latest_change.created_at|date:"M j, Y, g:i a" }} · {% if latest_change.action == 'challenge_tbr.staff_updated' %}Staff-assisted{% else %}Reader-managed{% endif %}</p>{% endif %}
 {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
 {% if entry_actions %}
 <section aria-labelledby="saved-tbr-books">

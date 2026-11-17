@@ -27,8 +27,8 @@ from .scoring import refresh_submission_score
 class PersonalTbrCompletionRewardTests(TestCase):
     def setUp(self):
         User = get_user_model()
-        self.host_user = User.objects.create_user("tbr-completion-host")
-        self.reader_user = User.objects.create_user("tbr-completion-reader")
+        self.host_user = User.objects.create_user("tbr-completion-host", email='tbr-completion-host@example.invalid')
+        self.reader_user = User.objects.create_user("tbr-completion-reader", email='tbr-completion-reader@example.invalid')
         self.group = ReadingGroup.objects.create(name="TBR Completion", slug="tbr-completion")
         self.host = Membership.objects.create(group=self.group, user=self.host_user, display_name="Host")
         self.reader = Membership.objects.create(group=self.group, user=self.reader_user, display_name="Reader")
@@ -77,7 +77,7 @@ class PersonalTbrCompletionRewardTests(TestCase):
         self.assertFalse(PersonalTBRCompletionAward.objects.exists())
 
         # A separate Reader with exactly nine locked books but only eight matches also cannot complete.
-        other_user = get_user_model().objects.create_user("tbr-eight-of-nine")
+        other_user = get_user_model().objects.create_user("tbr-eight-of-nine", email='tbr-eight-of-nine@example.invalid')
         other = Membership.objects.create(group=self.group, user=other_user, display_name="Eight")
         enrollment = MonthEnrollment.objects.create(month=self.month, participant=other)
         tbr = PersonalTBR.objects.create(enrollment=enrollment)

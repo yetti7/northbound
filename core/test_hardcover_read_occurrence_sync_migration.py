@@ -21,7 +21,7 @@ class HardcoverReadOccurrenceMigrationTests(TransactionTestCase):
         User = old_apps.get_model("auth", "User")
         Outbox = old_apps.get_model("core", "HardcoverSyncOutbox")
         Provenance = old_apps.get_model("core", "HardcoverSyncProvenance")
-        user = User.objects.create(username="hc5-migration-reader")
+        user = User.objects.create(username="hc5-migration-reader", email='hc5-migration-reader@example.invalid')
         outbox = Outbox.objects.create(
             user_id=user.pk, event_key="book_submission:51:completed_book:v1",
             source_type="BookSubmission", source_id="51", action="completed_book",

@@ -431,7 +431,7 @@ class PercentageMigrationTests(TransactionTestCase):
             executor.migrate(before)
             apps=executor.loader.project_state(before).apps
             def model(n):return apps.get_model('core',n)
-            user=apps.get_model('auth','User').objects.create(username='migration-reader')
+            user=apps.get_model('auth','User').objects.create(username='migration-reader', email='migration-reader@example.invalid')
             group=model('ReadingGroup').objects.create(name='Migration',slug='migration')
             member=model('Membership').objects.create(group=group,user=user,display_name='Reader',role='member')
             month=model('ChallengeMonth').objects.create(group=group,name='Historical',status='completed',starts_on=date(2026,11,1),ends_on=date(2026,11,30))

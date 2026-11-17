@@ -3,6 +3,7 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
 from django.test import TestCase
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 
 from .models import ReadingGroup

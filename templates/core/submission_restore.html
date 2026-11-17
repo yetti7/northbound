@@ -5,7 +5,7 @@
   <div class="page-heading"><h1>Restore Submission</h1></div>
   <section class="card submission-compact-summary">
     <h2>{% include "core/includes/submission_title.html" %}</h2>
-    <p>{{ submission.participant.user.username }}</p>
+    <p>{{ submission.participant.user.public_name }}</p>
     <p><span class="pill status-warning">Voided</span></p>
     <p>Previous approval status: {{ submission.get_status_display }}</p>
     {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}

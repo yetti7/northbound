@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 
 from .hardcover_sync import enqueue_submission_sync, record_sync_attempt

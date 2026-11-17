@@ -29,7 +29,7 @@
       <nav>
         {% if needs_attention.available %}<a class="needs-attention-link" href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
         <details class="account-menu">
-          <summary>{{ user.username }} <span aria-hidden="true">▾</span></summary>
+          <summary>{{ user.public_name }} <span aria-hidden="true">▾</span></summary>
           <div class="account-menu-panel">
             {% if user.is_superuser %}
               <a href="{% url 'config-dashboard' %}">Platform Administration</a>

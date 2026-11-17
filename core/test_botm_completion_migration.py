@@ -34,7 +34,7 @@ class BotmCompletionMigrationTests(TransactionTestCase):
         BookSubmission = apps.get_model("core", "BookSubmission")
         BotmMatch = apps.get_model("core", "BotmMatch")
         ModifierProvenance = apps.get_model("core", "ModifierProvenance")
-        user = User.objects.create(username="pre-completion-reader")
+        user = User.objects.create(username="pre-completion-reader", email='pre-completion-reader@example.invalid')
         group = ReadingGroup.objects.create(name="Pre-completion", slug="pre-completion")
         reader = Membership.objects.create(group=group, user=user, display_name="Reader")
         month = ChallengeMonth.objects.create(

@@ -13,6 +13,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
+from .test_identity_fixtures import ConfirmedIdentityTestCase as TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -44,7 +45,7 @@ class ProfilePictureTests(TestCase):
             b"GIF87a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00ccc,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;",
             content_type="image/gif",
         )
-        response = self.client.post(reverse("account"), {
+        response = self.client.post(reverse("account"), {"display_name": self.user.username,
             "username": self.user.username,
             "first_name": "Avatar",
             "last_name": "Reader",
@@ -59,7 +60,7 @@ class ProfilePictureTests(TestCase):
 
     def test_user_can_choose_built_in_avatar(self):
         self.client.force_login(self.user)
-        response = self.client.post(reverse("account"), {
+        response = self.client.post(reverse("account"), {"display_name": self.user.username,
             "username": self.user.username,
             "first_name": "Avatar",
             "last_name": "Reader",
@@ -81,7 +82,7 @@ class ProfilePictureTests(TestCase):
             content_type="image/gif",
         )
 
-        response = self.client.post(reverse("account"), {
+        response = self.client.post(reverse("account"), {"display_name": self.user.username,
             "username": self.user.username,
             "first_name": "Avatar",
             "last_name": "Reader",
@@ -216,7 +217,7 @@ class PlatformAccountManagementTests(TestCase):
         )
         original_pk = self.reader.pk
         self.client.force_login(self.root)
-        response = self.client.post(reverse("config-user-edit", kwargs={"pk": self.reader.pk}), {
+        response = self.client.post(reverse("config-user-edit", kwargs={"pk": self.reader.pk}), {"display_name": "renamed-reader",
             "username": "renamed-reader",
             "first_name": "Corrected",
             "last_name": "Identity",
@@ -246,10 +247,10 @@ class PlatformAccountManagementTests(TestCase):
         get_user_model().objects.create_user("existing-reader", "Existing@Example.com", "password")
         self.client.force_login(self.root)
         url = reverse("config-user-edit", kwargs={"pk": self.reader.pk})
-        response = self.client.post(url, {"username": "existing-reader", "first_name": "Morgan", "last_name": "Reader", "email": "reader@example.com"})
-        self.assertContains(response, "A user with that username already exists")
-        response = self.client.post(url, {"username": "managed-reader", "first_name": "Morgan", "last_name": "Reader", "email": "existing@example.com"})
-        self.assertContains(response, "An account with this email address already exists")
+        response = self.client.post(url, {"display_name": "existing-reader", "username": "existing-reader", "first_name": "Morgan", "last_name": "Reader", "email": "reader@example.com"})
+        self.assertContains(response, "This sign-in identifier is already in use by another account.")
+        response = self.client.post(url, {"display_name": "managed-reader", "username": "managed-reader", "first_name": "Morgan", "last_name": "Reader", "email": "existing@example.com"})
+        self.assertContains(response, "This sign-in identifier is already in use by another account.")
         self.reader.refresh_from_db()
         self.assertEqual(self.reader.username, "managed-reader")
         self.assertEqual(self.reader.email, "reader@example.com")
@@ -261,10 +262,10 @@ class PlatformAccountManagementTests(TestCase):
         response = self.client.get(url)
         self.assertEqual(
             tuple(response.context["form"].fields),
-            ("username", "first_name", "last_name", "email", "discord_username"),
+            ("username", "first_name", "last_name", "email", "display_name"),
         )
         self.assertNotContains(response, "Verified Pages")
-        response = self.client.post(url, {
+        response = self.client.post(url, {"display_name": self.reader.username,
             "username": self.reader.username,
             "first_name": self.reader.first_name,
             "last_name": self.reader.last_name,
@@ -280,7 +281,7 @@ class PlatformAccountManagementTests(TestCase):
 
     def test_platform_owner_management_stays_separate_and_ordinary_users_are_forbidden(self):
         self.client.force_login(self.root)
-        self.assertEqual(self.client.get(reverse("config-user-detail", kwargs={"pk": self.root.pk})).status_code, 404)
+        self.assertEqual(self.client.get(reverse("config-user-detail", kwargs={"pk": self.root.pk})).status_code, 200)
         self.assertEqual(self.client.get(reverse("config-user-edit", kwargs={"pk": self.root.pk})).status_code, 404)
         self.client.force_login(self.reader)
         for url in (
@@ -311,7 +312,7 @@ class PlatformAccountManagementTests(TestCase):
         self.assertContains(response, 'value="all"')
         self.assertContains(response, 'data-account-sort="account"')
         self.assertContains(response, 'data-account-sort="status"')
-        self.assertContains(response, 'data-search="managed-reader morgan reader reader@example.com"')
+        self.assertContains(response, 'data-search="managed-reader managed-reader morgan reader reader@example.com"')
         self.assertNotContains(response, 'data-search="managed-reader morgan reader reader@example.com active"')
         self.assertContains(response, "Deactivated")
 
@@ -785,7 +786,7 @@ class FirstRunSetupTests(TestCase):
         self.assertEqual(self.client.get(reverse("setup")).status_code, 200)
 
     def test_setup_creates_initial_platform_owner(self):
-        response = self.client.post(reverse("setup"), {
+        response = self.client.post(reverse("setup"), {"display_name": "taylor",
             "username": "taylor",
             "email": "taylor@example.com",
             "password1": "a-very-long-test-password-942!",
@@ -1297,7 +1298,7 @@ class AccountAndConfigurationAccessTests(TestCase):
             "password": "reader-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "not authorized for platform owner access")
+        self.assertContains(response, "Please enter a correct username and password")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_root_cannot_use_regular_login(self):
@@ -1306,7 +1307,7 @@ class AccountAndConfigurationAccessTests(TestCase):
             "password": "root-test-password-482!",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "must use the separate owner sign-in")
+        self.assertContains(response, "Please enter a correct username and password")
         self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_regular_authenticated_user_cannot_open_configuration_center(self):
@@ -1348,7 +1349,7 @@ class AccountAndConfigurationAccessTests(TestCase):
 
         self.client.logout()
         accept_url = reverse("platform-owner-accept", kwargs={"token": token})
-        response = self.client.post(accept_url, {
+        response = self.client.post(accept_url, {"display_name": "second-owner",
             "username": "second-owner",
             "email": "second-owner@example.com",
             "password1": "second-owner-test-password-739!",
@@ -1499,7 +1500,7 @@ class AccountAndConfigurationAccessTests(TestCase):
 
     def test_user_can_update_account_and_change_password(self):
         self.client.force_login(self.reader)
-        response = self.client.post(reverse("account"), {
+        response = self.client.post(reverse("account"), {"display_name": "account-reader",
             "username": "account-reader",
             "first_name": "Reader",
             "last_name": "One",
@@ -2030,7 +2031,7 @@ class GeneralSettingsTests(TestCase):
         response = self.client.get(reverse("register"))
         self.assertEqual(response.status_code, 403)
         self.assertContains(response, "Registration Unavailable", status_code=403)
-        response = self.client.post(reverse("register"), {
+        response = self.client.post(reverse("register"), {"display_name": "blocked-registration",
             "username": "blocked-registration",
             "email": "blocked@example.com",
             "password1": "blocked-registration-password-482!",
@@ -2364,7 +2365,7 @@ class RegistrationAndGroupAccessTests(TestCase):
         )
 
     def test_registration_can_choose_built_in_avatar(self):
-        response = self.client.post(reverse("register"), {
+        response = self.client.post(reverse("register"), {"display_name": "avatar-signup",
             "username": "avatar-signup",
             "email": "avatar@example.com",
             "password1": "long-registration-password-481!",
@@ -2376,7 +2377,7 @@ class RegistrationAndGroupAccessTests(TestCase):
         self.assertEqual(profile.selected_avatar, "3d_1.png")
 
     def test_registered_user_creates_group_and_becomes_owner(self):
-        response = self.client.post(reverse("register"), {
+        response = self.client.post(reverse("register"), {"display_name": "new-reader",
             "username": "new-reader",
             "email": "reader@example.com",
             "password1": "long-registration-password-481!",

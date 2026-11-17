@@ -89,6 +89,7 @@ MIDDLEWARE = [
     "core.middleware.RequirePlatformSetupMiddleware",
     "core.middleware.RequirePasswordChangeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "core.middleware.RequireDisplayNameConfirmationMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 

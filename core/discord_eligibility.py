@@ -32,6 +32,9 @@ def challenge_eligible(month, destination):
 
 def payload_eligible(payload, *, legacy=False):
     """Reload consent and destination gates immediately before each external POST."""
+    from .discord_policy import delivery_policy
+    if not delivery_policy().allowed:
+        return False
     if not isinstance(payload, ChallengeMessage):
         return True  # Only generic connectivity/empty notices have no Challenge.
     from .models import ChallengeMonth, GroupDiscordNotification

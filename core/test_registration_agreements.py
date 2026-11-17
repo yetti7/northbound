@@ -202,7 +202,7 @@ class RegistrationAgreementMigrationTests(TransactionTestCase):
         executor.migrate([('core','0063_immersive_reading')])
         try:
             apps=executor.loader.project_state([('core','0063_immersive_reading')]).apps
-            user=apps.get_model('auth','User').objects.create(username='agreement-old')
+            user=apps.get_model('auth','User').objects.create(username='agreement-old', email='agreement-old@example.invalid')
             group=apps.get_model('core','ReadingGroup').objects.create(name='Old',slug='old')
             reader=apps.get_model('core','Membership').objects.create(group=group,user=user,display_name='Old Reader')
             month=apps.get_model('core','ChallengeMonth').objects.create(group=group,name='Old')

@@ -3,7 +3,7 @@ const source=fs.readFileSync(__dirname+'/reader_rumble.js','utf8');
 async function check(top,count,{missing=false,fail=false,long=false,changeEarly=false,unicode=false,art='both'}={}){
   const drawn=[],images=[],downloads=[],handlers={},sizes=[],created=[],revoked=[],panels=[],artwork=[];
   let submits=0;
-  const data={team:long?'A very long Team name '.repeat(7):'Team A',challenge:long?'A wonderfully long Challenge title '.repeat(6):'November Challenge',top,metric:'Total Challenge Points',timezone:'America/New_York',filename:'reader-rumble-november-team-a',logo:missing||['none','banner'].includes(art)?'':art==='broken'?'/broken-logo.png':'/logo.png',banner:missing||['none','logo'].includes(art)?'':art==='broken'?'/broken-banner.png':'/banner.png',rows:Array.from({length:count},(_,i)=>({rank:i+1,username:unicode?'𐐀漢字'.repeat(50):long?'Reader_'+i+'x'.repeat(145):'Reader '+i,value:count===3?0:long?1234567890123-i:10000-i}))};
+  const data={team:long?'A very long Team name '.repeat(7):'Team A',challenge:long?'A wonderfully long Challenge title '.repeat(6):'November Challenge',top,metric:'Total Challenge Points',timezone:'America/New_York',filename:'reader-rumble-november-team-a',logo:missing||['none','banner'].includes(art)?'':art==='broken'?'/broken-logo.png':'/logo.png',banner:missing||['none','logo'].includes(art)?'':art==='broken'?'/broken-banner.png':'/banner.png',rows:Array.from({length:count},(_,i)=>({rank:i+1,display_name:unicode?'𐐀漢字'.repeat(50):long?'Reader_'+i+'x'.repeat(145):'Reader '+i,value:count===3?0:long?1234567890123-i:10000-i}))};
   function element(tag){const e={tag,children:[],attrs:{},listeners:{},disabled:false,append(...items){this.children.push(...items);},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this[k];},addEventListener(k,fn){this.listeners[k]=fn;},focus(){this.focused=true;},showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();}};created.push(e);return e;}
   const status={textContent:''},button=element('download');button.disabled=true;
   const form={addEventListener:(event,callback)=>handlers.change=callback,requestSubmit:()=>submits++};
@@ -44,7 +44,7 @@ async function check(top,count,{missing=false,fail=false,long=false,changeEarly=
   for(const row of drawn.filter(row=>count>0&&row.y>430&&row.y<1200&&![68,572,105].includes(row.x))){
     if(row.align==='right')continue;
     const max=top>=20?(row.x<560?388:892):800;
-    assert.ok(row.x+row.width<=max+2,'username must not reach reserved numeric region '+JSON.stringify({top,count,row,max}));
+    assert.ok(row.x+row.width<=max+2,'Display Name must not reach reserved numeric region '+JSON.stringify({top,count,row,max}));
   }
   assert.ok(drawn.every(row=>Array.from(row.value).every(char=>char.codePointAt(0)<0xD800||char.codePointAt(0)>0xDFFF)),'truncation preserves Unicode characters');
   if(long&&count)assert.ok(drawn.some(row=>row.value.endsWith('…')),'long names truncate deliberately');

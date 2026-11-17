@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Confirm Your Display Name · Northbound{% endblock %}
+{% block content %}
+<section class="form-card">
+<h2>Confirm Your Display Name</h2>
+<p>Northbound now uses your Display Name throughout the application, including Reader Rumbles, book submissions, team rosters, and leaderboards.</p>
+<p>Please review your Display Name below. If it is already correct, simply select Save to continue. If it is blank, enter a Display Name.</p>
+<form method="post" class="stacked-form standard-form">{% csrf_token %}
+<input type="hidden" name="confirm_display_name" value="1">{{ form.as_p }}<button class="button primary">Save</button>
+</form>
+</section>
+{% endblock %}

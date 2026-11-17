@@ -1,4 +1,5 @@
 """Read-only prompt progress, scoped before any private claim is fetched."""
+from .identity import public_name_order
 from django.core.exceptions import PermissionDenied
 from django.db.models import Prefetch, Q, F
 from .models import (PromptCategory,ChallengePrompt,PromptClaim,PromptCompletion,MonthEnrollment,TeamAssignment,Membership)
@@ -30,14 +31,14 @@ def reporting_scope(user,month):
 
 def enrollments_and_scope(user,month,*,staff=False):
     if not user.is_active or not can_view_challenge(user,month):raise PermissionDenied
-    query=MonthEnrollment.objects.filter(month=month,participant__group=month.group).select_related('participant__user','credited_team')
+    query=MonthEnrollment.objects.filter(month=month,participant__group=month.group).select_related('participant__user__northbound_profile','credited_team')
     if not staff:
         return query.filter(participant__user=user),None
     scope=reporting_scope(user,month)
     if scope is None:raise PermissionDenied
     if scope[0]=='team':
         query=query.filter(is_active=True,participant_id__in=TeamAssignment.objects.filter(month=month,ended_at__isnull=True,team_id__in=scope[1]).values('participant_id'))
-    return query.order_by('participant__user__username','pk'),scope
+    return query.order_by(public_name_order('participant__user'),'pk'),scope
 
 
 def enrollments(user,month,*,staff=False):

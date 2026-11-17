@@ -23,7 +23,7 @@
 <fieldset class="wrapped-export" data-wrapped-export hidden>
 <legend>Download Wrapped</legend>
 <p class="muted">Names and community artwork are excluded unless selected below.</p>
-{% if recap.perspective == 'reader' %}<label><input type="checkbox" data-export-identity="reader"> Include Reader username</label>{% endif %}
+{% if recap.perspective == 'reader' %}<label><input type="checkbox" data-export-identity="reader"> Include Reader Display Name</label>{% endif %}
 <div class="wrapped-branding-controls"><label for="id_branding_source">Branding Source</label>{{ branding_form.branding_source }}{% if has_team_branding %}<div data-branding-team-control><label for="id_branding_team">Team artwork only</label>{{ branding_form.branding_team }}</div>{% endif %}</div>
 <label><input type="checkbox" data-export-identity="community" aria-describedby="wrapped-branding-help"> Include Community Branding</label>
 <p class="muted" id="wrapped-branding-help">Branding changes artwork only, never the recap. Community Branding includes the selected identity’s name and artwork, including a selected Team name. Separate Reader/team-name controls affect report labels only.</p>

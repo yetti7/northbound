@@ -48,16 +48,16 @@ def build_reader_rumble(*, actor, team, top=20, bonuses=False, include_zero=Fals
     members = list(Membership.objects.filter(group=team.month.group,
         month_enrollments__month=team.month, month_enrollments__is_active=True,
         team_assignments__month=team.month, team_assignments__team=team,
-        team_assignments__ended_at__isnull=True).select_related('user').distinct())
+        team_assignments__ended_at__isnull=True).select_related('user__northbound_profile').distinct())
     scores = challenge_score_totals(month=team.month, participant_ids=[m.pk for m in members])
     key = 'total_pages' if bonuses else 'base_pages'
     if not include_zero:
         members = [m for m in members if scores[m.pk][key] != 0]
-    members.sort(key=lambda m: (-scores[m.pk][key], m.user.username.casefold(), m.pk))
+    members.sort(key=lambda m: (-scores[m.pk][key], m.user.public_name.casefold(), m.pk))
     artwork = team_branding(actor, team, presentation=False)
     return {'team': team.name, 'challenge': team.month.name, 'top': top,
         'metric': 'Total Challenge Points' if bonuses else 'Base Pages',
-        'rows': [{'rank': rank, 'username': m.user.username, 'value': scores[m.pk][key]}
+        'rows': [{'rank': rank, 'participant_id': m.pk, 'display_name': m.user.public_name, 'value': scores[m.pk][key]}
                  for rank, m in enumerate(members[:top], 1)],
         'timezone': team.month.group.timezone,
         'logo': artwork.get('effective_logo', ''), 'banner': artwork.get('effective_banner', ''),

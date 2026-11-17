@@ -16,8 +16,8 @@ def submission_page(month,actor,*,query,status,size,number):
     elif status=='withdrawn':books=books.none();photos=photos.filter(status='withdrawn')
     elif status!='all':books=books.filter(is_removed=False,status=status);photos=photos.filter(status=status)
     if query:
-        books=books.filter(Q(participant__user__username__icontains=query)|Q(title__icontains=query))
-        photos=photos.filter(Q(participant__user__username__icontains=query)|Q(prompt_claim__selection_evidence__description__icontains=query)|Q(prompt_claim__prompt__description__icontains=query))
+        books=books.filter(Q(participant__user__username__icontains=query)|Q(participant__user__northbound_profile__discord_username__icontains=query)|Q(title__icontains=query))
+        photos=photos.filter(Q(participant__user__username__icontains=query)|Q(participant__user__northbound_profile__discord_username__icontains=query)|Q(prompt_claim__selection_evidence__description__icontains=query)|Q(prompt_claim__prompt__description__icontains=query))
     b=books.order_by().annotate(_row_kind=Value('book',output_field=CharField())).values('pk','submitted_at','_row_kind')
     p=photos.order_by().annotate(_row_kind=Value('photo',output_field=CharField())).values('pk','submitted_at','_row_kind')
     page=Paginator(b.union(p).order_by('-submitted_at','-pk','_row_kind'),size).get_page(number)

@@ -106,7 +106,7 @@ class DiscordCleanupTests(TestCase):
         with override_settings(NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED=False):
             self.assertIn('Global Discord delivery is disabled',schedule_diagnostics(report,group=self.group)['readiness'])
         with override_settings(NORTHBOUND_DISCORD_SCHEDULER_ENABLED=False):
-            self.assertIn('global scheduling gate is disabled',schedule_diagnostics(report,group=self.group)['readiness'])
+            self.assertIn('scheduled-report worker capability is unavailable',schedule_diagnostics(report,group=self.group)['readiness'])
 
     def test_disabled_frequency_missing_frequency_and_worker_status(self):
         self.assertIn('no report frequency',schedule_diagnostics(None,group=self.group)['readiness'])

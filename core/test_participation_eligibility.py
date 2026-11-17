@@ -236,7 +236,7 @@ class ParticipationEligibilityMigrationTests(TransactionTestCase):
         executor = MigrationExecutor(connection)
         executor.migrate(before)
         apps = executor.loader.project_state(before).apps
-        user = apps.get_model("auth", "User").objects.create(username="legacy-reader")
+        user = apps.get_model("auth", "User").objects.create(username="legacy-reader", email='legacy-reader@example.invalid')
         group = apps.get_model("core", "ReadingGroup").objects.create(name="Legacy", slug="legacy")
         reader = apps.get_model("core", "Membership").objects.create(group=group, user=user, display_name="Reader")
         month = apps.get_model("core", "ChallengeMonth").objects.create(group=group, name="Legacy")
