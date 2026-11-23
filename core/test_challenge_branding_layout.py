@@ -31,6 +31,8 @@ class ChallengeBrandingLayoutTests(TestCase):
         for response in [self.detail(),self.listing()]:
             self.assertContains(response,self.month.logo.url);self.assertNotContains(response,self.group.logo.url);self.assertNotContains(response,self.group.banner.url)
         self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.assertNotContains(self.detail(),self.group.banner.url)
+        self.month.branding_mode='banner';self.month.save(update_fields=['branding_mode'])
         self.assertContains(self.detail(),self.group.banner.url)
         self.save(target=self.month,banner=fixture.upload());self.month.refresh_from_db()
         for response in [self.detail(),self.listing()]:

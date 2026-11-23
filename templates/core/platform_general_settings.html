@@ -8,7 +8,7 @@
     <h2>Platform Configuration</h2>
     <div class="notice info">
       <strong>Global Discord Notifications: {{ discord_policy.globally_enabled|yesno:"On,Off" }}</strong>
-      {% if discord_policy.source == 'environment' %}<p>Inherited from the deployment environment. Saving selects an explicit database-backed On or Off value.</p>{% elif discord_policy.source == 'gui' %}<p>Saved in Northbound. This value overrides the legacy environment setting.</p>{% else %}<p>The saved policy could not be read. Delivery is suppressed.</p>{% endif %}
+      {% if discord_policy.source == 'environment' %}<p>Inherited from the deployment environment. Inherit Environment continues to follow that setting.</p>{% elif discord_policy.source == 'gui' %}<p>Saved in Northbound. This value overrides the environment setting. Select Inherit Environment to follow it again.</p>{% else %}<p>The saved policy could not be read. Delivery is suppressed.</p>{% endif %}
       <p>{{ discord_delivery_notice }}</p>
     </div>
     <form method="post" class="stacked-form standard-form">{% csrf_token %}{{ form.as_p }}<div class="action-row form-actions"><button class="button primary">Save General Settings</button>{% if logical_parent_url %}<a class="button secondary" href="{{ logical_parent_url }}">Cancel</a>{% endif %}</div></form>

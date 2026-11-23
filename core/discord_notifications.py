@@ -35,6 +35,8 @@ def validate_webhook(value):
 
 
 class DiscordNotificationForm(forms.Form):
+    cleanup_mode = forms.ChoiceField(required=False, choices=GroupDiscordNotification.CLEANUP_CHOICES,
+        label='Replace previous recurring notifications', help_text='Scheduled Reports posts the replacement before deleting its previous tracked message set. Manual messages, immediate events and legacy digests are unchanged.')
     enabled = forms.BooleanField(required=False, label='Enable destination')
     webhook_url = forms.CharField(required=False, max_length=2048, strip=True,
         widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
@@ -56,7 +58,7 @@ class DiscordNotificationForm(forms.Form):
 
 @sensitive_variables()
 @transaction.atomic
-def configure_notifications(*, group, actor, enabled, webhook_url='', remove=False, destination=None):
+def configure_notifications(*, group, actor, enabled, webhook_url='', remove=False, destination=None, cleanup_mode=None):
     group = ReadingGroup.objects.select_for_update().get(pk=group.pk, is_active=True)
     actor = get_user_model().objects.get(pk=actor.pk)
     if not can_configure_discord_notifications(actor, group):
@@ -70,7 +72,13 @@ def configure_notifications(*, group, actor, enabled, webhook_url='', remove=Fal
         enabled_field, webhook_field = 'enabled', 'encrypted_webhook'
     else:
         enabled_field, webhook_field = destination_fields(destination)
+    cleanup_field = destination + '_cleanup' if destination in {'community','moderator'} else None
+    if cleanup_mode is not None and (cleanup_field is None or cleanup_mode not in dict(config.CLEANUP_CHOICES)):
+        raise ValidationError('Choose a supported recurring cleanup setting.')
+    old_cleanup = getattr(config, cleanup_field) if cleanup_field else None
     before = (getattr(config, enabled_field), getattr(config, webhook_field))
+    if cleanup_field and cleanup_mode is None and not before[1] and webhook_url:
+        cleanup_mode = 'scheduled' if destination == 'moderator' else 'none'
     if remove:
         setattr(config, webhook_field, '')
         enabled = False
@@ -79,12 +87,14 @@ def configure_notifications(*, group, actor, enabled, webhook_url='', remove=Fal
     if enabled and not getattr(config, webhook_field):
         raise ValidationError('Save a webhook before enabling notifications.')
     setattr(config, enabled_field, enabled)
-    if before != (enabled, getattr(config, webhook_field)):
-        config.save(update_fields=[enabled_field, webhook_field])
+    if cleanup_field and cleanup_mode is not None:
+        setattr(config, cleanup_field, cleanup_mode)
+    if before != (enabled, getattr(config, webhook_field)) or (cleanup_field and getattr(config,cleanup_field) != old_cleanup):
+        config.save(update_fields=[enabled_field, webhook_field] + ([cleanup_field] if cleanup_field else []))
         AuditEvent.objects.create(actor=actor, group=group, action='group.discord_notifications_updated',
             object_type='ReadingGroup', object_id=str(group.pk),
             summary=json.dumps({'destination': destination or 'legacy_moderator_digest',
-                                'enabled': enabled, 'webhook_changed': bool(webhook_url or remove),
+                                'enabled': enabled, 'cleanup': getattr(config, cleanup_field) if cleanup_field else 'none', 'webhook_changed': bool(webhook_url or remove),
                                 'webhook_configured': bool(getattr(config, webhook_field))}))
     return config
 
@@ -223,18 +233,31 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 @sensitive_variables()
-def send_webhook(url, payload, *, detailed=False, retryable=False):
-    """Return only safe status/cooldown values; never return provider messages."""
+def send_webhook(url, payload, *, detailed=False, retryable=False, capture_message=False):
+    """Return safe status/cooldown and optionally a validated scheduled-message ID."""
+    def result(status, cooldown=0, message_id=None):
+        return (status, cooldown, message_id) if capture_message else (status, cooldown)
     try:
         validate_webhook(url)
-        request = Request(url, data=json.dumps(payload).encode(),
+        request = Request(url + ('?wait=true' if capture_message else ''), data=json.dumps(payload).encode(),
             headers={'Content-Type': 'application/json', 'User-Agent': 'Northbound review digest'}, method='POST')
         # Re-read for every POST, including generic tests and multipart pages.
         policy = delivery_policy()
         if not policy.allowed:
-            return (policy.blocking_reason if detailed else 'disabled'), 0
+            return result(policy.blocking_reason if detailed else 'disabled')
         with build_opener(NoRedirect()).open(request, timeout=10) as response:
-            return ('sent', 0) if 200 <= response.status < 300 else ('rejected' if detailed else 'failed', 0)
+            if not 200 <= response.status < 300:
+                return result('rejected' if detailed else 'failed')
+            if capture_message:
+                try:
+                    raw = response.read(65537)
+                    if len(raw) > 65536: return result('uncertain')
+                    message_id = json.loads(raw).get('id')
+                    if not isinstance(message_id,str) or not re.fullmatch(r'[0-9]{17,20}',message_id): return result('uncertain')
+                except (ValueError, TypeError, AttributeError):
+                    return result('uncertain')
+                return result('sent', message_id=message_id)
+            return result('sent')
     except HTTPError as exc:
         if exc.code == 429:
             try:
@@ -243,17 +266,17 @@ def send_webhook(url, payload, *, detailed=False, retryable=False):
                 delay = min(86400, max(1 if retryable else 3600, delay))
             except (ValueError, TypeError, AttributeError):
                 delay = 3600
-            return 'rate_limited', delay
+            return result('rate_limited', delay)
         if retryable and 500 <= exc.code < 600:
-            return 'server_error', 0
-        return ('rejected' if detailed else 'failed'), 0
+            return result('server_error')
+        return result('rejected' if detailed else 'failed')
     except TimeoutError:
-        return ('timeout' if detailed else 'failed'), 0
+        return result('timeout' if detailed else 'failed')
     except URLError as exc:
         status = 'timeout' if isinstance(exc.reason, TimeoutError) else 'network_error'
-        return (status if detailed else 'failed'), 0
+        return result(status if detailed else 'failed')
     except (OSError, ValidationError, ValueError):
-        return ('network_error' if detailed else 'failed'), 0
+        return result('network_error' if detailed else 'failed')
 
 
 def delivery_enabled():

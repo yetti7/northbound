@@ -11,7 +11,7 @@ from django.core.exceptions import PermissionDenied
 from .models import ReadingGroup, ChallengeMonth, AuditEvent, Membership, Team, ChallengeStaffAssignment
 from .permissions import membership_for, can_manage_months, can_operate_challenge, can_view_challenge, challenge_history_locked, is_challenge_host
 
-BRANDING_MODE_LABELS = {"logo": "Compact Header", "banner": "Banner Header"}
+BRANDING_MODE_LABELS = {"logo": "Logo Only", "banner_only": "Banner Only", "banner": "Logo and Banner"}
 
 APPEARANCE_FIELDS = ["gradient_enabled", "gradient_coverage", "gradient_darkness"]
 
@@ -119,6 +119,8 @@ class BrandingForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if self.is_bound:
             self.data = self.data.copy()
+            if 'branding_mode' in self.fields:
+                self.data.setdefault('branding_mode', self.instance.branding_mode)
             for name in ('gradient_coverage', 'gradient_darkness'):
                 self.data.setdefault(name, getattr(self.instance, name))
         if 'branding_mode' in self.fields:
@@ -144,15 +146,14 @@ class BrandingForm(forms.ModelForm):
 class ChallengeBrandingForm(BrandingForm):
     class Meta:
         model = ChallengeMonth
-        fields = ['logo', 'banner', *APPEARANCE_FIELDS]
+        fields = ['branding_mode', 'logo', 'banner', *APPEARANCE_FIELDS]
 
 
 class TeamBrandingForm(BrandingForm):
-    hide_inherited_logo = forms.BooleanField(required=False, label="Hide Inherited Logo")
 
     class Meta:
         model = Team
-        fields = ['logo', 'banner', 'hide_inherited_logo', *APPEARANCE_FIELDS]
+        fields = ['branding_mode', 'logo', 'banner', *APPEARANCE_FIELDS]
 
 
 def branding_form_class(target):
@@ -179,13 +180,18 @@ def update_branding(*, actor, target, data, files):
         form = branding_form_class(locked)(data, files, instance=locked)
         if not form.is_valid():
             return form, False
-        if not form.has_changed():
+        legacy = isinstance(locked, Team) and locked.branding_legacy_visibility
+        if not form.has_changed() and not legacy:
             return form, False
         fields = form._meta.fields
         # is_valid constructs instance changes; read original values separately for audit.
         original = type(target).objects.get(pk=target.pk)
         before = {key: str(getattr(original, key)) for key in fields}
         updated = form.save(commit=False)
+        if legacy:
+            updated.branding_legacy_visibility = False
+            fields = [*fields, "branding_legacy_visibility"]
+            before["branding_legacy_visibility"] = "True"
         updated.save(update_fields=fields)
         group = updated.month.group if isinstance(updated, Team) else updated if isinstance(updated, ReadingGroup) else updated.group
         context = {'team_id': updated.pk, 'challenge_id': updated.month_id} if isinstance(updated, Team) else {}
@@ -209,13 +215,16 @@ def community_branding(viewer, group, month=None):
         return {}
     if month and (month.group_id != group.pk or not can_view_challenge(viewer, month)):
         return {}
-    result = {'group_name':group.name, 'group_logo':_asset(group.logo), 'group_appearance': banner_appearance(group)}
+    mode = month.branding_mode if month else group.branding_mode
+    result = {'group_name': group.name,
+              'group_logo': _asset(group.logo) if mode != 'banner_only' else '',
+              'group_banner': _asset(group.banner) if mode != 'logo' else '',
+              'group_appearance': banner_appearance(group)}
     if month:
-        result.update(challenge_name=month.name, challenge_logo=_asset(month.logo), challenge_appearance=banner_appearance(month))
-    if group.branding_mode == 'banner':
-        result['group_banner'] = _asset(group.banner)
-        if month:
-            result['challenge_banner'] = _asset(month.banner)
+        result.update(challenge_name=month.name,
+            challenge_logo=_asset(month.logo) if mode != 'banner_only' else '',
+            challenge_banner=_asset(month.banner) if mode != 'logo' else '',
+            challenge_appearance=banner_appearance(month))
     return result
 
 
@@ -238,16 +247,17 @@ def _team_branding_assets(team, community, *, presentation=True):
     result = dict(community)
     if not result:
         return {}
-    result.update(team_name=team.name, team_logo=_asset(team.logo))
-    inherited_logo = '' if presentation and team.hide_inherited_logo else result.get('challenge_logo') or result.get('group_logo') or ''
-    result['effective_logo'] = result['team_logo'] or inherited_logo
-    result['effective_banner'] = ''
-    if team.month.group.branding_mode == 'banner':
-        result['team_banner'] = _asset(team.banner)
-        result['effective_banner'] = result['team_banner'] or result.get('challenge_banner') or result.get('group_banner') or ''
+    logo = _asset(team.logo)
+    inherited_logo = _asset(team.month.logo) or _asset(team.month.group.logo)
+    legacy = team.branding_legacy_visibility and team.hide_inherited_logo
+    result.update(team_name=team.name, team_logo=logo, team_banner=_asset(team.banner))
+    result['effective_logo'] = logo or ('' if presentation and legacy else inherited_logo)
+    result['effective_banner'] = result['team_banner'] or _asset(team.month.banner) or _asset(team.month.group.banner)
     if presentation:
+        if team.branding_mode == 'banner_only': result['effective_logo'] = ''
+        if team.branding_mode == 'logo': result['effective_banner'] = ''
         result['appearance'] = banner_appearance(team)
-        result['showcase'] = bool(result.get('team_banner') and team.hide_inherited_logo and not result['team_logo'])
+        result['showcase'] = bool(result['team_banner'] and result['effective_banner'] and not result['effective_logo'])
     return result
 
 

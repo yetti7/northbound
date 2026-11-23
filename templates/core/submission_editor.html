@@ -1,4 +1,4 @@
-{% extends 'core/submission_workspace.html' %}{% load static navigation %}
+{% extends 'core/submission_workspace.html' %}{% load static navigation team_books %}
 {% block workspace_content %}<h2>Edit Book</h2><p>Book corrections preserve their existing status rules, identity checks and scoring safeguards. Approved changes require the signed impact preview before confirmation.</p>
   <form method="post" action="{{ workspace.edit_post_url }}"{% if form.is_bound %} data-unsaved-state{% endif %} data-requires-preview="{% if submission.status == 'approved' %}true{% else %}false{% endif %}" class="stacked-form submission-editor-form" data-correction-form data-compact-editor>
     {% csrf_token %}{{ form.version }}{{ form.preview_token }}{{ form.edition }}
@@ -8,6 +8,8 @@
     <details class="card submission-editor-section"{% if book_open %} open{% endif %}>
       <summary>Book Details</summary><p>Format: <strong>{{ submission.get_book_format_display }}</strong>. Manual format correction is not supported by this editor. A verified Hardcover edition change may update the format through the existing correction service.</p>
       {{ form.title.as_field_group }}{{ form.author.as_field_group }}
+      <p>Reference URL: {% with reference=submission.reference_url|safe_reference_url %}{% if reference %}<a href="{{ reference }}" target="_blank" rel="noopener noreferrer">{{ reference }}</a>{% else %}None available{% endif %}{% endwith %}</p>
+      <p class="muted">Reference URLs are shown read-only; the existing correction workflow does not edit this field.</p>
       {{ form.edition.errors }}
       <details class="submission-editor-section"{% if association_changed or form.edition.errors %} open{% endif %}>
         <summary>{% if submission.catalog_edition_id %}Change Hardcover edition{% else %}Link a Hardcover edition{% endif %}</summary>
@@ -68,6 +70,8 @@
       <button class="button primary" type="submit" data-correction-submit{% if reload_required %} disabled{% endif %}>{% if preview %}Apply Changes{% elif submission.status == 'approved' %}Preview Changes{% else %}Save Pending Changes{% endif %}</button>
       <a class="button secondary" href="{{ cancel_url }}">Cancel</a>
     </div>
-  </form><details class="workspace-advanced"><summary>Specialized correction workflows</summary><p>These focused forms retain their separate field restrictions and confirmation steps.</p><a href="{{ focused_book_url }}">Fix Book Information</a> · <a href="{{ focused_pages_url }}">Fix Pages / Themes</a> · <a href="{{ advanced_url }}">Advanced Corrections</a></details>
+  </form>
+{% include 'core/includes/book_management_overview.html' %}
+<details class="workspace-advanced"><summary>Specialized correction workflows</summary><p>These focused forms retain their separate field restrictions and confirmation steps.</p><a href="{{ focused_book_url }}">Fix Book Information</a> · <a href="{{ focused_pages_url }}">Fix Pages / Themes</a> · <a href="{{ advanced_url }}">Advanced Corrections</a></details>
 <script src="{% static 'js/theme_eligibility.js' %}" defer></script><script src="{% static 'js/submission_association.js' %}?v=2" defer></script>
 {% endblock %}

@@ -2,16 +2,16 @@
 {% block extra_head %}<link rel="stylesheet" href="{% static 'css/challenge_identity.css' %}">{% if team %}<link rel="stylesheet" href="{% static 'css/team_identity.css' %}">{% endif %}{% endblock %}
 {% block title %}Branding · {{ team.name|default:month.name|default:group.name }}{% endblock %}
 {% block content %}<div class="branding-settings-page"><div class="page-heading"><div><p class="eyebrow">{% if team %}Team Settings{% elif month %}Challenge Settings{% else %}Group Settings{% endif %}</p><h1>Branding · {{ team.name|default:month.name|default:group.name }}</h1><p>Optional community artwork. Northbound remains the application identity.</p></div></div>
-{% if month %}<p class="notice neutral">Display mode is inherited from {{ group.name }}: {{ group.branding_mode|branding_mode_label }}. {% if team %}Missing Team artwork inherits Challenge, then Group artwork. Removing an override restores inheritance.{% else %}Missing Challenge artwork uses available Group branding.{% endif %}</p>{% endif %}
+{% if month %}<p class="notice neutral">Display preference belongs to this {% if team %}Team{% else %}Challenge{% endif %}; artwork can still inherit. {% if team %}Missing Team artwork inherits Challenge, then Group artwork. Removing an override restores inheritance.{% else %}Missing Challenge artwork uses available Group branding.{% endif %}</p>{% endif %}
 {% if not editable %}<p class="notice neutral">Read-only. Artwork changes are unavailable for your role or this Challenge lifecycle stage.</p>{% endif %}
-{% if editable %}<form method="post" enctype="multipart/form-data" class="stacked-form" data-branding-form>{% csrf_token %}{{ form.non_field_errors }}{% endif %}
+{% if editable %}<form method="post" enctype="multipart/form-data" class="stacked-form" data-branding-form>{% csrf_token %}{{ form.non_field_errors }}<section class="card"><label for="id_branding_mode">Display mode</label>{{ form.branding_mode }}{{ form.branding_mode.errors }}</section>{% endif %}
 <div class="group-branding-edit-grid">
 {% for card in artwork_cards %}{% include 'core/includes/branding_artwork_card.html' %}{% endfor %}
 </div>
 <p class="muted">These previews show stored or inherited assets, including banners in Compact Header mode. Display mode controls presentation elsewhere; it never deletes artwork.</p>
 {% include 'core/includes/banner_appearance_controls.html' %}
 {% if editable %}<div class="action-row"><button class="button primary">Save Branding</button><a class="button secondary" href="{% if team %}{% url 'team-detail' group.slug month.pk team.pk %}{% else %}{% url 'challenge-settings' group.slug month.pk %}{% endif %}">Cancel</a></div></form>{% endif %}
-<section class="group-branding-preview"><h2>Header preview</h2><p class="muted">Preview only. This header shows saved effective branding.{% if editable %} Save Branding to apply artwork changes.{% endif %}</p>
+{% if team.branding_legacy_visibility %}<p class="notice neutral">Saved Team pages retain legacy logo visibility until you save Branding. The editable preview shows the selected display mode that will apply when you save.</p>{% endif %}<section class="group-branding-preview" data-branding-header-preview data-legacy-visibility="{{ team.branding_legacy_visibility|yesno:'true,false' }}" data-local-logo="{{ branding.team_logo|yesno:'true,false' }}"><h2>Header preview</h2><p class="muted">Preview only. Mode, artwork and gradient changes preview locally.{% if editable %} Save Branding to apply your changes.{% endif %}</p>
 {% if team %}{% include 'core/includes/team_identity_header.html' with group=group month=month team=team team_art=branding only %}{% else %}{% include 'core/includes/challenge_identity_header.html' with month=month community_art=branding only %}{% endif %}
 </section>
 </div>{% endblock %}

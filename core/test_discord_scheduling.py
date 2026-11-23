@@ -30,7 +30,7 @@ class DiscordSchedulingTests(TestCase):
         self.transport=transport_patch.start()
         self.addCleanup(transport_patch.stop)
         self.start=datetime(2026,1,5,12,7,tzinfo=UTC)
-        configure_notifications(group=self.group,actor=self.owner,destination='moderator',enabled=True,webhook_url=fixtures.WEBHOOK)
+        configure_notifications(group=self.group,actor=self.owner,destination='moderator',enabled=True,webhook_url=fixtures.WEBHOOK,cleanup_mode='none')
         configure_notifications(group=self.group,actor=self.owner,destination='community',enabled=True,webhook_url=fixtures.REPLACEMENT)
 
     def data(self,frequency='1h',destination='moderator',**changes):

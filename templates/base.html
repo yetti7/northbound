@@ -27,13 +27,13 @@
     {% if user.is_authenticated %}
       {% include "core/includes/global_search.html" %}
       <nav>
-        {% if needs_attention.available %}<a class="needs-attention-link" href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
+        {% include "core/includes/needs_attention_link.html" with desktop=True %}
         <details class="account-menu">
           <summary>{{ user.public_name }} <span aria-hidden="true">▾</span></summary>
           <div class="account-menu-panel">
+            {% include "core/includes/needs_attention_link.html" with desktop=False %}
             {% if user.is_superuser %}
               <a href="{% url 'config-dashboard' %}">Platform Administration</a>
-              {% if needs_attention.available %}<a href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
               <a href="{% url 'config-user-list' %}">Accounts</a>
               <a href="{% url 'config-audit' %}">Audit Activity</a>
               <a href="{% url 'account' %}">My Account</a>

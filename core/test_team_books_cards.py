@@ -81,11 +81,31 @@ class TeamBooksCardsTests(TestCase):
         self.assertNotContains(response,'id="team-books"');self.assertNotContains(response,'Alpha Early')
         self.assertEqual(self.client.get(reverse('team-book-detail',args=[self.group.slug,self.month.pk,self.team.pk,self.alpha_submission.pk])).status_code,403)
 
-    def test_legacy_team_book_detail_keeps_existing_presentation(self):
+    def test_team_book_detail_uses_recorded_pages_and_keeps_status(self):
         self.client.force_login(self.host_user)
         response=self.client.get(reverse('team-book-detail',args=[self.group.slug,self.month.pk,self.team.pk,self.alpha_submission.pk]))
-        self.assertContains(response,'<time');self.assertContains(response,'Approved')
+        self.assertNotContains(response,'<time');self.assertContains(response,'Approved')
+        self.assertContains(response, 'Recorded Pages: '+str(self.alpha_submission.approved_pages))
         self.assertNotContains(response,'css/team_books.css')
+
+    def test_detail_recorded_pages_and_reference_links_preserve_navigation(self):
+        self.client.force_login(self.host_user)
+        url = reverse('team-book-detail', args=[self.group.slug,self.month.pk,self.team.pk,self.alpha_submission.pk])
+        for status, expected in (('approved', 352), ('pending', 123)):
+            BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(
+                status=status, submitted_pages=123, approved_pages=352, bonus_pages=999, final_scored_pages=1351)
+            for reference in ('https://books.example.com/title', 'http://books.example.com/title', '', 'javascript:alert(1)'):
+                with self.subTest(status=status, reference=reference):
+                    BookSubmission.objects.filter(pk=self.alpha_submission.pk).update(reference_url=reference)
+                    response = self.client.get(url)
+                    self.assertContains(response, 'Recorded Pages: '+str(expected))
+                    self.assertNotContains(response, '1351')
+                    self.assertNotContains(response, '<time')
+                    if reference.startswith(('https://', 'http://')):
+                        self.assertContains(response, 'href="'+reference+'" target="_blank" rel="noopener noreferrer"')
+                    else:
+                        self.assertContains(response, '<h3>'+self.alpha_submission.title+'</h3>', html=True)
+                    self.assertContains(response, 'Back to Team Books')
 
     def test_polished_structure_full_title_disclosure_and_combined_metadata(self):
         title='A complete title with many words '*8

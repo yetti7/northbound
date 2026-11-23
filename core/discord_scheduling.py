@@ -295,6 +295,17 @@ def deliver_scheduled_report(schedule_id, *, now=None):
             schedule.last_failure_category=failure;schedule.last_outcome='failed'
             schedule.save(update_fields=['last_attempt_at','last_failure_at','last_failure_category','last_outcome'])
             return 'failed'
+        from .discord_cleanup import enabled as cleanup_enabled, fingerprint
+        tracked = cleanup_enabled(configuration, schedule.destination)
+        if tracked and schedule.replacement_delivery_id:
+            receipt.outcome='blocked';receipt.failure_category='replacement_busy'
+            receipt.save(update_fields=['outcome','failure_category'])
+            schedule.last_outcome='blocked';schedule.save(update_fields=['last_outcome'])
+            return 'blocked'
+        if tracked:
+            schedule.replacement_delivery=receipt
+            schedule.save(update_fields=['replacement_delivery'])
+        identity=fingerprint(configuration,schedule.destination)
         revision = schedule.revision
         _,webhook_field = discord.destination_fields(schedule.destination)
         ciphertext = getattr(configuration,webhook_field)
@@ -316,7 +327,14 @@ def deliver_scheduled_report(schedule_id, *, now=None):
             if not payload_eligible(payload):
                 failure='challenge_opted_out'
                 continue
-            status,cooldown = discord.send_webhook(url,payload,detailed=True)
+            if tracked:
+                from .discord_cleanup import record_message
+                if not cleanup_enabled(latest,schedule.destination) or fingerprint(latest,schedule.destination)!=identity:
+                    failure='configuration_changed';break
+                status,cooldown,message_id = discord.send_webhook(url,payload,detailed=True,capture_message=True)
+                if status=='sent':record_message(schedule,receipt,payload,message_id,identity)
+            else:
+                status,cooldown = discord.send_webhook(url,payload,detailed=True)
             if status!='sent':
                 failure=status if status in FAILURES else 'delivery_failed';break
     except Exception:
@@ -327,8 +345,13 @@ def deliver_scheduled_report(schedule_id, *, now=None):
         locked=DiscordReportSchedule.objects.select_for_update().get(pk=schedule_id)
         receipt.outcome=outcome;receipt.failure_category=failure
         receipt.save(update_fields=['outcome','failure_category'])
+        if tracked and locked.replacement_delivery_id==receipt.pk:
+            if outcome=='sent':
+                from .discord_cleanup import finish_generations
+                finish_generations(receipt,now)
+            locked.replacement_delivery=None
         locked.last_outcome=outcome
-        fields=['last_outcome']
+        fields=['last_outcome'] + (['replacement_delivery'] if tracked else [])
         if outcome=='sent':locked.last_sent_at=now;fields.append('last_sent_at')
         if failure:
             locked.last_failure_at=now;locked.last_failure_category=failure
@@ -340,6 +363,9 @@ def deliver_scheduled_report(schedule_id, *, now=None):
                 locked.next_run_at=next_run(locked,max(now,locked.cooldown_until-timedelta(microseconds=1)))
                 fields.append('next_run_at')
         locked.save(update_fields=fields)
+    if tracked and outcome=='sent':
+        from .discord_cleanup import retry_cleanup
+        retry_cleanup(now=now)
     return outcome
 
 
@@ -348,6 +374,8 @@ def process_due_reports(*, now=None, daemon=False):
     now = now or timezone.now()
     DiscordSchedulerHeartbeat.objects.update_or_create(name='discord',defaults={'last_seen':now,'daemon':daemon})
     if not discord.delivery_enabled():return []
+    from .discord_cleanup import retry_cleanup
+    retry_cleanup(now=now)
     result=[]
     for pk in DiscordReportSchedule.objects.exclude(frequency='disabled').values_list('pk',flat=True):
         try:result.append((pk,deliver_scheduled_report(pk,now=now)))

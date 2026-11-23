@@ -463,15 +463,16 @@ class ChallengeParticipantDetailTests(TestCase):
         profile.discord_username = "PrivateDirectoryDiscord"
         profile.save(update_fields=["discord_username"])
         url = reverse("participant-list", args=[self.group.slug])
-        self.assertContains(self.get_as("platform", url), "Discord: PrivateDirectoryDiscord")
-        self.assertContains(self.get_as("reader", url), "Discord: PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("platform", url), "PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("reader", url), "PrivateDirectoryDiscord")
         ordinary = self.get_as("other", url)
         self.assertContains(ordinary, "PrivateDirectoryDiscord")
+        self.assertNotContains(ordinary, "Discord:")
         self.assertNotContains(ordinary, 'data-discord="PrivateDirectoryDiscord"')
         self.assertNotContains(ordinary, "@directory-current-reader")
         profile.discord_username_is_public = True
         profile.save(update_fields=["discord_username_is_public"])
-        self.assertContains(self.get_as("other", url), "Discord: PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("other", url), "PrivateDirectoryDiscord")
         profile.discord_username = ""
         profile.save(update_fields=["discord_username"])
         self.assertNotContains(self.get_as("platform", url), "PrivateDirectoryDiscord")

@@ -20,6 +20,8 @@ from .permissions import can_configure_discord_notifications
 DESTINATIONS = dict(DiscordManualDelivery.Destination.choices)
 ACTIONS = dict(DiscordManualDelivery.Action.choices)
 FAILURES = {
+    'uncertain': 'Discord may have accepted a message. No automatic repost is attempted.',
+    'replacement_busy': 'A previous tracked replacement is still claimed; inspect its uncertain outcome before recovery.',
     'missing_webhook': 'No webhook configured.',
     'destination_disabled': 'This destination is disabled.',
     'global_disabled': 'Global Discord delivery is disabled through the inherited environment setting.',

@@ -318,17 +318,15 @@ class PlatformBackupSettingsForm(forms.ModelForm):
 
 class PlatformSettingsForm(forms.ModelForm):
     discord_notifications_override = forms.TypedChoiceField(
-        label="Global Discord Notifications", choices=(("on", "On"), ("off", "Off")),
-        coerce=lambda value: value == "on",
-        help_text="Enable or disable Discord notifications across Northbound. Individual Group notification settings remain unchanged.",
+        label="Global Discord Notifications", choices=(("inherit", "Inherit Environment"), ("on", "Enabled"), ("off", "Disabled")),
+        coerce=lambda value: {"inherit": None, "on": True, "off": False}[value],
+        help_text="Inherit the environment setting, or explicitly enable or disable Discord notifications. Individual Group settings and worker configuration remain unchanged.",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         value = self.instance.discord_notifications_override
-        if value is None:
-            value = settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED
-        self.initial["discord_notifications_override"] = "on" if value else "off"
+        self.initial["discord_notifications_override"] = "inherit" if value is None else "on" if value else "off"
         # A settings form opened before the upgrade must not reset the new policy.
         if self.is_bound and "discord_notifications_override" not in self.data:
             self.fields.pop("discord_notifications_override")

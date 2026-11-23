@@ -7,6 +7,11 @@
     sliders.forEach(input => {
       panel.querySelector(`[data-appearance-value="${input.name}"]`).textContent = `${input.value}%`;
     });
+    document.querySelectorAll?.('.group-branding-preview header').forEach(header => {
+      header.classList.toggle('branding-custom-gradient', enabled.checked);
+      header.style.setProperty('--branding-coverage', `${sliders[0].value}%`);
+      header.style.setProperty('--branding-darkness', String(Number(sliders[1].value) / 100));
+    });
     panel.querySelector('[data-appearance-status]').textContent = enabled.checked
       ? 'Customized gradient enabled.'
       : 'Legacy appearance active. Slider values apply only when enabled.';

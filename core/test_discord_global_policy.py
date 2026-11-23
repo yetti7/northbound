@@ -91,6 +91,40 @@ class GlobalDiscordPolicyTests(TestCase):
         self.platform.refresh_from_db();self.assertIs(self.platform.discord_notifications_override,False)
         with override_settings(NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED=True):self.assertFalse(delivery_policy().allowed)
 
+    def test_gui_three_states_round_trip_and_inherit_tracks_environment(self):
+        self.client.force_login(self.admin)
+        url = reverse('platform-general-settings')
+        for environment in (False, True):
+            with override_settings(NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED=environment):
+                for saved, choice in ((None, 'inherit'), (True, 'on'), (False, 'off')):
+                    with self.subTest(environment=environment, saved=saved):
+                        self.override(saved)
+                        response = self.client.get(url)
+                        self.assertEqual(response.context['form']['discord_notifications_override'].value(), choice)
+                        for label in ('Inherit Environment', 'Enabled', 'Disabled'):
+                            self.assertContains(response, label)
+                        self.platform.refresh_from_db()
+                        self.assertIs(self.platform.discord_notifications_override, saved)
+                        self.client.post(url, self.payload(choice))
+                        self.platform.refresh_from_db()
+                        self.assertIs(self.platform.discord_notifications_override, saved)
+                        self.assertEqual(delivery_policy().allowed, environment if saved is None else saved)
+                response = self.client.post(url, self.payload('inherit'), follow=True)
+                self.platform.refresh_from_db()
+                self.assertIsNone(self.platform.discord_notifications_override)
+                self.assertContains(response, 'Inherited from the deployment environment')
+                self.assertEqual(delivery_policy().allowed, environment)
+
+    def test_older_general_settings_payload_preserves_saved_override(self):
+        self.client.force_login(self.admin)
+        for saved in (None, False, True):
+            self.override(saved)
+            payload = self.payload('inherit')
+            payload.pop('discord_notifications_override')
+            self.client.post(reverse('platform-general-settings'), payload)
+            self.platform.refresh_from_db()
+            self.assertIs(self.platform.discord_notifications_override, saved)
+
     def test_only_platform_administrators_can_edit(self):
         from django.contrib.auth import get_user_model
         floater=get_user_model().objects.create_user('global-policy-floater')
