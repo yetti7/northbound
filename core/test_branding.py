@@ -32,7 +32,7 @@ class BrandingTests(TestCase):
         self.mod=self.leader;Membership.objects.filter(pk=self.members[self.leader.pk].pk).update(role='moderator')
 
     def save(self,target=None,actor=None,**files):
-        return update_branding(actor=actor or self.admin,target=target or self.group,data={'branding_mode':'logo'},files=files)
+        return update_branding(actor=actor or self.admin,target=target or self.group,data={'branding_mode':(target or self.group).branding_mode},files=files)
 
     def test_group_permissions_readonly_moderator_and_unauthorized_posts(self):
         url=reverse('group-branding',args=[self.group.slug])
@@ -91,8 +91,9 @@ class BrandingTests(TestCase):
     def test_branding_mode_inheritance_fallback_and_missing_media(self):
         self.save(logo=upload(),banner=upload());self.group.refresh_from_db()
         art=community_branding(self.reader,self.group,self.month)
-        self.assertTrue(art['group_logo']);self.assertFalse(art.get('challenge_logo'));self.assertNotIn('group_banner',art)
+        self.assertTrue(art['group_logo']);self.assertFalse(art.get('challenge_logo'));self.assertFalse(art.get('group_banner'))
         self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.month.branding_mode='banner';self.month.save(update_fields=['branding_mode'])
         self.save(target=self.month,logo=upload(),banner=upload());self.month.refresh_from_db()
         art=community_branding(self.reader,self.group,self.month)
         self.assertTrue(all(art.get(key) for key in ['group_logo','group_banner','challenge_logo','challenge_banner']))

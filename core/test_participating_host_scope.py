@@ -29,7 +29,7 @@ class ParticipatingHostScopeTests(TestCase):
     def setUp(self):
         self.group = ReadingGroup.objects.create(name="Scoped Hosts", slug="scoped-hosts")
         self.month = ChallengeMonth.objects.create(
-            group=self.group, name="Challenge", status=ChallengeMonth.Status.ACTIVE,
+            group=self.group, name="Challenge", status=ChallengeMonth.Status.ACTIVE, host_review_access=None,
             starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31),
             reader_scores_visibility=ChallengeMonth.CompetitionVisibility.HOSTS,
             team_standings_visibility=ChallengeMonth.CompetitionVisibility.HOSTS,

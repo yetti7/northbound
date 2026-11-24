@@ -262,6 +262,7 @@ PARENT_LABELS = {'my-stats': 'Back to My Stats',
  'theme-list': 'Back to Themes'}
 
 NAVIGATION_EXCEPTIONS = {
+ 'rejection-acknowledge': 'POST-only recipient action; no application return control.',
  'reader-submission': 'Reader-owned page supplies its own scoped return link.',
  'reader-submission-edit': 'Reader pending editor preserves its dedicated Cancel destination.',
  'personal-tbr-cover': 'Reader artwork form supplies its own scoped Cancel destination.',

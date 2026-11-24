@@ -113,13 +113,24 @@ class MatchingReviewForm(forms.Form):
         from .prompt_reservations import reservations_ready
         from .prompt_configuration import automation_excluded
         if reservations_ready() and not automation_excluded(submission.month):
-            for claim in submission.prompt_claims.filter(is_current=True,category__enabled=True).select_related('category'):
+            for claim in submission.prompt_claims.filter(is_current=True,state='reserved',category__enabled=True).select_related('category'):
                 if not claim.earning_evidence:
                     self.fields['prompt_'+claim.category.kind]=forms.ChoiceField(required=False,choices=[('', 'Leave unchanged'),('qualified','Confirm qualification'),('rejected','Reject qualification')],label=claim.category.get_kind_display()+' qualification')
+                    self.fields['prompt_reason_'+claim.category.kind]=forms.CharField(required=False,max_length=4000,label='Reason this book does not qualify for the selected '+claim.category.get_kind_display()+' prompt',widget=forms.Textarea(attrs={'rows':2}))
+
+
+    def clean(self):
+        data=super().clean()
+        from .reader_rejections import validate_reason
+        for kind in ('bingo','scavenger'):
+            if data.get('prompt_'+kind)=='rejected':
+                try:data['prompt_reason_'+kind]=validate_reason(data.get('prompt_reason_'+kind,''))
+                except ValidationError as exc:self.add_error('prompt_reason_'+kind,exc)
+        return data
 
 
 @transaction.atomic
-def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations, prompt_decisions=None):
+def apply_unified_review(submission, claims, actor, reviewed_at, *, version, confirmations, prompt_decisions=None, prompt_rejection_reasons=None):
     from .permissions import can_review_submission
     from django.contrib.auth import get_user_model
     actor = get_user_model().objects.get(pk=actor.pk)
@@ -133,8 +144,12 @@ def apply_unified_review(submission, claims, actor, reviewed_at, *, version, con
         raise ValidationError('This review expired. Reload the page before reviewing again.') from None
     if expected != {'actor':actor.pk,'submission':current.pk,'state':review_state(current)}:
         raise ValidationError('This submission or its matching information changed. Reload before reviewing again.')
-    if current.status == 'approved' and (confirmations or prompt_decisions):
+    if current.status == 'approved' and confirmations:
         raise ValidationError('Use Qualifications for qualification decisions, or the signed Edit Book preview for approved scoring corrections.')
+    if current.status=='approved' and prompt_decisions:
+        eligible=set(current.prompt_claims.filter(is_current=True,state='reserved',earning_evidence={},category__enabled=True).values_list('category__kind',flat=True))
+        if set(prompt_decisions)-eligible:
+            raise ValidationError('Only initial pending prompt claims may be reviewed here. Earned credit changes require the signed correction preview.')
     if confirmations and submission.status != 'approved':
         raise ValidationError('Matching confirmation requires approving the book. Clear the confirmations for another decision.')
     cards=matching_cards(current);suggestions={}
@@ -159,6 +174,6 @@ def apply_unified_review(submission, claims, actor, reviewed_at, *, version, con
     else:
         result=review_submission_with_matches(submission,claims,actor,reviewed_at,suggestions=suggestions)
     from .prompt_scoring import review_prompts
-    review_prompts(result,actor,prompt_decisions or {})
+    review_prompts(result,actor,prompt_decisions or {},rejection_reasons=prompt_rejection_reasons)
     result.refresh_from_db()
     return result

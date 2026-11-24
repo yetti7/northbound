@@ -1,4 +1,5 @@
 from django import forms
+from django.core.exceptions import ValidationError
 from django.forms import BaseFormSet, formset_factory
 from django.core import signing
 from django.core.validators import URLValidator
@@ -318,17 +319,15 @@ class PlatformBackupSettingsForm(forms.ModelForm):
 
 class PlatformSettingsForm(forms.ModelForm):
     discord_notifications_override = forms.TypedChoiceField(
-        label="Global Discord Notifications", choices=(("on", "On"), ("off", "Off")),
-        coerce=lambda value: value == "on",
-        help_text="Enable or disable Discord notifications across Northbound. Individual Group notification settings remain unchanged.",
+        label="Global Discord Notifications", choices=(("inherit", "Inherit Environment"), ("on", "Enabled"), ("off", "Disabled")),
+        coerce=lambda value: {"inherit": None, "on": True, "off": False}[value],
+        help_text="Inherit the environment setting, or explicitly enable or disable Discord notifications. Individual Group settings and worker configuration remain unchanged.",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         value = self.instance.discord_notifications_override
-        if value is None:
-            value = settings.NORTHBOUND_DISCORD_NOTIFICATIONS_ENABLED
-        self.initial["discord_notifications_override"] = "on" if value else "off"
+        self.initial["discord_notifications_override"] = "inherit" if value is None else "on" if value else "off"
         # A settings form opened before the upgrade must not reset the new policy.
         if self.is_bound and "discord_notifications_override" not in self.data:
             self.fields.pop("discord_notifications_override")
@@ -1411,6 +1410,19 @@ class CompetitionVisibilityForm(forms.ModelForm):
         }
 
 
+class HostReviewAccessForm(forms.ModelForm):
+    host_review_access = forms.ChoiceField(label='Host Review Access', choices=ChallengeMonth._meta.get_field('host_review_access').choices)
+
+    class Meta:
+        model = ChallengeMonth
+        fields = ('host_review_access',)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.host_review_access is None:
+            self.initial['host_review_access']='restricted'
+
+
 class ChallengeHostAssignmentForm(forms.ModelForm):
     class Meta:
         model = ChallengeStaffAssignment
@@ -1985,6 +1997,8 @@ class SubmissionCorrectionForm(BookSubmissionForm):
         values.update({kind+'_prompt_id':pk for kind,pk in form_selections(self).items()})
         decisions={kind:self.cleaned_data['prompt_decision_'+kind] for kind in ('bingo','scavenger') if self.cleaned_data.get('prompt_decision_'+kind)}
         if decisions:values['prompt_decisions']=decisions
+        reasons={kind:self.cleaned_data.get('prompt_rejection_reason_'+kind,'') for kind in decisions}
+        if reasons:values['prompt_rejection_reasons']=reasons
         return values
 
     def save(self, *args, **kwargs):
@@ -2049,18 +2063,55 @@ class FocusedSubmissionCorrectionForm(SubmissionCorrectionForm):
 
 
 class SubmissionReviewForm(forms.ModelForm):
+    rejection_reason=forms.CharField(required=False,max_length=4000,label='Reason for rejecting this book submission',help_text='Visible to the Reader. Explain what needs correction.',widget=forms.Textarea(attrs={'rows':2}))
+
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.original_status=self.instance.status
+
+    def clean(self):
+        data=super().clean()
+        if data.get('status')=='rejected' and self.original_status!='rejected':
+            from .reader_rejections import validate_reason
+            try:data['rejection_reason']=validate_reason(data.get('rejection_reason',''))
+            except ValidationError as exc:self.add_error('rejection_reason',exc)
+        return data
+
+    def save(self,commit=True):
+        obj=super().save(commit=False);obj._rejection_reason=self.cleaned_data.get('rejection_reason','')
+        if commit:obj.save()
+        return obj
+
     class Meta:
         model = BookSubmission
-        fields = ("approved_pages", "status", "verification_url", "review_notes")
+        fields = ("approved_pages", "status", "verification_url", "review_notes", "rejection_reason")
         labels = {"approved_pages": "Approved Pages", "verification_url": "Verification Link", "review_notes": "Review Notes"}
         help_texts = {"verification_url": "Optional. Add the source used to verify the approved page count."}
         widgets = {"review_notes": forms.Textarea(attrs={"rows": 3})}
 
 
 class ThemeClaimReviewForm(forms.ModelForm):
+    rejection_reason=forms.CharField(required=False,max_length=4000,label='Reason this book does not qualify for the selected Theme',help_text='Visible to the Reader.',widget=forms.Textarea(attrs={'rows':2}))
+
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs);self.original_status=self.instance.status
+
+    def clean(self):
+        data=super().clean()
+        if data.get('status')=='rejected' and self.original_status!='rejected' and self.data.get('status')!='rejected':
+            from .reader_rejections import validate_reason
+            try:data['rejection_reason']=validate_reason(data.get('rejection_reason',''))
+            except ValidationError as exc:self.add_error('rejection_reason',exc)
+        return data
+
+    def save(self,commit=True):
+        obj=super().save(commit=False);obj._rejection_reason=self.cleaned_data.get('rejection_reason','')
+        if commit:obj.save()
+        return obj
+
     class Meta:
         model = ThemeClaim
-        fields = ("status",)
+        fields = ("status","rejection_reason")
 
 
 class ImmersiveSubmissionForm(BookSubmissionForm):

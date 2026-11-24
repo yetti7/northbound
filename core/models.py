@@ -187,13 +187,16 @@ def generate_group_access_code():
 from .branding_files import branding_path
 
 
+BRANDING_MODES = [("logo", "Logo Only"), ("banner_only", "Banner Only"), ("banner", "Logo and Banner")]
+
+
 class ReadingGroup(models.Model):
     gradient_enabled = models.BooleanField(default=False)
     gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
     gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
-    branding_mode = models.CharField(max_length=16, choices=[("logo", "Logo Only"), ("banner", "Logo + Banner")], default="logo")
+    branding_mode = models.CharField(max_length=16, choices=BRANDING_MODES, default="logo")
     class AccessCodeVisibility(models.TextChoices):
         OWNER = "owner", "Group owners only"
         STAFF = "staff", "Owners and moderators"
@@ -228,6 +231,9 @@ class ReadingGroup(models.Model):
 
 
 class GroupDiscordNotification(models.Model):
+    CLEANUP_CHOICES = [("none", "None"), ("scheduled", "Scheduled Reports")]
+    community_cleanup = models.CharField(max_length=16, choices=CLEANUP_CHOICES, default="none")
+    moderator_cleanup = models.CharField(max_length=16, choices=CLEANUP_CHOICES, default="scheduled")
     # Manual destination switches do not enable the existing hourly digest.
     moderator_enabled = models.BooleanField(default=False)
     community_enabled = models.BooleanField(default=False)
@@ -277,6 +283,7 @@ class DiscordManualDelivery(models.Model):
 
 
 class DiscordReportSchedule(models.Model):
+    replacement_delivery = models.ForeignKey("DiscordReportDelivery", null=True, blank=True, on_delete=models.SET_NULL, related_name="replacement_leases")
     class Frequency(models.TextChoices):
         DISABLED = "disabled", "Disabled"
         HALF_HOUR = "30m", "Every 30 minutes"
@@ -323,6 +330,28 @@ class DiscordReportDelivery(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["schedule", "slot_key"], name="unique_discord_report_slot")]
         ordering = ["-attempted_at", "-pk"]
+
+
+class DiscordReportGeneration(models.Model):
+    """Only known scheduled-report messages; no webhook tokens or payload bodies."""
+    delivery = models.ForeignKey(DiscordReportDelivery, on_delete=models.CASCADE, related_name='generations')
+    schedule = models.ForeignKey(DiscordReportSchedule, on_delete=models.CASCADE, related_name='generations')
+    notification_type = models.CharField(max_length=32, default='scheduled_report', editable=False)
+    stream_key = models.CharField(max_length=64)
+    webhook_fingerprint = models.CharField(max_length=64)
+    message_ids = models.JSONField(default=list)
+    deleted_ids = models.JSONField(default=list)
+    complete = models.BooleanField(default=False)
+    superseded = models.BooleanField(default=False)
+    cleanup_state = models.CharField(max_length=16, default='none')
+    cleanup_attempts = models.PositiveSmallIntegerField(default=0)
+    cleanup_after = models.DateTimeField(null=True, blank=True)
+    cleanup_claim = models.UUIDField(null=True, blank=True)
+    cleanup_failure = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['delivery','stream_key'], name='unique_report_generation_stream')]
+        indexes = [models.Index(fields=['cleanup_state','cleanup_after'], name='discord_cleanup_due')]
 
 
 class DiscordSchedulerHeartbeat(models.Model):
@@ -575,6 +604,8 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    host_review_access = models.CharField(max_length=12, null=True, blank=True, default="restricted", choices=[("restricted", "Restricted — Own Team Only"), ("unrestricted", "Unrestricted — All Teams")])
+    branding_mode = models.CharField(max_length=16, choices=BRANDING_MODES, default="logo")
     discord_community_opt_in = models.BooleanField(default=False)
     discord_moderator_opt_in = models.BooleanField(default=False)
     gradient_enabled = models.BooleanField(default=False)
@@ -1047,10 +1078,12 @@ class MonthTheme(models.Model):
 
 
 class Team(models.Model):
+    branding_mode = models.CharField(max_length=16, choices=BRANDING_MODES, default="logo")
+    branding_legacy_visibility = models.BooleanField(default=False, editable=False)
     gradient_enabled = models.BooleanField(default=False)
     gradient_coverage = models.PositiveSmallIntegerField(default=75, validators=[MinValueValidator(0), MaxValueValidator(100)])
     gradient_darkness = models.PositiveSmallIntegerField(default=85, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    hide_inherited_logo = models.BooleanField(default=False)
+    hide_inherited_logo = models.BooleanField(default=False, editable=False)
     logo = models.ImageField(upload_to=branding_path, blank=True)
     banner = models.ImageField(upload_to=branding_path, blank=True)
     month = models.ForeignKey(ChallengeMonth, on_delete=models.CASCADE, related_name="teams")
@@ -2886,3 +2919,30 @@ class PasswordRecoveryLimit(models.Model):
     key = models.CharField(max_length=64, primary_key=True)
     window = models.BigIntegerField()
     attempts = models.PositiveIntegerField(default=0)
+
+
+class ReaderRejectionNotice(models.Model):
+    CATEGORIES=[('book','Book submission'),('theme','Theme qualification'),('immersive','Immersive Reading'),
+                ('bingo','Bingo qualification'),('scavenger','Scavenger Hunt book qualification'),('photo','Scavenger Hunt photo')]
+    reader=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name='rejection_notices')
+    month=models.ForeignKey(ChallengeMonth,on_delete=models.PROTECT)
+    category=models.CharField(max_length=12,choices=CATEGORIES)
+    target_key=models.CharField(max_length=80)
+    event=models.ForeignKey(AuditEvent,on_delete=models.PROTECT)
+    book=models.ForeignKey(BookSubmission,null=True,blank=True,on_delete=models.PROTECT)
+    theme_claim=models.ForeignKey(ThemeClaim,null=True,blank=True,on_delete=models.PROTECT)
+    immersive_request=models.ForeignKey(ImmersiveRequest,null=True,blank=True,on_delete=models.PROTECT)
+    prompt_claim=models.ForeignKey(PromptClaim,null=True,blank=True,on_delete=models.PROTECT)
+    photo=models.ForeignKey(ScavengerPhotoSubmission,null=True,blank=True,on_delete=models.PROTECT)
+    target_label=models.CharField(max_length=600)
+    reason=models.TextField()
+    rejected_at=models.DateTimeField(default=timezone.now)
+    acknowledged_at=models.DateTimeField(null=True,blank=True)
+    resolved_at=models.DateTimeField(null=True,blank=True)
+    resolution_type=models.CharField(max_length=24,blank=True)
+    replacement_key=models.CharField(max_length=80,blank=True)
+
+    class Meta:
+        constraints=[models.UniqueConstraint(fields=['event','category','target_key'],name='unique_reader_rejection_event')]
+        indexes=[models.Index(fields=['reader','acknowledged_at','resolved_at'],name='reader_rejection_outstanding')]
+        ordering=['-rejected_at','-pk']

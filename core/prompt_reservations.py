@@ -18,7 +18,7 @@ HOLDING=('reserved','qualified')
 
 
 def reservations_ready():
-    # Deliberately not environment activated in Phase 2. Tests may override settings.
+    # Released by default; retained for compatibility and fail-closed override tests.
     return getattr(settings,'NORTHBOUND_PROMPT_RESERVATIONS_READY',False) is True
 
 
@@ -87,6 +87,7 @@ def configure_form(form):
         form.fields[name]=field
         if existing:form.initial[name]=existing.prompt_id
         if existing and existing.earning_evidence and submission.pk:
+            form.fields['prompt_rejection_reason_'+kind]=forms.CharField(required=False,max_length=4000,label='Reason for rejecting the selected '+existing.category.get_kind_display()+' prompt',widget=forms.Textarea(attrs={'rows':2}))
             form.fields['prompt_decision_'+kind]=forms.ChoiceField(required=False,choices=[('','Preserve earned credit'),('qualified','Restore qualification'),('rejected','Reverse qualification')],label=existing.category.get_kind_display()+' credit correction',help_text='Changes require a signed scoring preview; established amounts are preserved.')
 
 

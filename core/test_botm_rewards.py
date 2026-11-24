@@ -116,7 +116,7 @@ class BotmPerBookRewardTests(TestCase):
         self.assertEqual((reviewed.bonus_pages, reviewed.final_scored_pages), (50, 350))
         reviewed.status = BookSubmission.Status.REJECTED
         reviewed.approved_pages = None
-        reviewed = apply_submission_review(reviewed, [], self.host_user, timezone.now())
+        reviewed = apply_submission_review(reviewed, [], self.host_user, timezone.now(), rejection_reason="The submitted edition and page count could not be verified.")
         self.assertEqual((reviewed.bonus_pages, reviewed.final_scored_pages), (0, None))
         self.assertFalse(self.provenance().is_active)
 

@@ -166,6 +166,10 @@ def restricted_host_team_ids(user, month):
     if not getattr(user, "is_authenticated", False) or not is_challenge_host(user, month):
         return None
     enrollment = MonthEnrollment.objects.filter(month=month, participant__user=user).first()
+    if month.host_review_access == 'unrestricted':
+        return None
+    if month.host_review_access == 'restricted' and enrollment is not None and not enrollment.is_active:
+        return None
     if enrollment is None or (not enrollment.is_active and enrollment.host_scope_restored):
         return None
     if not enrollment.is_active:
@@ -340,6 +344,12 @@ def _can_view_competition_domain(user, month, visibility, *, team=None):
             return True
         return bool(team and team.month_id == month.pk and team.pk in host_teams)
     if _has_competition_staff_access(user, month, membership):
+        return True
+    # Active Floaters report across their Challenge without Reader enrollment.
+    # Keep discoverability/lifecycle and restricted Host scope authoritative.
+    if (user.is_active and membership and can_view_challenge(user, month)
+            and (team is None or team.month_id == month.pk)
+            and is_active_floater(month, membership.pk)):
         return True
     if not membership:
         return False

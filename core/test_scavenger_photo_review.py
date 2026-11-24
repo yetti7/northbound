@@ -33,7 +33,7 @@ class PhotoReviewTests(TestCase):
     def review(self,photo,actor=None,decision='approved',verified=True,version=None):
         actor=actor or self.actor
         return review_photo_submission(photo_id=photo.pk,actor=actor,decision=decision,
-            reviewer_verified=verified,version=version or photo_review_version(photo,actor))
+            reviewer_verified=verified,version=version or photo_review_version(photo,actor),rejection_reason='The photo does not meet this prompt.' if decision=='rejected' else '')
 
     def url(self,photo):return reverse('photo-review',args=[self.group.slug,self.month.pk,photo.pk])
     def score(self):return challenge_score_totals(month=self.month,participant_ids=[self.reader.pk])[self.reader.pk]

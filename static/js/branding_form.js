@@ -11,11 +11,11 @@
       image.hidden = !url;
     }
     function render() {
-      const banner = mode.value === 'banner' ? assets.banner.current : '';
-      display(header.querySelector('[data-group-preview-logo]'), assets.logo.current);
+      const banner = mode.value !== 'logo' ? assets.banner.current : '';
+      display(header.querySelector('[data-group-preview-logo]'), mode.value === 'banner_only' ? '' : assets.logo.current);
       display(header.querySelector('[data-group-preview-banner]'), banner);
       header.classList.toggle('has-banner', Boolean(banner));
-      header.classList.toggle('has-logo', Boolean(assets.logo.current));
+      header.classList.toggle('has-logo', mode.value !== 'banner_only' && Boolean(assets.logo.current));
     }
     ['logo', 'banner'].forEach(kind => {
       const input = form.elements.namedItem(kind);
@@ -47,6 +47,36 @@
     render();
     return;
   }
+  const container = document.querySelector('[data-branding-header-preview]');
+  let changed = false;
+  function renderHeader() {
+    if (!container) return;
+    const header = container.querySelector('header');
+    const mode = form.querySelector('[name="branding_mode"]').value;
+    const imageUrl = kind => {
+      const image = document.querySelector(`[data-branding-preview="${kind}"]`);
+      return image.hidden ? '' : image.getAttribute('src') || '';
+    };
+    let logo = mode === 'banner_only' ? '' : imageUrl('logo');
+    const banner = mode === 'logo' ? '' : imageUrl('banner');
+    for (const [kind, url] of [['logo', logo], ['banner', banner]]) {
+      let image = header.querySelector(`.challenge-identity-${kind}`);
+      if (!image) {
+        image = document.createElement('img'); image.className = `challenge-identity-${kind}`; image.alt = '';
+        const parent = kind === 'logo' ? header.querySelector('.challenge-identity-main') : header;
+        parent.insertBefore(image, parent.firstChild);
+      }
+      if (url) image.src = url; else image.removeAttribute('src');
+      image.hidden = !url;
+      header.classList.toggle(`has-${kind}`, Boolean(url));
+    }
+    const ownBanner = form.querySelector('[name="banner"]').files.length > 0 ||
+      (!form.querySelector('[name="banner-clear"]')?.checked && document.querySelector('[data-branding-preview="banner"]').dataset.sourceLabel?.startsWith('Stored'));
+    header.classList.toggle('is-artwork-showcase', Boolean(banner && !logo && ownBanner));
+  }
+  form.addEventListener?.('input', () => { changed = true; renderHeader(); });
+  form.addEventListener?.('change', () => { changed = true; renderHeader(); });
+  form.querySelector('[name="branding_mode"]')?.addEventListener('change', () => { changed = true; renderHeader(); });
   ['logo','banner'].forEach(kind => {
     const input = form.querySelector(`[name="${kind}"]`);
     const preview = document.querySelector(`[data-branding-preview="${kind}"]`);
@@ -70,12 +100,13 @@
     }
     input.addEventListener('change', () => {
       if (input.files.length && clear) clear.checked = false;
-      refresh();
+      changed = true; refresh(); renderHeader();
     });
     if (clear) clear.addEventListener('change', () => {
       if (clear.checked) input.value = '';
-      refresh();
+      changed = true; refresh(); renderHeader();
     });
     refresh();
   });
+  renderHeader();
 })();

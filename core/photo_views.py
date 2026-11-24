@@ -39,10 +39,15 @@ def photo_create(request, group_slug, month_pk):
     _safe_payload(request)
     member=membership_for(request.user,month.group)
     form=PhotoSubmissionForm(request.POST if request.method=='POST' else None,month=month,member=member)
+    retry=request.POST.get('replacement_notice') if request.method=='POST' else request.GET.get('retry_notice')
+    if retry:
+        from .reader_rejections import replacement_notice
+        notice=replacement_notice(request.user,retry,'photo',month=month)
+        form.initial.update(replacement_notice=notice.pk,prompt=notice.photo.prompt_claim.prompt_id)
     if request.method=='POST' and form.is_valid():
         try:
             photo=create_photo_submission(month_id=month.pk,actor=request.user,prompt_id=form.cleaned_data['prompt'].pk,
-                reader_confirmed=form.cleaned_data['reader_confirmed'],discord_message_url=form.cleaned_data['discord_message_url'])
+                reader_confirmed=form.cleaned_data['reader_confirmed'],discord_message_url=form.cleaned_data['discord_message_url'],replacement_notice=form.cleaned_data.get('replacement_notice'))
         except ValidationError as exc:form.add_error(None,' '.join(exc.messages))
         else:
             messages.success(request,'Your Scavenger Hunt Photo submission is Pending review. No points have been awarded.')
@@ -118,7 +123,7 @@ def photo_review(request, group_slug, month_pk, pk):
         if form.is_valid():
             try:
                 review_photo_submission(photo_id=photo.pk,actor=request.user,version=form.cleaned_data['version'],
-                    decision=form.cleaned_data['decision'],reviewer_verified=form.cleaned_data['reviewer_verified'])
+                    decision=form.cleaned_data['decision'],reviewer_verified=form.cleaned_data['reviewer_verified'],rejection_reason=form.cleaned_data.get('rejection_reason',''))
             except ValidationError as exc:form.add_error(None,' '.join(exc.messages))
             else:
                 messages.success(request,'Photo '+('approved and Scavenger Hunt credit recorded.' if form.cleaned_data['decision']=='approved' else 'rejected. The prompt reservation has been released.'))

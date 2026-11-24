@@ -143,7 +143,7 @@ def validate_ticket(ticket,submission,actor,selections):
 
 @atomic_reservations
 @observe_book
-def review_prompts(submission,actor,decisions,*,correction_authorization=None):
+def review_prompts(submission,actor,decisions,*,correction_authorization=None,rejection_reasons=None):
     if not decisions:return
     require_ready()
     from django.contrib.auth import get_user_model
@@ -163,6 +163,9 @@ def review_prompts(submission,actor,decisions,*,correction_authorization=None):
         if not claim:raise ValidationError('This prompt selection is no longer current.')
         _allowed(book,claim.category)
         if claim.state==decision:continue
+        if decision=='rejected':
+            from .reader_rejections import validate_reason
+            reason=validate_reason((rejection_reasons or {}).get(kind,''))
         enrollment=MonthEnrollment.objects.filter(month=book.month,participant=book.participant).first()
         late=bool(enrollment and not enrollment.is_active)
         if is_active_floater(book.month,book.participant_id):raise ValidationError('Floaters cannot receive prompt points.')
@@ -186,6 +189,12 @@ def review_prompts(submission,actor,decisions,*,correction_authorization=None):
         _source(claim,decision=='qualified',actor)
         _completion(claim.category,claim.participant_id,actor,book,late=late)
         _audit(book,actor,'prompt.reviewed',{'category':kind,'claim_id':claim.pk,'before':before,'after':decision,'earning':claim.earning_evidence})
+        if before=='rejected' and decision=='qualified':
+            from .reader_rejections import resolve_target_correction
+            resolve_target_correction(actor,kind,claim,book)
+        if decision=='rejected':
+            from .reader_rejections import record
+            record(category=kind,target=claim,book=book,actor=actor,reason=reason,label=f'{book.title} · {claim.category.get_kind_display()} {claim.prompt.number}: {claim.prompt.description}')
     from .scoring import refresh_submission_score
     refresh_submission_score(book)
 

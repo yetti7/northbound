@@ -104,6 +104,8 @@ class DelegatedSubmissionPermissionsTests(TransactionTestCase):
         with self.assertRaises(PermissionDenied):apply_credit(submission=s,actor=a,token=token,**data)
 
     def test_participating_host_scope_is_rechecked_after_preview(self):
+        self.month.host_review_access = None
+        self.month.save(update_fields=['host_review_access'])
         s=self.submission();a=self.actor('host');data=self.operation()
         _,token=preview_credit(submission=s,actor=a,**data)
         member=Membership.objects.get(user=a)

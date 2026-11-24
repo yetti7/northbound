@@ -249,7 +249,7 @@ class CompetitionVisibilityMatrixTests(TestCase):
 
     def test_every_level_uses_role_aware_team_scope_for_both_domains(self):
         level = ChallengeMonth.CompetitionVisibility
-        staff = {"platform", "owner", "moderator", "host"}
+        staff = {"platform", "owner", "moderator", "host", "floater"}
         for visibility in level.values:
             self.set_levels(visibility)
             for key, user in self.users.items():
@@ -307,11 +307,13 @@ class CompetitionVisibilityMatrixTests(TestCase):
         self.assertContains(teams, ">330<")
         self.assertNotContains(teams, ">440<")
 
-    def test_floater_has_no_implicit_visibility_and_everybody_includes_members(self):
+    def test_floater_reporting_does_not_grant_ordinary_member_visibility(self):
         self.set_levels(ChallengeMonth.CompetitionVisibility.HOSTS)
         self.members["member"].permission_overrides = {"view_hidden_stats": True}
         self.members["member"].save(update_fields=["permission_overrides"])
-        for key in ("floater", "member"):
+        for helper in (can_view_team_standings, can_view_reader_scores):
+            self.assertTrue(helper(self.users["floater"], self.month, team=self.north))
+        for key in ("member",):
             self.assertFalse(can_view_team_standings(self.users[key], self.month, team=self.north))
             self.assertFalse(can_view_reader_scores(self.users[key], self.month, team=self.north))
         self.set_levels(ChallengeMonth.CompetitionVisibility.EVERYBODY)

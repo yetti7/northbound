@@ -165,7 +165,8 @@ class UnifiedSubmissionReviewTests(TestCase):
     def test_queue_compact_indicators_and_invalid_choices_are_preserved(self):
         self.login();self.botm();s=self.submission(status='pending')
         response=self.client.get(reverse('review-queue',args=[self.month.group.slug,self.month.pk]))
-        self.assertContains(response,'needs confirmation')
+        self.assertTrue(any(m['state']=='suggested' for b in response.context['submissions'] for m in b.review_matching))
+        self.assertContains(self.client.get(self.review_url(s)),'name="confirm_botm"')
         data=self.payload(s,confirm_botm='on',approved_pages='invalid')
         response=self.client.post(self.review_url(s),data)
         self.assertTrue(response.context['matching_form']['confirm_botm'].value())

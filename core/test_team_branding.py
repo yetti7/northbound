@@ -107,14 +107,14 @@ class TeamBrandingTests(TestCase):
         self.assertEqual(self.client.get(wrong).status_code,404)
         self.client.force_login(self.team_leader)
         page=self.client.get(self.branding_url());self.assertContains(page,'1000 × 1000');self.assertContains(page,'1920 × 480')
-        self.assertContains(page,'Back to Team');self.assertNotContains(page,'name="branding_mode"')
+        self.assertContains(page,'Back to Team');self.assertContains(page,'name="branding_mode"')
         self.assertNotContains(page,'978321');self.assertNotContains(page,'Private title')
         self.assertNotContains(page,'Forbidden violet team')
 
     def test_fields_allowlist_noop_audit_and_no_scoring_side_effects(self):
         models=[BookSubmission,ModifierProvenance,TeamAssignment,MonthEnrollment]
         before={m.__name__:list(m.objects.order_by('pk').values()) for m in models}
-        form,saved=self.save(data={'name':'FORGED','month':999,'color':'#ffffff','branding_mode':'banner'})
+        form,saved=self.save(data={'name':'FORGED','month':999,'color':'#ffffff'})
         self.assertFalse(saved);self.assertEqual(AuditEvent.objects.count(),0)
         form,saved=self.save(actor=self.team_leader,logo=upload())
         self.assertTrue(saved,form.errors);self.team.refresh_from_db()
@@ -146,6 +146,7 @@ class TeamBrandingTests(TestCase):
         self.group.logo.save('group.png',upload(),save=True);self.group.banner.save('group-banner.png',upload(),save=True)
         self.month.logo.save('challenge.png',upload(),save=True);self.month.banner.save('challenge-banner.png',upload(),save=True)
         self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.team.branding_mode='banner'
         self.team.month=self.month;self.month.group=self.group
         for own_logo,own_banner in [(False,False),(True,False),(False,True),(True,True)]:
             self.team.logo='';self.team.banner=''
@@ -156,8 +157,9 @@ class TeamBrandingTests(TestCase):
             self.assertEqual(art['effective_logo'],self.team.logo.url if own_logo else self.month.logo.url)
             self.assertEqual(art['effective_banner'],self.team.banner.url if own_banner else self.month.banner.url)
         self.group.branding_mode='logo'
+        self.assertEqual(team_branding(self.reader,self.team)['effective_banner'],self.team.banner.url)
+        self.team.branding_mode='logo'
         self.assertEqual(team_branding(self.reader,self.team)['effective_banner'],'')
-        self.assertNotIn('team_banner',team_branding(self.reader,self.team))
         self.team.logo='missing';self.team.banner='missing';self.month.logo='';self.month.banner='';self.group.branding_mode='banner'
         self.assertEqual(team_branding(self.reader,self.team)['effective_logo'],self.group.logo.url)
         self.group.logo='';self.group.banner=''

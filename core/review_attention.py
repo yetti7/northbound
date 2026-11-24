@@ -106,8 +106,13 @@ def needs_attention_summary(user):
             "host_notices": month_host_notices,
             "scope_label": scope_label,
         })
+    from .reader_rejections import outstanding
+    rejection_count=outstanding(user).count()
+    existing_total=sum(item["count"] for item in challenges)
     return {
-        "total": sum(item["count"] for item in challenges),
+        "total": existing_total+rejection_count,
+        "review_total": existing_total,
+        "rejection_count": rejection_count,
         "challenges": challenges,
-        "available": user.is_superuser or bool(month_ids),
+        "available": user.is_superuser or bool(month_ids) or bool(rejection_count),
     }

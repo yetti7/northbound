@@ -1,0 +1,27 @@
+{% load navigation %}
+<section class="card" aria-label="Challenge Qualifications">
+  <h2>Challenge Qualifications</h2>
+  <p>Book edits and qualification decisions use their existing review and confirmation steps. Save or discard edits before opening another action.</p>
+  {% for group in workspace.groups %}{% if group.enabled %}
+  <article><h3>{{ group.label }}</h3><p>{{ group.status }}</p><a href="{{ workspace.qualifications_url }}">View {{ group.label }} matches and authorized actions</a></article>
+  {% endif %}{% endfor %}
+  {% if workspace.qualifications.show_themes %}
+  <article><h3>Themes</h3><ul>{% for claim in workspace.qualifications.themes %}<li>{{ claim.theme.name }} · {{ claim.get_status_display }}</li>{% empty %}<li>No selected Themes.</li>{% endfor %}</ul><p>Use the Themes section above for existing selection corrections.{% if workspace.can_review %} <a href="{{ workspace.review_url }}">Review Theme qualification</a>{% endif %}</p></article>
+  {% endif %}
+  {% if workspace.immersive.readable %}{% if month.immersive_enabled or workspace.immersive.claims %}
+  <article><h3>Immersive Reading</h3><p>{% for claim in workspace.immersive.claims %}{{ claim.get_status_display }}{% if not forloop.last %} · {% endif %}{% empty %}No request.{% endfor %}</p><a href="{{ workspace.qualifications_url }}#immersive">View existing Immersive Reading actions</a></article>
+  {% endif %}{% endif %}
+  {% for category in workspace.qualifications.prompts %}
+  <article><h3>{{ category.label }}</h3><ul>{% for claim in category.claims %}<li>Prompt {{ claim.number }} · {{ claim.status }}</li>{% empty %}<li>No selected book prompt.</li>{% endfor %}</ul>
+  <p class="muted">{{ category.availability }}</p>
+  {% if category.operational %}{% if category.book_prompts %}<p>Existing book-prompt selections are available in the editor above. Selection does not award credit.</p>{% else %}<p>No book prompts are configured.</p>{% endif %}{% if workspace.can_review %}{% if category.claims %}<a href="{{ workspace.review_url }}">Review {{ category.label }} qualification</a>{% endif %}{% endif %}{% endif %}
+  {% if category.separate_photos %}<p>Scavenger photos use the separate Photo workflow; they are not book qualification claims.</p>{% endif %}
+  {% if workspace.qualifications.prompt_report %}<a {% url 'prompt-progress-report' month.group.slug month.pk as progress_url %}href="{% navigation_url progress_url %}">View authorized prompt progress</a>{% endif %}</article>
+  {% endfor %}
+  <p><a href="{{ workspace.qualifications_url }}">Open qualification details</a></p>
+</section>
+<section class="card" aria-label="Review and Scoring">
+  <h2>Review and Scoring</h2><p>Book status: {{ submission.get_status_display }}. Review book approval and applicable awards.</p>
+  {% if workspace.can_review %}<a class="button secondary" href="{{ workspace.review_url }}">Open Review and Scoring</a>{% else %}<p class="muted">Review actions are unavailable for your current scope or this Challenge lifecycle.</p>{% endif %}
+  {% if workspace.credit_enabled %}<details><summary>Exceptional credit corrections</summary><p>Separate signed previews apply to exceptional qualification assignments, reversals and restorations.</p><a href="{{ workspace.credit_url }}">Open Exceptional Credit Override</a></details>{% endif %}
+</section>

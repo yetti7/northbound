@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="{% static 'branding/favicon-32.png' %}?v=2">
   <link rel="apple-touch-icon" sizes="180x180" href="{% static 'branding/apple-touch-icon.png' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/app.css' %}?v=3">
-  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=49">
+  <link rel="stylesheet" href="{% static 'css/theme.css' %}?v=50">
   <link rel="stylesheet" href="{% static 'css/navigation.css' %}">
   <link rel="stylesheet" href="{% static 'css/profile.css' %}">
   <script src="{% static 'js/book_covers.js' %}?v=1"></script>
@@ -27,13 +27,13 @@
     {% if user.is_authenticated %}
       {% include "core/includes/global_search.html" %}
       <nav>
-        {% if needs_attention.available %}<a class="needs-attention-link" href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
+        {% include "core/includes/needs_attention_link.html" with desktop=True %}
         <details class="account-menu">
           <summary>{{ user.public_name }} <span aria-hidden="true">▾</span></summary>
           <div class="account-menu-panel">
+            {% include "core/includes/needs_attention_link.html" with desktop=False %}
             {% if user.is_superuser %}
               <a href="{% url 'config-dashboard' %}">Platform Administration</a>
-              {% if needs_attention.available %}<a href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}
               <a href="{% url 'config-user-list' %}">Accounts</a>
               <a href="{% url 'config-audit' %}">Audit Activity</a>
               <a href="{% url 'account' %}">My Account</a>

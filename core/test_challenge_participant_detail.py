@@ -115,10 +115,10 @@ class ChallengeParticipantDetailTests(TestCase):
         self.assertNotContains(floater, "secret response")
         self.assertNotContains(floater, "Private registration answer")
         self.assertContains(floater, "private.reader")
-        self.assertNotContains(floater, "<dt>Base</dt>", html=True)
-        self.assertNotContains(floater, ">100<")
-        self.assertNotContains(floater, ">25<")
-        self.assertNotContains(floater, "Modifiers / Rewards")
+        self.assertContains(floater, "<dt>Base</dt>", html=True)
+        self.assertContains(floater, ">100<")
+        self.assertContains(floater, ">25<")
+        self.assertContains(floater, "Modifiers / Rewards")
 
     def test_submissions_and_active_provenance_are_reader_and_challenge_scoped(self):
         other_submission = BookSubmission.objects.create(
@@ -161,6 +161,26 @@ class ChallengeParticipantDetailTests(TestCase):
             "group_slug": self.group.slug, "month_pk": self.month.pk, "pk": pending.pk,
         }) + '?section=review')
         self.assertContains(queue, hardcover_url)
+        self.assertNotContains(queue, "private-catalog-material")
+
+    def test_review_queue_hardcover_link_rejects_unsafe_catalog_urls(self):
+        pending = BookSubmission.objects.create(
+            month=self.month, participant=self.members["reader"],
+            title="Reference safety", author="Author", catalog_book=self.catalog_book,
+            catalog_edition=self.catalog_edition, book_format="ebook",
+            completed_on=date(2026, 8, 12), submitted_pages=120,
+        )
+        url = reverse("review-queue", args=[self.group.slug, self.month.pk])
+        for unsafe in ["javascript:alert(1)", "https://evil.example/books/fake", "https://hardcover.app@evil.example/books/fake"]:
+            self.catalog_edition.source_url = unsafe
+            self.catalog_edition.save(update_fields=["source_url"])
+            self.catalog_book.source_url = unsafe
+            self.catalog_book.save(update_fields=["source_url"])
+            response = self.get_as("host", url)
+            self.assertNotContains(response, 'class="external-book-link"')
+            self.assertNotContains(response, unsafe)
+            self.assertContains(response, pending.title)
+            self.assertEqual(response.context["queue_total"], 1)
 
     def test_progress_uses_zero_actual_denominators_without_creating_data(self):
         response = self.get_as("host")
@@ -463,15 +483,16 @@ class ChallengeParticipantDetailTests(TestCase):
         profile.discord_username = "PrivateDirectoryDiscord"
         profile.save(update_fields=["discord_username"])
         url = reverse("participant-list", args=[self.group.slug])
-        self.assertContains(self.get_as("platform", url), "Discord: PrivateDirectoryDiscord")
-        self.assertContains(self.get_as("reader", url), "Discord: PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("platform", url), "PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("reader", url), "PrivateDirectoryDiscord")
         ordinary = self.get_as("other", url)
         self.assertContains(ordinary, "PrivateDirectoryDiscord")
+        self.assertNotContains(ordinary, "Discord:")
         self.assertNotContains(ordinary, 'data-discord="PrivateDirectoryDiscord"')
         self.assertNotContains(ordinary, "@directory-current-reader")
         profile.discord_username_is_public = True
         profile.save(update_fields=["discord_username_is_public"])
-        self.assertContains(self.get_as("other", url), "Discord: PrivateDirectoryDiscord")
+        self.assertContains(self.get_as("other", url), "PrivateDirectoryDiscord")
         profile.discord_username = ""
         profile.save(update_fields=["discord_username"])
         self.assertNotContains(self.get_as("platform", url), "PrivateDirectoryDiscord")

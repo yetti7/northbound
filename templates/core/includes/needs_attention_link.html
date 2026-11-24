@@ -1,0 +1,1 @@
+{% if needs_attention.available %}{% if user.is_superuser or needs_attention.total %}<a{% if desktop %} class="needs-attention-link"{% endif %} href="{% url 'needs-attention' %}">Needs Attention{% if needs_attention.total %} <span class="needs-attention-count">{{ needs_attention.total }}</span>{% endif %}</a>{% endif %}{% endif %}

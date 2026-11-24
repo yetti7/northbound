@@ -960,7 +960,9 @@ class SubmissionWorkflowTests(TestCase):
         )
         self.client.force_login(self.mod)
         response = self.client.get(reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
-        self.assertContains(response, "Book Submission · Pending")
+        self.assertContains(response, "Book submission")
+        self.assertContains(response, "Pending Review Book")
+        self.assertEqual(response.context["queue_total"], 1)
         self.assertContains(response, "Review &amp; Scoring")
         self.assertNotContains(response, "Back to Month")
 

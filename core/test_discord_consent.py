@@ -34,7 +34,7 @@ class DiscordConsentTests(TestCase):
         self.consent()
         for destination in ('community', 'moderator'):
             configure_notifications(group=self.group, actor=self.owner, destination=destination,
-                                    enabled=True, webhook_url=fixture.WEBHOOK)
+                                    enabled=True, webhook_url=fixture.WEBHOOK, cleanup_mode='none')
         transport = patch('core.discord_notifications.send_webhook', return_value=('sent', 0))
         self.send = transport.start()
         self.addCleanup(transport.stop)

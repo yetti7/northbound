@@ -19,6 +19,8 @@ class AdvancedBrandingTests(TestCase):
         self.save(logo=fixture.upload(), banner=fixture.upload());self.group.refresh_from_db()
         self.save(target=self.month, logo=fixture.upload(), banner=fixture.upload());self.month.refresh_from_db()
         self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.month.branding_mode='banner';self.month.save(update_fields=['branding_mode'])
+        self.team.branding_mode='banner';self.team.save(update_fields=['branding_mode'])
         self.month.group=self.group;self.team.month=self.month
 
     def page(self, route, *args):
@@ -43,7 +45,7 @@ class AdvancedBrandingTests(TestCase):
     def test_logo_suppression_custom_override_missing_artwork_and_export_opt_out(self):
         self.parents()
         self.assertEqual(team_branding(self.reader,self.team)['effective_logo'],self.month.logo.url)
-        self.team.hide_inherited_logo=True;self.team.save(update_fields=['hide_inherited_logo'])
+        self.team.hide_inherited_logo=True;self.team.branding_legacy_visibility=True;self.team.save(update_fields=['hide_inherited_logo','branding_legacy_visibility'])
         self.assertEqual(team_branding(self.reader,self.team)['effective_logo'],'')
         self.assertEqual(team_branding_many(self.reader,[self.team])[self.team.pk]['effective_logo'],'')
         self.assertEqual(team_branding(self.reader,self.team,presentation=False)['effective_logo'],self.month.logo.url)
@@ -89,12 +91,12 @@ class AdvancedBrandingTests(TestCase):
         self.assertEqual(team_branding(self.reader,self.team)['appearance'],{})
 
     def test_showcase_requires_custom_available_banner_suppression_and_no_custom_logo(self):
-        self.parents();self.team.hide_inherited_logo=True
+        self.parents();self.team.hide_inherited_logo=True;self.team.branding_legacy_visibility=True
         self.assertFalse(team_branding(self.reader,self.team)['showcase'])
         self.team.banner.save('own-banner.png',fixture.upload(),save=True)
         self.assertTrue(team_branding(self.reader,self.team)['showcase'])
         self.team.gradient_enabled=True;self.team.gradient_coverage=30;self.team.gradient_darkness=65
-        self.team.save(update_fields=['hide_inherited_logo','gradient_enabled','gradient_coverage','gradient_darkness'])
+        self.team.save(update_fields=['hide_inherited_logo','branding_legacy_visibility','gradient_enabled','gradient_coverage','gradient_darkness'])
         cards=self.page('team-list',self.month.pk)
         self.assertContains(cards,'has-banner is-artwork-showcase')
         self.assertNotContains(cards,'--branding-coverage:30%')
@@ -109,16 +111,16 @@ class AdvancedBrandingTests(TestCase):
         self.team.hide_inherited_logo=True;self.team.banner='missing'
         self.assertFalse(team_branding(self.reader,self.team)['showcase'])
         self.team.banner='';self.group.branding_mode='logo'
-        self.assertEqual(team_branding(self.reader,self.team)['effective_banner'],'')
+        self.assertEqual(team_branding(self.reader,self.team)['effective_banner'],self.month.banner.url)
 
     def test_restore_defaults_only_appearance_and_audit_and_permissions(self):
-        self.parents();self.team.hide_inherited_logo=True;self.team.save(update_fields=['hide_inherited_logo'])
+        self.parents();self.team.hide_inherited_logo=True;self.team.branding_legacy_visibility=True;self.team.branding_legacy_visibility=True;self.team.save(update_fields=['hide_inherited_logo','branding_legacy_visibility'])
         paths=(self.group.logo.name,self.month.logo.name,self.team.logo.name,self.team.banner.name)
         first=AuditEvent.objects.order_by('pk').first();historical=first.summary
         form,saved=self.change(self.team,hide_inherited_logo='on',gradient_enabled='on',gradient_coverage=20,gradient_darkness=30)
         self.assertTrue(saved,form.errors)
         event=AuditEvent.objects.latest('pk')
-        self.assertIn('gradient_enabled',event.summary);self.assertIn('hide_inherited_logo',event.summary)
+        self.assertIn('gradient_enabled',event.summary);self.assertIn('branding_mode',event.summary)
         self.assertIn('"before"',event.summary);self.assertIn('"after"',event.summary)
         form,saved=self.change(self.team,hide_inherited_logo='on',gradient_coverage=75,gradient_darkness=85)
         self.assertTrue(saved,form.errors);self.team.refresh_from_db()

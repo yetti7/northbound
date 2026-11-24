@@ -184,12 +184,15 @@ class ImmersiveTests(TestCase):
         ChallengeStaffAssignment.objects.filter(membership__user=self.host).update(ended_at=timezone.now())
         with self.assertRaises(PermissionDenied):self.approve(request)
 
-    def test_reader_ownership_deadline_and_staff_self_approval_denied(self):
+    def test_reader_ownership_deadline_and_authorized_staff_self_approval(self):
         self.enable();item=self.submission()
         with self.assertRaises(PermissionDenied):request_immersive(submission=item,actor=self.host)
         request=self.request(item)
+        from .models import Team,TeamAssignment
+        team=Team.objects.create(month=self.month,name='Self-review Team')
+        TeamAssignment.objects.create(month=self.month,participant=self.reader,team=team)
         ChallengeStaffAssignment.objects.create(month=self.month,membership=self.reader,role='host')
-        with self.assertRaises(PermissionDenied):review_immersive(request=request,actor=self.reader.user,decision='approved')
+        self.assertEqual(review_immersive(request=request,actor=self.reader.user,decision='approved').status,'approved')
         MonthEnrollment.objects.filter(month=self.month,participant=self.reader).update(is_active=False)
         with self.assertRaises(ValidationError):self.request()
 

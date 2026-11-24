@@ -77,14 +77,14 @@ class ScopedReviewAuthorityTests(TestCase):
         return reverse("submission-review", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk, "pk": submission.pk})
 
     def review_payload(self, submission, status=BookSubmission.Status.APPROVED, approved_pages=275, claim=None, claim_status=ThemeClaim.Status.APPROVED):
-        data = {"approved_pages": approved_pages, "status": status, "verification_url": "", "review_notes": "Scoped review"}
+        data = {"approved_pages": approved_pages, "status": status, "verification_url": "", "review_notes": "Scoped review", "rejection_reason": "Unable to verify this book submission."}
         page = self.client.get(self.review_url(submission))
         if page.status_code == 200:
             data['matching_version'] = page.context['matching_form']['matching_version'].value()
         if claim:
             data.update({
                 "claims-TOTAL_FORMS": "1", "claims-INITIAL_FORMS": "1", "claims-MIN_NUM_FORMS": "0", "claims-MAX_NUM_FORMS": "1000",
-                "claims-0-id": str(claim.pk), "claims-0-submission": str(submission.pk), "claims-0-status": claim_status,
+                "claims-0-id": str(claim.pk), "claims-0-submission": str(submission.pk), "claims-0-status": claim_status, "claims-0-rejection_reason": "This book does not meet the selected Theme.",
             })
         return data
 
@@ -135,7 +135,7 @@ class ScopedReviewAuthorityTests(TestCase):
         self.assertEqual(self.submission_two.reviewed_by, self.floater_user)
         self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=self.floater).exists())
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.floater).exists())
-        self.assertFalse(can_view_team_standings(self.floater_user, self.month))
+        self.assertTrue(can_view_team_standings(self.floater_user, self.month))
         self.assertEqual(self.client.post(reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"membership": self.owner.pk}).status_code, 403)
         self.assertEqual(self.client.get(reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 403)
 

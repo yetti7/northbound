@@ -24,6 +24,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from django.views.decorators.http import require_GET, require_POST
+from types import SimpleNamespace
 import secrets
 import hashlib
 import csv
@@ -59,7 +60,7 @@ from .review_attention import needs_attention_summary
 from .participation import activate_participation, assign_participant_to_team, deactivate_participation, end_team_assignment
 from .reader_planning import historical_reader_planning_data
 from .scoring import apply_submission_review
-from .score_aggregation import challenge_score_totals, challenge_team_totals
+from .score_aggregation import challenge_score_totals, challenge_team_totals, challenge_team_attribution
 from .game_rewards import apply_game_reward, game_reward_application_unavailable_reason, preview_game_reward, void_game_reward
 from .botm_configuration import add_botm_book, delete_unused_botm_book, reactivate_botm_book, retire_botm_book, update_botm_book
 from .botm_matching import adjudicate_match, synchronize_challenge, synchronize_submission
@@ -184,6 +185,11 @@ def lifecycle_transition_targets(month):
 @login_required
 def needs_attention(request):
     summary = needs_attention_summary(request.user)
+    from .reader_rejections import outstanding,notice_cards
+    from django.core.paginator import Paginator
+    notices=outstanding(request.user).select_related('month__group','book__month__group','book__participant__user','photo__prompt_claim','immersive_request')
+    page=Paginator(notices,25).get_page(request.GET.get('rejections_page'))
+    summary.update(rejection_cards=list(notice_cards(request.user,page.object_list)),rejections_page=page)
     return render(request, "core/needs_attention.html", summary)
 
 
@@ -3768,6 +3774,12 @@ def team_detail(request, group_slug, month_pk, pk):
     rumble_access = can_generate_reader_rumble(request.user, team)
     standings_access = can_view_team_standings(request.user, month, team=team)
     score_access = can_view_reader_scores(request.user, month, team=team)
+    reporting_access = score_access or standings_access
+    attributed_ids = set(challenge_team_attribution(month=month, team_ids=[team.pk])) if standings_access else set()
+    historical_rows = [SimpleNamespace(participant=member, participant_id=member.pk) for member in
+        Membership.objects.filter(pk__in=attributed_ids - set(participant_ids)).select_related("user", "user__northbound_profile")]
+    reporting_candidates = full_roster + historical_rows
+    reporting_ids = set(participant_ids) | attributed_ids
     review_scope = challenge_review_scope(request.user, month)
     progress_access = bool(review_scope and (review_scope[0] == "challenge" or team.pk in review_scope[1]))
     discord_access = (
@@ -3792,12 +3804,12 @@ def team_detail(request, group_slug, month_pk, pk):
             return default
         return value
 
-    effective_from = parsed_date("from", default_from) if score_access else default_from
-    effective_to = parsed_date("to", default_to) if score_access else default_to
+    effective_from = parsed_date("from", default_from) if reporting_access else default_from
+    effective_to = parsed_date("to", default_to) if reporting_access else default_to
     if effective_from and effective_to and effective_from > effective_to:
         filter_errors.append("From Date cannot be after To Date.")
         effective_from, effective_to = default_from, default_to
-    show_bonuses = request.GET.get("bonuses", "1") != "0" if score_access else False
+    show_bonuses = request.GET.get("bonuses", "1") != "0" if reporting_access else False
 
     allowed_progress = {"any", "complete", "incomplete"}
     theme_filter = request.GET.get("themes", "any") if progress_access else "any"
@@ -3816,31 +3828,31 @@ def team_detail(request, group_slug, month_pk, pk):
         month=month, participant_ids=participant_ids,
     ) if planning_access else {}
     score_by_participant = challenge_score_totals(
-        month=month, participant_ids=participant_ids,
+        month=month, participant_ids=reporting_ids,
         effective_from=effective_from, effective_to=effective_to,
     ) if (score_access or standings_access) else {}
 
     theme_count = month.themes.filter(is_active=True).count() if progress_access else 0
     approved_theme_ids = set(ThemeClaim.objects.filter(
-        submission__month=month, submission__participant_id__in=participant_ids,
+        submission__month=month, submission__participant_id__in=reporting_ids,
         submission__is_removed=False, status=ThemeClaim.Status.APPROVED,
         theme__is_active=True,
     ).values_list("submission__participant_id", "theme_id")) if progress_access else set()
     tbrs = {tbr.enrollment.participant_id: tbr for tbr in PersonalTBR.objects.filter(
-        enrollment__month=month, enrollment__participant_id__in=participant_ids,
+        enrollment__month=month, enrollment__participant_id__in=reporting_ids,
         confirmed_at__isnull=False,
     ).select_related("enrollment").prefetch_related("books")} if progress_access else {}
     tbr_completed = set(PersonalTBRMatch.objects.filter(
-        month=month, participant_id__in=participant_ids,
+        month=month, participant_id__in=reporting_ids,
         status=PersonalTBRMatch.Status.CONFIRMED, is_qualifying=True,
     ).values_list("participant_id", "personal_tbr_book_id")) if progress_access else set()
     botm_count = month.botm_books.filter(is_retired=False).count() if progress_access else 0
     botm_completed = set(BotmMatch.objects.filter(
-        month=month, participant_id__in=participant_ids, botm_book__is_retired=False,
+        month=month, participant_id__in=reporting_ids, botm_book__is_retired=False,
         status=BotmMatch.Status.CONFIRMED, is_qualifying=True,
     ).values_list("participant_id", "botm_book_id")) if progress_access else set()
 
-    for assignment in full_roster:
+    for assignment in reporting_candidates:
         participant_id = assignment.participant_id
         assignment.is_team_leader = participant_id in leader_ids
         assignment.planning = planning_by_participant.get(participant_id)
@@ -3863,12 +3875,24 @@ def team_detail(request, group_slug, month_pk, pk):
         if missing or not total: return False
         return (completed == total) if selected == "complete" else (completed < total)
 
-    roster = []
-    for assignment in full_roster:
-        if not progress_matches(assignment.theme_completed, assignment.theme_total, theme_filter): continue
-        if not progress_matches(assignment.tbr_completed or 0, assignment.tbr_total or 0, tbr_filter, missing=assignment.tbr_total is None): continue
-        if not progress_matches(assignment.botm_completed, assignment.botm_total, botm_filter): continue
-        roster.append(assignment)
+    def included(assignment):
+        return (
+            progress_matches(assignment.theme_completed, assignment.theme_total, theme_filter)
+            and progress_matches(assignment.tbr_completed or 0, assignment.tbr_total or 0, tbr_filter, missing=assignment.tbr_total is None)
+            and progress_matches(assignment.botm_completed, assignment.botm_total, botm_filter)
+        )
+
+    roster = [assignment for assignment in full_roster if included(assignment)]
+    report_rows = [assignment for assignment in reporting_candidates
+                   if assignment.participant_id in attributed_ids and included(assignment)]
+    score_field = "total_pages" if show_bonuses else "base_pages"
+    team_total = sum(score_by_participant[row.participant_id][score_field] for row in report_rows) if standings_access else None
+    # Only expose searchable per-Reader amounts when Reader scores are visible.
+    # Standings-only viewers must not infer protected individual totals by search.
+    team_report_data = [{
+        "pages": score_by_participant[row.participant_id][score_field],
+        "names": [row.participant.user.public_name] + ([getattr(getattr(row.participant.user, "northbound_profile", None), "discord_username", "") or ""] if discord_access else []),
+    } for row in report_rows] if standings_access and score_access else None
 
     allowed_sorts = {"reader", "role"}
     if score_access:
@@ -3907,7 +3931,7 @@ def team_detail(request, group_slug, month_pk, pk):
     sort_labels = {"reader": "Reader", "role": "Role", "base": "Base", "modifier": "Modifier", "total": "Total", "themes": "Themes", "tbr": "TBR", "botm": "BOTM"}
     sort_options = [{"value": key, "label": label} for key, label in sort_labels.items() if key in allowed_sorts]
     active_filters = any((
-        effective_from != default_from, effective_to != default_to, score_access and not show_bonuses,
+        effective_from != default_from, effective_to != default_to, reporting_access and not show_bonuses,
         theme_filter != "any", tbr_filter != "any", botm_filter != "any",
         show_discord, show_average, show_last, show_completed,
     ))
@@ -3934,11 +3958,10 @@ def team_detail(request, group_slug, month_pk, pk):
         "team": team,
         "current_leaders": current_leaders,
         "roster": roster,
-        "roster_total": sum(item.total_pages for item in roster) if score_access and standings_access else None,
-        "team_total": challenge_team_totals(
-            month=month, team_ids=[team.pk], effective_from=effective_from, effective_to=effective_to,
-        )[team.pk] if standings_access else None,
-        "team_base_total": sum(assignment.base_pages for assignment in roster) if score_access else None,
+        "team_total": team_total,
+        "team_total_display": f"{team_total:,}" if team_total is not None else None,
+        "team_report_data": team_report_data,
+        "can_filter_reporting": reporting_access,
         "can_view_team_standings": standings_access,
         "can_view_reader_scores": score_access,
         "can_view_planning_data": planning_access,
@@ -5083,8 +5106,18 @@ def challenge_host_list(request, group_slug, month_pk):
     if request.method == "POST" and not can_manage:
         return HttpResponseForbidden("Month management permission is required.")
     can_manage = can_manage and not challenge_history_locked(month)
-    form = ChallengeHostAssignmentForm(request.POST or None, month=month) if can_manage else None
-    if request.method == "POST" and form.is_valid():
+    from .forms import HostReviewAccessForm
+    access_before=month.host_review_access
+    access_action=request.method=='POST' and request.POST.get('action')=='host_review_access'
+    access_form=HostReviewAccessForm(request.POST if access_action else None,instance=month) if can_manage else None
+    if access_action and access_form.is_valid():
+        before=access_before
+        access_form.save()
+        AuditEvent.objects.create(actor=request.user,group=month.group,action='challenge.host_review_access',object_type='ChallengeMonth',object_id=str(month.pk),summary=f'Host Review Access: {before or "legacy"} → {month.host_review_access}')
+        messages.success(request,'Host Review Access saved.')
+        return redirect('challenge-host-list',group_slug=group_slug,month_pk=month_pk)
+    form = ChallengeHostAssignmentForm(request.POST if request.method=='POST' and not access_action else None, month=month) if can_manage else None
+    if request.method == "POST" and not access_action and form.is_valid():
         assignment = form.save(assigned_by=request.user)
         AuditEvent.objects.create(
             actor=request.user,
@@ -5106,6 +5139,7 @@ def challenge_host_list(request, group_slug, month_pk):
             "month": month,
             "form": form,
             "can_manage": can_manage,
+            "access_form": access_form,
             "current_hosts": assignments.filter(ended_at__isnull=True),
             "past_hosts": assignments.filter(ended_at__isnull=False).order_by("-ended_at"),
         },
@@ -7002,8 +7036,11 @@ def review_queue(request, group_slug, month_pk):
     prompt_report_available=progress_categories(month).exists() and progress_scope(request.user,month) is not None
     from .photo_review import pending_review_photos
     photo_submissions = pending_review_photos(request.user,month).select_related('participant__user','month','accepted_team_assignment__team','prompt_claim__prompt')
-    return render(request, "core/review_queue.html", {"month": month, "photo_submissions": photo_submissions, "can_view_staff_activity": can_view_staff_activity(request.user, month), "submissions": submissions, "review_scope_label": scope_label,
-        "immersive_requests": review_queue_requests(actor=request.user, month=month),
+    from .review_queue_presentation import grouped_queue
+    immersive_requests=review_queue_requests(actor=request.user,month=month)
+    presentation=grouped_queue(month,submissions,immersive_requests,photo_submissions)
+    return render(request, "core/review_queue.html", {**presentation,"month": month, "photo_submissions": photo_submissions, "can_view_staff_activity": can_view_staff_activity(request.user, month), "submissions": submissions, "review_scope_label": scope_label,
+        "immersive_requests": immersive_requests,
         "prompt_report_available": prompt_report_available, "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
 
 
@@ -7323,6 +7360,7 @@ def submission_review(request, group_slug, month_pk, pk):
             claims = claims.filter(theme__starts_on__lte=submission.completed_on, theme__ends_on__gte=submission.completed_on)
     claim_formset = ClaimFormSet(request.POST or None, instance=submission, queryset=claims, prefix="claims")
     if submission.status == BookSubmission.Status.APPROVED:
+        form.fields.pop('rejection_reason',None)
         for field in ('status', 'approved_pages'):
             form.fields[field].disabled = True
         for claim_form in claim_formset.forms:
@@ -7332,7 +7370,7 @@ def submission_review(request, group_slug, month_pk, pk):
                 or ModifierProvenance.objects.filter(source_type='theme_bonus',
                     source_reference=f'theme_claim:{claim_form.instance.pk}').exists())
         for field in list(matching_form.fields):
-            if field != 'matching_version':
+            if field != 'matching_version' and not field.startswith('prompt_'):
                 matching_form.fields.pop(field)
     claims_are_valid = claim_formset.is_valid() if claims.exists() else True
     if request.method == "POST":
@@ -7359,7 +7397,8 @@ def submission_review(request, group_slug, month_pk, pk):
                     reviewed = apply_unified_review(reviewed, claims, request.user, timezone.now(),
                         version=matching_form.cleaned_data['matching_version'],
                         confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)],
-                        prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)})
+                        prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)},
+                        prompt_rejection_reasons={kind:matching_form.cleaned_data.get('prompt_reason_'+kind,'') for kind in ('bingo','scavenger')})
                     # The scoring boundary records book or Theme decisions exactly once.
             except (ValidationError, PermissionDenied, DatabaseError):
                 form.add_error(None, 'This review could not be saved because the submission, matching or eligibility changed. Nothing was saved. Reload to check the current details, or approve without confirming uncertain credit.')
@@ -7372,7 +7411,7 @@ def submission_review(request, group_slug, month_pk, pk):
                 return redirect('review-queue',group_slug=group_slug,month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
     _annotate_submission_edit(request.user, [submission])
-    return _workspace_render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []}, 'review')
+    return _workspace_render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True,state="reserved",earning_evidence={}) if prompt_reservations_ready() else []}, 'review')
 
 
 @login_required

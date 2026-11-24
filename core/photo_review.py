@@ -139,7 +139,7 @@ def validate_photo_scoring_boundary(claim,actor):
 
 @atomic_reservations
 @observe_photo
-def review_photo_submission(*,photo_id,actor,version,decision,reviewer_verified=False):
+def review_photo_submission(*,photo_id,actor,version,decision,reviewer_verified=False,rejection_reason=''):
     require_ready()
     if not actor.is_authenticated or not actor.is_active:raise PermissionDenied('An active reviewer is required.')
     actor=get_user_model().objects.get(pk=actor.pk)
@@ -165,6 +165,9 @@ def review_photo_submission(*,photo_id,actor,version,decision,reviewer_verified=
                     or row.submission_id is not None or row.month_id!=month.pk or row.participant_id!=photo.participant_id)) or (not amount and row):
                 raise ValidationError('Existing Photo credit differs from its receipt. Historical correction is required.')
         return photo
+    if decision=='rejected':
+        from .reader_rejections import validate_reason
+        rejection_reason=validate_reason(rejection_reason)
     if photo.status!='pending' or claim.state!='reserved' or not claim.is_current or claim.earning_evidence:
         raise ValidationError('Only a current Pending Photo reservation may be reviewed. Corrections are a separate workflow.')
     if claim.category.month_id!=month.pk or claim.participant_id!=photo.participant_id:
@@ -192,4 +195,7 @@ def review_photo_submission(*,photo_id,actor,version,decision,reviewer_verified=
         _completion(claim.category,photo.participant_id,actor,photo,late=late)
     _audit(photo,actor,'scavenger_photo.reviewed',decision=decision,reviewer_verified=photo.reviewer_verified,
         reviewed_at=now.isoformat(),claim_id=claim.pk)
+    if decision=='rejected':
+        from .reader_rejections import record
+        record(category='photo',target=photo,photo=photo,actor=actor,reason=rejection_reason,label=f'Photo {photo.pk} · Scavenger Hunt {claim.prompt.number}: {claim.prompt.description}')
     return photo

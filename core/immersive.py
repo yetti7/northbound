@@ -62,8 +62,6 @@ def _staff(actor, submission):
     if not (host_scope_allows_reader(actor, submission.month, submission.participant_id)
             and (oversight or can_review_submission(actor, submission))):
         raise PermissionDenied('Submission review authority is required.')
-    if actor.pk == submission.participant.user_id:
-        raise PermissionDenied('An independent reviewer is required.')
 
 
 @transaction.atomic
@@ -88,13 +86,16 @@ def configure_immersive(*, month, actor, enabled, percent):
 
 @transaction.atomic
 @observe_book
-def request_immersive(*, submission, actor):
+def request_immersive(*, submission, actor, replacement_notice=None):
     actor = _actor(actor)
     submission = _submission(submission)
     month = ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     _validate_new_request(submission, actor, month)
     request = ImmersiveRequest.objects.create(submission=submission, requester=actor,
         captured_percent=month.immersive_bonus_percent)
+    if replacement_notice:
+        from .reader_rejections import resolve_replacement
+        resolve_replacement(actor,replacement_notice,category='immersive',new_target=request,book=submission)
     _audit(request, actor, 'requested')
     return request
 
@@ -128,6 +129,9 @@ def review_immersive(*, request, actor, decision, reason=''):
         raise ValidationError("Active Floaters cannot receive new Immersive credit.")
     if request.status == decision:
         return request
+    if decision=='rejected':
+        from .reader_rejections import validate_reason
+        reason=validate_reason(reason)
     if decision == 'revoked':
         if request.status != 'approved':
             raise ValidationError('Only an approved award may be revoked.')
@@ -153,6 +157,9 @@ def review_immersive(*, request, actor, decision, reason=''):
     refresh_submission_score(submission)
     request.refresh_from_db()
     _audit(request, actor, decision, reason=reason.strip(), awarded_pages=request.awarded_pages)
+    if decision=='rejected':
+        from .reader_rejections import record
+        record(category='immersive',target=request,book=submission,actor=actor,reason=reason,label=f'{submission.title} · Immersive Reading')
     return request
 
 
@@ -253,7 +260,7 @@ def review_queue_requests(*, actor, month):
     calculated_bonus property. Completed reviews use this service without reopening
     the normal book-review queue or changing its lifecycle permissions.
     """
-    query = pending_review_requests(month=month).exclude(requester_id=getattr(actor, 'pk', None))
+    query = pending_review_requests(month=month)
     if not actor.is_authenticated or not actor.is_active or month.status not in {'active', 'finalizing', 'completed'}:
         return query.none()
     member = membership_for(actor, month.group)

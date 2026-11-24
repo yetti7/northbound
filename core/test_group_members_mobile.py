@@ -29,9 +29,12 @@ class GroupMembersMobileTests(SimpleTestCase):
 
     def test_cards_preserve_desktop_information_and_routes(self):
         desktop, mobile = self.render_cards(member_context())
-        for content in ("A Readable Display Name", "Visible Discord", "Member", "7", "1,234", "Active", "/static/avatars/owl.svg"):
+        for content in ("A Readable Display Name", "Member", "7", "1,234", "Active", "/static/avatars/owl.svg"):
             self.assertIn(content, desktop)
             self.assertIn(content, mobile)
+        for section in (desktop, mobile):
+            self.assertNotIn("Discord:", section)
+            self.assertNotIn("Visible Discord", section)
         for route in ("participant-detail", "participant-permissions-edit", "participant-deactivate"):
             url = reverse(route, args=["reading-group", 42])
             self.assertIn('href="' + url + '"', mobile)

@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim
+from .models import BookSubmission, ChallengeMonth, ChallengeStaffAssignment, Membership, MonthEnrollment, MonthTheme, ReadingGroup, Team, TeamAssignment, ThemeClaim, ImmersiveRequest
 from .review_attention import needs_attention_summary
 
 
@@ -60,6 +60,40 @@ class NeedsAttentionTests(TestCase):
 
     def make_submission(self, month, participant, title):
         return BookSubmission.objects.create(month=month, participant=participant, title=title, author="Author", book_format=BookSubmission.Format.EBOOK, completed_on=month.starts_on, submitted_pages=200)
+
+    def assert_navigation(self, user, count):
+        self.assertEqual(needs_attention_summary(user)['total'], count)
+        self.client.force_login(user)
+        response = self.client.get(reverse('needs-attention'))
+        header = response.content.decode().split('</header>', 1)[0]
+        desktop, mobile = header.split('<div class="account-menu-panel">', 1)
+        expected = int(user.is_superuser or count > 0)
+        for section in (desktop, mobile):
+            self.assertEqual(section.count('href="'+reverse('needs-attention')+'"'), expected)
+            if count:
+                self.assertIn('<span class="needs-attention-count">'+str(count)+'</span>', section)
+
+    def test_desktop_and_mobile_share_scoped_visibility_for_each_role(self):
+        for user, count in ((self.host_user, 4), (self.leader_user, 2), (self.floater_user, 4),
+                            (self.owner_user, 0), (self.moderator_user, 0), (self.reader_one_user, 0),
+                            (self.platform_owner, 5)):
+            with self.subTest(user=user.username):
+                self.assert_navigation(user, count)
+        BookSubmission.objects.update(status='approved', approved_pages=200)
+        ThemeClaim.objects.update(status='approved')
+        for user in (self.host_user, self.leader_user, self.floater_user, self.platform_owner):
+            self.assert_navigation(user, 0)
+
+    def test_participating_host_navigation_stays_team_scoped(self):
+        MonthEnrollment.objects.create(month=self.month, participant=self.host)
+        TeamAssignment.objects.create(month=self.month, participant=self.host, team=self.team_one)
+        self.assert_navigation(self.host_user, 2)
+
+    def test_group_owner_navigation_includes_only_applicable_immersive_oversight(self):
+        BookSubmission.objects.filter(pk=self.north_submission.pk).update(status='approved', approved_pages=200)
+        ImmersiveRequest.objects.create(submission=self.north_submission, requester=self.reader_one_user, captured_percent=100)
+        self.assert_navigation(self.owner_user, 1)
+        self.assert_navigation(self.moderator_user, 0)
 
     def test_host_team_leader_and_floater_receive_correct_aggregate_counts(self):
         self.assertEqual(needs_attention_summary(self.host_user)["total"], 4)
@@ -117,7 +151,7 @@ class NeedsAttentionTests(TestCase):
         })
         self.assertRedirects(result, reverse("review-queue", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}))
         response = self.client.get(reverse("dashboard"))
-        self.assertContains(response, "Needs Attention")
+        self.assertNotContains(response, "Needs Attention")
         self.assertNotContains(response, "needs-attention-count")
         new_submission = self.make_submission(self.month, self.reader_one, "New North Work")
         response = self.client.get(reverse("dashboard"))

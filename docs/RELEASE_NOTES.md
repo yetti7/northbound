@@ -1,5 +1,11 @@
 # Release notes
 
+## Northbound v1.1.4
+
+Filtered Team totals and authorized reporting, the redesigned Review Queue, private Reader rejection notices with mandatory reasons, Host review access options, configured Bingo and Scavenger Hunt workflows, and Book Management, branding, Discord, and usability improvements. Upgrading from v1.1.3 requires core migrations 0087–0090 and a compatible database/media/configuration rollback snapshot.
+
+See the [detailed release and upgrade notes](V1_1_4_RELEASE_NOTES.md). Publication and Production deployment are separate operations.
+
 ## Northbound v1.1.2
 
 Independent Discord consent and Challenge message isolation; Pending Theme decisions on Approved books; unified Immersive review cards; administrator-managed SMTP, local password recovery and navigation improvements. Apply migrations 0083 and 0084, preserve encryption material, and configure production email separately with email/recovery disabled by default. Development acceptance, including a real password reset and subsequent cleanup, is complete. Existing production proxy/logging decisions remain accepted; this entry does not indicate publication or deployment.

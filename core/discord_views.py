@@ -13,7 +13,7 @@ from django.views.decorators.http import require_http_methods
 from .discord_notifications import DiscordNotificationForm, configure_notifications, destination_fields
 from .discord_manual import (DESTINATIONS, ACTIONS, FAILURES, destination_diagnostics,
     manual_request_token, read_manual_request, deliver_manual)
-from .models import GroupDiscordNotification, ReadingGroup, DiscordReportSchedule, DiscordManualDelivery, DiscordReportDelivery, DiscordDigestDelivery, ChallengeStaffAssignment
+from .models import GroupDiscordNotification, ReadingGroup, DiscordReportSchedule, DiscordManualDelivery, DiscordReportDelivery, DiscordDigestDelivery, DiscordReportGeneration, ChallengeStaffAssignment
 from .discord_scheduling import ReportScheduleForm, configure_report_schedule, schedule_diagnostics, COMMUNITY_CATEGORIES
 from .permissions import (can_configure_discord_notifications, can_view_discord_notifications,
     visible_challenges_for, can_manage_months, can_operate_challenge, challenge_history_locked)
@@ -107,14 +107,14 @@ def discord_notification_settings(request, group_slug):
     challenge_rows,community_months=community_challenge_rows(request.user,group)
     destinations = []
     for destination, label in DESTINATIONS.items():
-        enabled_field, _ = destination_fields(destination)
+        enabled_field, webhook_field = destination_fields(destination)
         form = DiscordNotificationForm(request.POST if request.method == 'POST' and action == 'save' and selected == destination else None,
-            initial={'enabled': bool(config and getattr(config, enabled_field))}, auto_id=destination+'_%s') if editable else None
+            initial={'enabled': bool(config and getattr(config, enabled_field)), 'cleanup_mode':getattr(config,destination+'_cleanup') if config and getattr(config,webhook_field) else ('scheduled' if destination=='moderator' else 'none')}, auto_id=destination+'_%s') if editable else None
         if request.method == 'POST' and action == 'save' and selected == destination and form.is_valid():
             try:
                 configure_notifications(group=group, actor=request.user, destination=destination,
                     enabled=form.cleaned_data['enabled'], webhook_url=form.cleaned_data['webhook_url'],
-                    remove=form.cleaned_data['remove_webhook'])
+                    remove=form.cleaned_data['remove_webhook'], cleanup_mode=form.cleaned_data.get('cleanup_mode') or None)
             except ValidationError as exc:
                 form.add_error(None, exc)
             else:
@@ -127,6 +127,9 @@ def discord_notification_settings(request, group_slug):
             'status': destination_diagnostics(config, destination, group=group),
             'schedule_form': report_form, 'schedule_status': schedule_diagnostics(report,group=group,community_months=community_months),
             'unavailable_categories': [],
+            'cleanup_mode':getattr(config,destination+'_cleanup') if config else ('scheduled' if destination=='moderator' else 'none'),
+            'cleanup_history':list(DiscordReportGeneration.objects.filter(schedule__configuration=config,schedule__destination=destination).order_by('-pk').values('complete','cleanup_state','cleanup_attempts','cleanup_failure')[:10]) if config else [],
+            'replacement_busy':bool(report and report.replacement_delivery_id),
             'history': history_rows(group,destination),
             'events': event_diagnostics(group,destination),
             'active': destination == (selected if selected in DESTINATIONS else 'community'),

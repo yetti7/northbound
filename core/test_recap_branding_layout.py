@@ -34,7 +34,7 @@ class RecapBrandingLayoutTests(fixture.TestCase):
     def test_logo_and_banner_modes_preserve_precedence_and_fallback(self):
         self.save(logo=fixture.upload(),banner=fixture.upload());self.group.refresh_from_db()
         response=self.page();self.assertNotContains(response,'recap-community-banner')
-        self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.month.branding_mode='banner';self.month.save(update_fields=['branding_mode'])
         response=self.page();self.assertContains(response,self.group.banner.url)
         self.save(target=self.month,logo=fixture.upload(),banner=fixture.upload());self.month.refresh_from_db()
         response=self.page();self.assertContains(response,self.month.banner.url);self.assertNotContains(response,self.group.banner.url)
@@ -55,7 +55,7 @@ class RecapBrandingLayoutTests(fixture.TestCase):
     def test_banner_uses_overlay_hook_only_when_authorized_banner_is_available(self):
         self.save(logo=fixture.upload(),banner=fixture.upload());self.group.refresh_from_db()
         self.assertNotContains(self.page(),'class="recap-community-art has-banner"')
-        self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
+        self.month.branding_mode='banner';self.month.save(update_fields=['branding_mode'])
         self.assertContains(self.page(),'class="recap-community-art has-banner"',count=1)
         self.assertNotContains(self.page(True),'class="recap-community-art has-banner"')
         self.group.logo='';self.group.save(update_fields=['logo'])

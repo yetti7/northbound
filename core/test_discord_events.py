@@ -305,7 +305,7 @@ class DiscordServiceIntegrationTests(TestCase):
     def test_real_photo_creation_and_review_services_no_duplicate_nested_rejection(self):
         photo=self.create();self.assertEqual(DiscordEventDelivery.objects.count(),1)
         from .photo_submissions import transition_photo_reservation
-        transition_photo_reservation(photo_id=photo.pk,actor=self.actor,version=photo.version,status='rejected')
+        transition_photo_reservation(photo_id=photo.pk,actor=self.actor,version=photo.version,status='rejected',reason='The photo does not satisfy the selected prompt.')
         self.assertEqual(list(DiscordEventDelivery.objects.values_list('category',flat=True)),['review_required','rejected'])
         self.assertEqual(set(DiscordEventDelivery.objects.values_list('review_category',flat=True)),{'photos'})
 

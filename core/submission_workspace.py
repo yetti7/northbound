@@ -61,6 +61,46 @@ def immersive_context(actor, submission):
     return {'claims':claims,'can_request':can_request_immersive(submission=submission,actor=actor),'readable':True}
 
 
+def qualification_overview(actor, submission):
+    """Read-only presentation of existing features, never an activation or decision."""
+    from .prompt_progress import categories, reporting_scope
+    from .prompt_reservations import reservations_ready, category_available
+    from .prompt_configuration import automation_excluded
+    month=submission.month
+    prompt_claims=list(submission.prompt_claims.filter(is_current=True).select_related('category','prompt'))
+    configured=list(month.prompt_categories.all())
+    prompts=[]
+    labels={'reserved':'Pending confirmation','qualified':'Qualified','rejected':'Rejected',
+            'released':'Released','withdrawn':'Withdrawn','voided':'Voided'}
+    for kind,label in [('bingo','Bingo'),('scavenger','Scavenger Hunt')]:
+        claims=[claim for claim in prompt_claims if claim.category.kind==kind]
+        category=next((category for category in configured if category.kind==kind),None)
+        if not claims and not (category and category.enabled):
+            continue
+        operational=bool(category and category_available(month,kind))
+        if automation_excluded(month):
+            availability='Unavailable: this Challenge is excluded from automated prompts.'
+        elif not category or not category.enabled:
+            availability='Recorded history only; this category is disabled.'
+        elif not reservations_ready():
+            availability='Recorded history only; prompt workflows are unavailable.'
+        elif month.status in {'draft','upcoming'}:
+            availability='Available when the Challenge is Active.'
+        elif month.status not in {'active','finalizing'}:
+            availability='Read-only in this Challenge lifecycle stage.'
+        elif not operational:
+            availability='No active prompts are configured.'
+        else:
+            availability='Available. Prompt qualification requires an approved book and staff confirmation.'
+        prompts.append({'label':label,'operational':operational,'availability':availability,
+            'book_prompts':bool(category and category.prompts.filter(submission_type='book',is_active=True).exists()),
+            'claims':[{'number':claim.prompt.number,'status':labels.get(claim.state,claim.state)} for claim in claims],
+            'separate_photos':bool(kind=='scavenger' and category and category.prompts.filter(submission_type='photo',is_active=True).exists())})
+    theme_claims=list(submission.theme_claims.select_related('theme'))
+    return {'themes':theme_claims,'show_themes':bool(theme_claims) or month.themes.filter(is_active=True,is_visible=True).exists(),
+            'prompts':prompts,'prompt_report':bool(categories(month).exists() and reporting_scope(actor,month) is not None)}
+
+
 def workspace_context(request,submission,section):
     from .submission_activity import submission_timeline
     from .submission_review_matching import matching_cards
@@ -119,7 +159,8 @@ def workspace_context(request,submission,section):
         'immersive':immersive,'timeline':submission_timeline(actor,submission,request.GET.get('page')),
         'pending_themes':submission.theme_claims.filter(status='pending').count() if review else None,
         'conflicts':any(c['state']=='conflict' for c in cards),
-        'read_only':not active,'can_view_notes':review or actor.is_superuser}
+        'read_only':not active,'can_view_notes':review or actor.is_superuser,
+        'qualifications':qualification_overview(actor,submission)}
 
 
 def render_workspace(request,template,context,section):

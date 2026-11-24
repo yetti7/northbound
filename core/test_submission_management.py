@@ -281,11 +281,11 @@ class SubmissionManagementTests(TransactionTestCase):
         item = apply_submission_review(item, [], actor, timezone.now())
         item.status = "rejected"
         item.approved_pages = None
-        item = apply_submission_review(item, [], actor, timezone.now())
+        item = apply_submission_review(item, [], actor, timezone.now(), rejection_reason="The book edition could not be independently verified.")
         self.assertEqual(item.submitted_at, submitted_at)
         self.assertEqual(list(events.values_list("action", flat=True)), [
             "submission.created", "submission.approved", "submission.corrected",
-            "submission.review_changed", "submission.rejected",
+            "submission.review_changed", "submission.rejected", "reader.rejection",
         ])
         self.assertNotIn("Private review text", events.get(action="submission.review_changed").summary)
 

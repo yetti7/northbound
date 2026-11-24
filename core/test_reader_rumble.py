@@ -103,7 +103,7 @@ class ReaderRumbleTests(TestCase):
         self.assertFalse(can_generate_reader_rumble(self.leader_a_user,self.other_team))
         self.month.reader_scores_visibility='hosts';self.month.save(update_fields=['reader_scores_visibility'])
         self.assertFalse(can_generate_reader_rumble(self.leader_a_user,self.team))
-        self.assertFalse(can_generate_reader_rumble(self.floater_user,self.team))
+        self.assertTrue(can_generate_reader_rumble(self.floater_user,self.team))
         with self.assertRaises(PermissionDenied):self.data(actor=self.leader_a_user)
         self.client.force_login(self.leader_a_user)
         self.assertEqual(self.client.get(self.url).status_code,403)
@@ -142,7 +142,12 @@ class ReaderRumbleTests(TestCase):
             self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
             data=self.data();self.assertEqual(data['logo'],obj.logo.url);self.assertEqual(data['banner'],obj.banner.url)
         self.group.branding_mode='logo';self.group.save(update_fields=['branding_mode'])
-        self.assertEqual(self.data()['banner'],'')
+        self.assertEqual(self.data()['banner'], self.team.banner.url)
+        self.team.branding_mode='logo';self.team.save(update_fields=['branding_mode'])
+        # Export artwork remains available independently of card display mode.
+        self.assertEqual(self.data()['banner'], self.team.banner.url)
+        from .branding import team_branding
+        self.assertEqual(team_branding(self.platform_owner, self.team)['effective_banner'], '')
         Path(self.directory.name,self.team.logo.name).unlink()
         self.assertEqual(self.data()['logo'],self.month.logo.url)
         with CaptureQueriesContext(connection) as queries:self.data(actor=self.platform_owner)

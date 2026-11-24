@@ -24,6 +24,7 @@ class TeamBrandingLayoutTests(TestCase):
             args=[self.group.slug,self.month.pk]+([] if listing else [(team or self.team).pk])),query)
 
     def parent_art(self):
+        self.team.branding_mode='banner';self.team.save(update_fields=['branding_mode'])
         self.group.logo.save('group.png',upload(),save=True)
         self.group.banner.save('group-banner.png',upload(),save=True)
         self.group.branding_mode='banner';self.group.save(update_fields=['branding_mode'])
@@ -40,7 +41,7 @@ class TeamBrandingLayoutTests(TestCase):
         self.assertContains(page,self.month.logo.url);self.assertContains(page,self.team.banner.url)
         self.group.branding_mode='logo';self.group.save(update_fields=['branding_mode'])
         for page in [self.page(),self.page(listing=True)]:
-            self.assertNotContains(page,self.team.banner.url);self.assertNotContains(page,self.month.banner.url)
+            self.assertContains(page,self.team.banner.url);self.assertNotContains(page,self.month.banner.url)
 
     def test_group_fallback_missing_media_and_clean_text_header(self):
         self.group.logo.save('group.png',upload(),save=True)
