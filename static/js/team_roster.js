@@ -6,6 +6,36 @@
   const filters = document.querySelector('.team-filters');
   if (!filters) return;
   const toggle = filters.querySelector('summary');
+  const panel = filters.querySelector('.team-filter-panel');
+  const desktop = window.matchMedia('(min-width: 801px)');
+  function positionFilters() {
+    panel.style.removeProperty('left');
+    panel.style.removeProperty('top');
+    panel.style.removeProperty('max-height');
+    if (!filters.open || !desktop.matches) return;
+    const margin = 16;
+    const anchor = toggle.getBoundingClientRect();
+    if (anchor.bottom < margin || anchor.top > innerHeight - margin) {
+      filters.open = false;
+      return;
+    }
+    const width = panel.getBoundingClientRect().width;
+    const left = Math.max(margin, Math.min(anchor.left, innerWidth - width - margin));
+    const below = Math.max(0, innerHeight - anchor.bottom - margin - 8);
+    const above = Math.max(0, anchor.top - margin - 8);
+    const naturalHeight = panel.scrollHeight + 2;
+    const openAbove = naturalHeight > below && above > below;
+    const available = openAbove ? above : below;
+    const height = Math.min(naturalHeight, available);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${openAbove ? anchor.top - height - 8 : anchor.bottom + 8}px`;
+    panel.style.maxHeight = `${available}px`;
+  }
+  filters.addEventListener('toggle', positionFilters);
+  window.addEventListener('resize', positionFilters);
+  // Capture scrolling of the roster as well as the page.
+  document.addEventListener('scroll', positionFilters, true);
+  positionFilters();
   document.addEventListener('click', event => {
     if (filters.open && !filters.contains(event.target)) filters.open = false;
   });
