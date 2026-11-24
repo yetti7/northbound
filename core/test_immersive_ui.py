@@ -24,6 +24,25 @@ class ImmersiveInterfaceTests(TestCase):
         if operation:args.append(operation)
         return reverse(name,args=args)
 
+    def test_team_leader_and_legacy_host_self_review_queue_and_post(self):
+        from .models import ChallengeStaffAssignment
+        from .models import Team
+        team=Team.objects.create(month=self.month,name='Own Team')
+        TeamAssignment.objects.create(month=self.month,participant=self.reader,team=team)
+        self.enable()
+        for role in ('team_leader','host'):
+            assignment=ChallengeStaffAssignment.objects.create(month=self.month,membership=self.reader,role=role,team=team if role=='team_leader' else None)
+            ChallengeMonth.objects.filter(pk=self.month.pk).update(host_review_access=None)
+            self.month.refresh_from_db()
+            claim=self.request();self.client.force_login(self.reader.user)
+            response=self.client.get(self.route('review-queue'))
+            self.assertIn(claim.pk,list(response.context['immersive_requests'].values_list('pk',flat=True)))
+            url=self.route('immersive-action',claim.pk,'approve')
+            self.assertEqual(self.client.get(url).status_code,200)
+            self.assertEqual(self.client.post(url,{'confirm':'on'}).status_code,302)
+            claim.refresh_from_db();self.assertEqual(claim.status,'approved')
+            assignment.ended_at=timezone.now();assignment.save()
+
     def test_settings_permissions_rate_and_guidance(self):
         url=self.route('immersive-settings')
         self.assertEqual(self.client.get(url).status_code,403)

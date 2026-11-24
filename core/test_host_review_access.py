@@ -86,10 +86,10 @@ class HostQualificationSelfReviewTests(TestCase):
         review_photo_submission(photo_id=photo.pk,actor=actor,decision='approved',reviewer_verified=True,version=photo_review_version(photo,actor))
         from .immersive import can_review_immersive
         leader_book=BookSubmission.objects.create(month=self.month,participant=self.members['leader'],title='Leader',author='A',book_format='ebook',completed_on=date(2027,1,3),submitted_pages=100)
-        self.assertFalse(can_review_immersive(submission=leader_book,actor=self.users['leader']))
+        self.assertTrue(can_review_immersive(submission=leader_book,actor=self.users['leader']))
         ChallengeMonth.objects.filter(pk=self.month.pk).update(host_review_access=None)
         book.month.refresh_from_db()
-        self.assertFalse(can_review_immersive(submission=book,actor=actor))
+        self.assertTrue(can_review_immersive(submission=book,actor=actor))
 
 
 class HostAccessMigrationTests(TransactionTestCase):

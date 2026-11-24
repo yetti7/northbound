@@ -16,7 +16,7 @@ from django.utils import timezone
 from .models import (AuditEvent, BookSubmission, ChallengeMonth, ImmersiveRequest,
                      Membership, ModifierProvenance, MonthEnrollment)
 from .permissions import (can_manage_months, can_operate_challenge, can_review_submission,
-                          membership_for, scope_reviewable_submissions, host_scope_allows_reader, restricted_host_team_ids, is_active_floater, host_self_review_allowed)
+                          membership_for, scope_reviewable_submissions, host_scope_allows_reader, restricted_host_team_ids, is_active_floater)
 
 
 def bonus_pages(base_pages, percent):
@@ -62,8 +62,6 @@ def _staff(actor, submission):
     if not (host_scope_allows_reader(actor, submission.month, submission.participant_id)
             and (oversight or can_review_submission(actor, submission))):
         raise PermissionDenied('Submission review authority is required.')
-    if actor.pk == submission.participant.user_id and not host_self_review_allowed(actor, submission.month):
-        raise PermissionDenied('An independent reviewer is required.')
 
 
 @transaction.atomic
@@ -253,10 +251,7 @@ def review_queue_requests(*, actor, month):
     calculated_bonus property. Completed reviews use this service without reopening
     the normal book-review queue or changing its lifecycle permissions.
     """
-    from .permissions import host_self_review_allowed
     query = pending_review_requests(month=month)
-    if not host_self_review_allowed(actor,month):
-        query=query.exclude(requester_id=getattr(actor, 'pk', None))
     if not actor.is_authenticated or not actor.is_active or month.status not in {'active', 'finalizing', 'completed'}:
         return query.none()
     member = membership_for(actor, month.group)

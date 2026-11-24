@@ -179,12 +179,6 @@ def restricted_host_team_ids(user, month):
     ).values_list("team_id", flat=True))
 
 
-def host_self_review_allowed(user, month):
-    # NULL preserves pre-upgrade independent-review requirements until explicitly saved.
-    return bool(user.is_authenticated and user.is_active and month.host_review_access is not None
-                and is_challenge_host(user, month))
-
-
 def group_directory_visible_member_ids(user, group, participants):
     """Group aggregates cannot be split safely by a viewer's Challenge team scope."""
     visible_ids = {participant.pk for participant in participants}
