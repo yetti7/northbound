@@ -83,3 +83,32 @@
   window.addEventListener('popstate', renderView);
   window.addEventListener('hashchange', renderView);
 })();
+
+(() => {
+  const total = document.querySelector('[data-team-total]');
+  const search = document.querySelector('[data-participant-search]');
+  const clear = search?.querySelector('[data-participant-clear]');
+  document.querySelector('.filter-actions a')?.addEventListener('click', () => {
+    clear?.click();
+    const owner = document.querySelector('[data-roster-sort]')?.dataset.searchOwner;
+    try { sessionStorage.removeItem('team-roster-search:' + owner + ':' + location.pathname); } catch { /* Storage is optional. */ }
+  });
+  if (!total || !search) return;
+  const input = search.querySelector('input');
+  const data = document.getElementById('team-report-data');
+  const rows = data ? JSON.parse(data.textContent) : null;
+  const original = total.textContent;
+  function updateTotal() {
+    const query = input.value.trim().toLowerCase();
+    if (rows === null) {
+      total.textContent = query ? '—' : original;
+      return;
+    }
+    const pages = rows.filter(row => row.names.some(name => name.toLowerCase().includes(query)))
+      .reduce((sum, row) => sum + row.pages, 0);
+    total.textContent = new Intl.NumberFormat('en-US').format(pages);
+  }
+  input.addEventListener('input', updateTotal);
+  clear.addEventListener('click', updateTotal);
+  updateTotal();
+})();

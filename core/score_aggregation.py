@@ -78,11 +78,9 @@ def challenge_score_totals(
         score["total_pages"] = score["base_pages"] + score["modifier_pages"]
     return totals
 
-def challenge_team_totals(*, month, team_ids, effective_from=None, effective_to=None):
-    """Allocate each Reader once, preserving credit after participation ends."""
-    totals = dict.fromkeys(month.teams.filter(pk__in=team_ids).values_list("pk", flat=True), 0)
-    if not totals:
-        return totals
+def challenge_team_attribution(*, month, team_ids):
+    """Reader-to-Team attribution shared by standings and filtered reporting."""
+    team_ids = set(month.teams.filter(pk__in=team_ids).values_list("pk", flat=True))
     current = dict(TeamAssignment.objects.filter(
         month=month, ended_at__isnull=True, team__month=month,
     ).values_list("participant_id", "team_id"))
@@ -94,8 +92,17 @@ def challenge_team_totals(*, month, team_ids, effective_from=None, effective_to=
         team_id = current_team
         if not enrollment.is_active or enrollment.awaiting_scoring_team:
             team_id = current_team or enrollment.credited_team_id
-        if team_id in totals:
+        if team_id in team_ids:
             attribution[enrollment.participant_id] = team_id
+    return attribution
+
+
+def challenge_team_totals(*, month, team_ids, effective_from=None, effective_to=None):
+    """Allocate each Reader once, preserving credit after participation ends."""
+    totals = dict.fromkeys(month.teams.filter(pk__in=team_ids).values_list("pk", flat=True), 0)
+    if not totals:
+        return totals
+    attribution = challenge_team_attribution(month=month, team_ids=totals)
     scores = challenge_score_totals(
         month=month, participant_ids=attribution,
         effective_from=effective_from, effective_to=effective_to,

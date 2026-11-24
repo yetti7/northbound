@@ -177,7 +177,8 @@ class TeamDetailReportingTests(TestCase):
             self.assertContains(response, f"<th>{heading}</th>", html=True)
         for heading in ("Discord", "Avg Pages", "Last Challenge", "Completed"):
             self.assertNotContains(response, f"<th>{heading}</th>", html=True)
-        self.assertContains(response, "Filtered roster · Base + Modifier")
+        self.assertContains(response, "<small>Base + Bonus</small>", html=True)
+        self.assertNotContains(response, "Filtered roster")
         self.assertContains(response, 'class="team-detail-desktop roster-table-scroll"')
         self.assertNotContains(response, "Active reporting range")
         self.assertContains(response, ">Remove</a>", count=6)
@@ -235,9 +236,9 @@ class TeamDetailReportingTests(TestCase):
         response = self.get_as(self.host_user, {"bonuses": "0"})
         self.assertFalse(response.context["show_bonuses"])
         self.assertNotContains(response, "<th>Modifier</th>", html=True)
-        self.assertEqual(response.context["team_total"], 660)
-        self.assertEqual(response.context["roster_total"], 600)
-        self.assertContains(response, "Filtered roster · Base only")
+        self.assertEqual(response.context["team_total"], 600)
+        self.assertContains(response, "<small>Base Pages</small>", html=True)
+        self.assertNotContains(response, "Filtered roster")
         self.assertEqual(list(ModifierProvenance.objects.values_list("pk", "is_active", "amount")), before)
 
     def test_progress_values_and_filters_use_actual_tbr_denominator(self):
@@ -260,14 +261,12 @@ class TeamDetailReportingTests(TestCase):
         self.add_progress()
         response = self.get_as(self.host_user, {"themes": "complete"})
         self.assertEqual([row.participant for row in response.context["roster"]], [self.alpha])
-        self.assertEqual(response.context["team_total"], 720)
-        self.assertEqual(response.context["roster_total"], 380)
+        self.assertEqual(response.context["team_total"], 380)
         self.assertEqual(response.context["full_roster_count"], 3)
         self.assertContains(response, "1 of 3 shown")
         self.assertContains(response, "Reset Filters")
         empty = self.get_as(self.host_user, {"themes": "complete", "tbr": "none"})
-        self.assertEqual(empty.context["team_total"], 720)
-        self.assertEqual(empty.context["roster_total"], 0)
+        self.assertEqual(empty.context["team_total"], 0)
         self.assertContains(empty, "No Readers match these filters.")
 
     def test_invalid_dates_fail_safely_with_defaults_and_errors(self):
