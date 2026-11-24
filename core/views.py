@@ -7013,8 +7013,11 @@ def review_queue(request, group_slug, month_pk):
     prompt_report_available=progress_categories(month).exists() and progress_scope(request.user,month) is not None
     from .photo_review import pending_review_photos
     photo_submissions = pending_review_photos(request.user,month).select_related('participant__user','month','accepted_team_assignment__team','prompt_claim__prompt')
-    return render(request, "core/review_queue.html", {"month": month, "photo_submissions": photo_submissions, "can_view_staff_activity": can_view_staff_activity(request.user, month), "submissions": submissions, "review_scope_label": scope_label,
-        "immersive_requests": review_queue_requests(actor=request.user, month=month),
+    from .review_queue_presentation import grouped_queue
+    immersive_requests=review_queue_requests(actor=request.user,month=month)
+    presentation=grouped_queue(month,submissions,immersive_requests,photo_submissions)
+    return render(request, "core/review_queue.html", {**presentation,"month": month, "photo_submissions": photo_submissions, "can_view_staff_activity": can_view_staff_activity(request.user, month), "submissions": submissions, "review_scope_label": scope_label,
+        "immersive_requests": immersive_requests,
         "prompt_report_available": prompt_report_available, "can_review_books": bool(review_scope) and month.status in REVIEWABLE_MONTH_STATUSES})
 
 
