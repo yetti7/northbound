@@ -86,13 +86,16 @@ def configure_immersive(*, month, actor, enabled, percent):
 
 @transaction.atomic
 @observe_book
-def request_immersive(*, submission, actor):
+def request_immersive(*, submission, actor, replacement_notice=None):
     actor = _actor(actor)
     submission = _submission(submission)
     month = ChallengeMonth.objects.select_for_update().get(pk=submission.month_id)
     _validate_new_request(submission, actor, month)
     request = ImmersiveRequest.objects.create(submission=submission, requester=actor,
         captured_percent=month.immersive_bonus_percent)
+    if replacement_notice:
+        from .reader_rejections import resolve_replacement
+        resolve_replacement(actor,replacement_notice,category='immersive',new_target=request,book=submission)
     _audit(request, actor, 'requested')
     return request
 
@@ -126,6 +129,9 @@ def review_immersive(*, request, actor, decision, reason=''):
         raise ValidationError("Active Floaters cannot receive new Immersive credit.")
     if request.status == decision:
         return request
+    if decision=='rejected':
+        from .reader_rejections import validate_reason
+        reason=validate_reason(reason)
     if decision == 'revoked':
         if request.status != 'approved':
             raise ValidationError('Only an approved award may be revoked.')
@@ -151,6 +157,9 @@ def review_immersive(*, request, actor, decision, reason=''):
     refresh_submission_score(submission)
     request.refresh_from_db()
     _audit(request, actor, decision, reason=reason.strip(), awarded_pages=request.awarded_pages)
+    if decision=='rejected':
+        from .reader_rejections import record
+        record(category='immersive',target=request,book=submission,actor=actor,reason=reason,label=f'{submission.title} · Immersive Reading')
     return request
 
 

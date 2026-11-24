@@ -33,7 +33,7 @@ FIELDS = ('title', 'author', 'catalog_book_id', 'catalog_edition_id', 'scoring_c
           'reviewed_by_id', 'reviewed_at', 'selected_botm_book_id', 'selected_tbr_book_id', 'reader_intent')
 CLAIM_FIELDS = ('id', 'theme_id', 'status', 'approved_bonus_pages', 'award_finalized', 'award_rule',
                 'award_version', 'award_percentage', 'award_basis_pages', 'award_bonus_pages')
-ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode', 'bingo_prompt_id', 'scavenger_prompt_id', 'prompt_decisions'}
+ALLOWED = {'title', 'author', 'catalog_edition_id', 'page_count', 'completed_on', 'theme_ids', 'theme_responses', 'association_mode', 'bingo_prompt_id', 'scavenger_prompt_id', 'prompt_decisions', 'prompt_rejection_reasons'}
 PER_BOOK = (ModifierProvenance.SourceType.THEME_BONUS, ModifierProvenance.SourceType.TBR_BOOK,
             ModifierProvenance.SourceType.BOTM_BOOK)
 
@@ -276,6 +276,7 @@ def _themes(submission, actor, plan):
             claims[theme.pk] = ThemeClaim.objects.create(submission=submission, theme=theme,
                 response=responses.get(theme.pk, '').strip())
     for key, claim in claims.items():
+        previous_status=claim.status
         claim.submission = submission
         qualifies = key in eligible_ids
         claim.status = ('approved' if submission.status == 'approved' else 'pending') if qualifies else 'rejected'
@@ -289,6 +290,9 @@ def _themes(submission, actor, plan):
         # run cross-date validation against these intentionally inactive records.
         if qualifies: claim.full_clean()
         claim.save()
+        if previous_status=='rejected' and claim.status in {'pending','approved'}:
+            from .reader_rejections import resolve_target_correction
+            resolve_target_correction(actor,'theme',claim,submission)
 
 
 def _promote_released_matches(submission, released_tbr, released_botm):
@@ -385,7 +389,7 @@ def correct_submission(*, submission, actor, changes, version, hardcover_token=N
             current.save()
             decisions=changes.get('prompt_decisions',{})
             review_ticket=correction_ticket(current,actor,{'decisions':decisions}) if earned_prompt_change else None
-            review_prompts(current,actor,decisions,correction_authorization=review_ticket)
+            review_prompts(current,actor,decisions,correction_authorization=review_ticket,rejection_reasons=changes.get("prompt_rejection_reasons",{}))
             _themes(current, actor, theme_plan)
             refresh_submission_score(current)
             if matching_changed:

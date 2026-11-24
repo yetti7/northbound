@@ -58,8 +58,12 @@ def submission_view(request, group_slug, month_pk, pk):
     if not _readable(request.user,submission): return HttpResponseForbidden('Submission access is required.')
     if request.method not in {'GET','POST'}:return HttpResponseNotAllowed(['GET','POST'])
     error=''
+    retry=request.POST.get('replacement_notice') if request.method=='POST' else request.GET.get('retry_notice')
+    if retry:
+        from .reader_rejections import replacement_notice
+        retry=replacement_notice(request.user,retry,'immersive',book=submission).pk
     if request.method=='POST':
-        try: request_immersive(submission=submission,actor=request.user)
+        try: request_immersive(submission=submission,actor=request.user,replacement_notice=retry)
         except PermissionDenied:return HttpResponseForbidden('Only the eligible submitting Reader may request this bonus.')
         except (ValidationError,DatabaseError): error='The request could not be saved. It may already exist, or eligibility may have changed. Reload before retrying.'
         else:
@@ -74,7 +78,7 @@ def submission_view(request, group_slug, month_pk, pk):
         claim.can_review=claim.pk in reviewable
         claim.can_revoke=claim.status=='approved' and can_review_immersive(submission=submission,actor=request.user)
         claim.can_withdraw=claim.status=='pending' and claim.requester_id==request.user.pk and submission.month.status!='archived'
-    context={'submission':submission,'month':submission.month,'claims':claims,'can_request':can_request_immersive(submission=submission,actor=request.user),'error':error}
+    context={'submission':submission,'month':submission.month,'claims':claims,'can_request':can_request_immersive(submission=submission,actor=request.user),'error':error,'replacement_notice':retry}
     from .submission_workspace import can_enter, render_workspace
     if can_enter(request.user,submission):
         return render_workspace(request,'core/submission_qualifications.html',context,'qualifications')
@@ -99,6 +103,7 @@ def action_view(request, group_slug, month_pk, pk, operation):
     if request.method not in {'GET','POST'}:return HttpResponseNotAllowed(['GET','POST'])
     form=ActionForm(request.POST if request.method=='POST' else None)
     if operation in {'reject','revoke'}:form.fields['reason'].required=True
+    if operation=='reject':form.fields['reason'].label='Reason for rejecting this Immersive Reading request'
     if request.method=='POST' and form.is_valid():
         try:
             if operation=='withdraw':withdraw_immersive(request=claim,actor=request.user,reason=form.cleaned_data['reason'])

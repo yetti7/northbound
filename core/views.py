@@ -7337,6 +7337,7 @@ def submission_review(request, group_slug, month_pk, pk):
             claims = claims.filter(theme__starts_on__lte=submission.completed_on, theme__ends_on__gte=submission.completed_on)
     claim_formset = ClaimFormSet(request.POST or None, instance=submission, queryset=claims, prefix="claims")
     if submission.status == BookSubmission.Status.APPROVED:
+        form.fields.pop('rejection_reason',None)
         for field in ('status', 'approved_pages'):
             form.fields[field].disabled = True
         for claim_form in claim_formset.forms:
@@ -7373,7 +7374,8 @@ def submission_review(request, group_slug, month_pk, pk):
                     reviewed = apply_unified_review(reviewed, claims, request.user, timezone.now(),
                         version=matching_form.cleaned_data['matching_version'],
                         confirmations=[d for d in ('botm','tbr') if matching_form.cleaned_data.get('confirm_'+d)],
-                        prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)})
+                        prompt_decisions={kind:matching_form.cleaned_data['prompt_'+kind] for kind in ('bingo','scavenger') if matching_form.cleaned_data.get('prompt_'+kind)},
+                        prompt_rejection_reasons={kind:matching_form.cleaned_data.get('prompt_reason_'+kind,'') for kind in ('bingo','scavenger')})
                     # The scoring boundary records book or Theme decisions exactly once.
             except (ValidationError, PermissionDenied, DatabaseError):
                 form.add_error(None, 'This review could not be saved because the submission, matching or eligibility changed. Nothing was saved. Reload to check the current details, or approve without confirming uncertain credit.')

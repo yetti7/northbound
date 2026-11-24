@@ -188,7 +188,7 @@ def preview_submission_score(submission):
 
 
 @transaction.atomic
-def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None):
+def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None, theme_reasons=None):
     """Initial Theme decisions only; caller has locked/revalidated book authority."""
     locked = BookSubmission.objects.select_for_update().get(pk=submission.pk)
     claims = {claim.pk: claim for claim in ThemeClaim.objects.select_for_update().select_related('theme').filter(submission=locked)}
@@ -220,6 +220,8 @@ def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *,
                 historical_rule = theme_rule(locked, claim)
                 if historical_rule is None:
                     raise ValidationError('A held historical Theme claim requires review of its original configuration.')
+        from .reader_rejections import validate_reason,record
+        reason=validate_reason((theme_reasons or {}).get(claim.pk,getattr(proposed,'_rejection_reason',''))) if proposed.status=='rejected' else ''
         claim.submission = locked
         claim.status = proposed.status
         claim.reviewed_by = reviewer
@@ -233,6 +235,8 @@ def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *,
             action='submission.theme_'+claim.status,
             summary=json.dumps({'theme_claim_id':claim.pk,'theme_id':claim.theme_id,
                 'previous_status':'pending','status':claim.status,'awarded_pages':claim.approved_bonus_pages}))
+        if claim.status=='rejected':
+            record(category='theme',target=claim,book=locked,actor=reviewer,reason=reason,label=f'{locked.title} · Theme: {claim.theme.name}')
         changed.append(claim.pk)
     if changed:
         refresh_submission_score(locked, theme_claim_ids=changed)
@@ -241,11 +245,21 @@ def decide_pending_themes(submission, reviewed_claims, reviewer, reviewed_at, *,
 
 
 @transaction.atomic
-def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None):
+def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, *, late_assignment=None, rejection_reason=None, theme_reasons=None):
     """Persist one submission/Theme review through the scoring boundary."""
     locked_submission = BookSubmission.objects.select_for_update().get(pk=submission.pk)
     locked_submission._prompt_actor = reviewer
     previous_status = locked_submission.status
+    from .reader_rejections import validate_reason,record
+    rejecting_book=submission.status=='rejected' and previous_status!='rejected'
+    book_reason=validate_reason(rejection_reason if rejection_reason is not None else getattr(submission,'_rejection_reason','')) if rejecting_book else ''
+    rejected_themes=[]
+    if submission.status=='approved':
+        originals=dict(locked_submission.theme_claims.values_list('pk','status'))
+        for proposed in reviewed_claims:
+            if proposed.status=='rejected' and originals.get(proposed.pk)!='rejected':
+                reason=validate_reason((theme_reasons or {}).get(proposed.pk,getattr(proposed,'_rejection_reason','')))
+                rejected_themes.append((proposed.pk,reason))
     first_review = locked_submission.reviewed_by_id is None
     review_changed = any(
         getattr(locked_submission, field) != getattr(submission, field)
@@ -366,6 +380,14 @@ def apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, 
         # post-commit callback runs. The callback also checks current consent.
         if ReaderHardcoverSyncPreference.objects.filter(user=locked_submission.participant.user, sync_completed_books=True).exists():
             transaction.on_commit(lambda submission_id=locked_submission.pk: enqueue_eligible_approved_submission_safely(submission_id))
+    if previous_status=='rejected' and locked_submission.status=='approved':
+        from .reader_rejections import resolve_target_correction
+        resolve_target_correction(reviewer,'book',locked_submission,locked_submission)
+    if rejecting_book:
+        record(category='book',target=locked_submission,book=locked_submission,actor=reviewer,reason=book_reason,label=locked_submission.title)
+    for pk,reason in rejected_themes:
+        claim=ThemeClaim.objects.select_related('theme').get(pk=pk)
+        record(category='theme',target=claim,book=locked_submission,actor=reviewer,reason=reason,label=f'{locked_submission.title} · Theme: {claim.theme.name}')
     return locked_submission
 
 

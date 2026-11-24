@@ -102,4 +102,4 @@ class HostAccessMigrationTests(TransactionTestCase):
             executor=MigrationExecutor(connection);executor.migrate([('core','0089_host_review_access')])
             self.assertIsNone(ChallengeMonth.objects.get(pk=month.pk).host_review_access)
             self.assertEqual(ChallengeMonth.objects.create(group_id=group.pk,name='New').host_review_access,'restricted')
-        finally:MigrationExecutor(connection).migrate([('core','0089_host_review_access')])
+        finally:MigrationExecutor(connection).migrate([('core','0090_reader_rejection_notices')])

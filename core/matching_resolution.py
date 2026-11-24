@@ -349,7 +349,7 @@ def confirm_suggestion(*, match, actor, decision, expected_fingerprint=None):
 
 @transaction.atomic
 @observe_book
-def review_submission_with_matches(submission, reviewed_claims, reviewer, reviewed_at, *, suggestions=None):
+def review_submission_with_matches(submission, reviewed_claims, reviewer, reviewed_at, *, suggestions=None, rejection_reason=None, theme_reasons=None):
     """Normal approval plus explicit suggested IDs; no arbitrary target selection."""
     from .permissions import can_review_submission, is_active_floater
     from .scoring import apply_submission_review
@@ -395,7 +395,7 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
         if any(getattr(submission,field) != getattr(current,field) for field in protected):
             raise ValidationError('Approved scoring changes require the signed Edit Book correction preview.')
         from .scoring import decide_pending_themes
-        current = decide_pending_themes(current, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
+        current = decide_pending_themes(current, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment, theme_reasons=theme_reasons)
         changed = any(getattr(current, field) != getattr(submission, field)
                       for field in ('verification_url', 'review_notes'))
         if changed:
@@ -410,7 +410,7 @@ def review_submission_with_matches(submission, reviewed_claims, reviewer, review
                 action='submission.review_changed', summary='Updated review notes or verification link; scoring preserved.')
         result = current
     else:
-        result = apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment)
+        result = apply_submission_review(submission, reviewed_claims, reviewer, reviewed_at, late_assignment=late_assignment, rejection_reason=rejection_reason, theme_reasons=theme_reasons)
     for match,stamp in prepared:
         match.refresh_from_db()
         if match.status=='confirmed' and match.method!='manual_review':

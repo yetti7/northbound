@@ -3,6 +3,7 @@ from datetime import date
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError, PermissionDenied
+from .review_attention import challenge_attention_count
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.utils import timezone
@@ -45,7 +46,7 @@ class PendingThemeReviewTests(TestCase):
             'claims-MIN_NUM_FORMS':'0','claims-MAX_NUM_FORMS':'1000'}
         for i,claim in enumerate(claims):
             data.update({f'claims-{i}-id':str(claim.pk),f'claims-{i}-submission':str(self.book.pk),
-                         f'claims-{i}-status':theme_status if claim.pk==self.claim.pk else claim.status})
+                         f'claims-{i}-status':theme_status if claim.pk==self.claim.pk else claim.status, f'claims-{i}-rejection_reason':'This book does not meet the selected Theme.'})
         return {**data,**changes}
 
     def assert_book_preserved(self):
@@ -53,7 +54,7 @@ class PendingThemeReviewTests(TestCase):
         self.assertEqual({k:getattr(self.book,k) for k in self.original},self.original)
 
     def test_approve_384_page_book_pending_25_percent_theme(self):
-        self.assertContains(self.client.get(self.queue),self.theme.name)
+        self.assertEqual(challenge_attention_count(self.reviewer,self.month),1)
         page=self.client.get(self.url)
         self.assertTrue(page.context['form'].fields['approved_pages'].disabled)
         self.assertFalse(page.context['claim_formset'].forms[0].fields['status'].disabled)
@@ -66,7 +67,7 @@ class PendingThemeReviewTests(TestCase):
         self.assertEqual(ModifierProvenance.objects.filter(source_reference=f'theme_claim:{self.claim.pk}',amount=96,is_active=True).count(),1)
         self.assertEqual(AuditEvent.objects.filter(action='submission.theme_approved',object_id=str(self.book.pk)).count(),1)
         self.assertFalse(AuditEvent.objects.filter(action='submission.approved',object_id=str(self.book.pk)).exists())
-        self.assertNotContains(self.client.get(self.queue),self.theme.name)
+        self.assertEqual(challenge_attention_count(self.reviewer,self.month),0)
         timeline=submission_timeline(self.reviewer,self.book)
         self.assertIn('Theme approved',[card['label'] for card in timeline['cards']])
 
@@ -94,7 +95,7 @@ class PendingThemeReviewTests(TestCase):
         self.assertEqual(self.book.final_scored_pages,384)
         self.assertFalse(ModifierProvenance.objects.filter(submission=self.book).exists())
         self.assertEqual(AuditEvent.objects.filter(action='submission.theme_rejected').count(),1)
-        self.assertNotContains(self.client.get(self.queue),self.theme.name)
+        self.assertEqual(challenge_attention_count(self.reviewer,self.month),0)
 
     def test_repeated_stale_and_reloaded_requests_never_double_award(self):
         data=self.payload('approved')

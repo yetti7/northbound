@@ -2919,3 +2919,30 @@ class PasswordRecoveryLimit(models.Model):
     key = models.CharField(max_length=64, primary_key=True)
     window = models.BigIntegerField()
     attempts = models.PositiveIntegerField(default=0)
+
+
+class ReaderRejectionNotice(models.Model):
+    CATEGORIES=[('book','Book submission'),('theme','Theme qualification'),('immersive','Immersive Reading'),
+                ('bingo','Bingo qualification'),('scavenger','Scavenger Hunt book qualification'),('photo','Scavenger Hunt photo')]
+    reader=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name='rejection_notices')
+    month=models.ForeignKey(ChallengeMonth,on_delete=models.PROTECT)
+    category=models.CharField(max_length=12,choices=CATEGORIES)
+    target_key=models.CharField(max_length=80)
+    event=models.ForeignKey(AuditEvent,on_delete=models.PROTECT)
+    book=models.ForeignKey(BookSubmission,null=True,blank=True,on_delete=models.PROTECT)
+    theme_claim=models.ForeignKey(ThemeClaim,null=True,blank=True,on_delete=models.PROTECT)
+    immersive_request=models.ForeignKey(ImmersiveRequest,null=True,blank=True,on_delete=models.PROTECT)
+    prompt_claim=models.ForeignKey(PromptClaim,null=True,blank=True,on_delete=models.PROTECT)
+    photo=models.ForeignKey(ScavengerPhotoSubmission,null=True,blank=True,on_delete=models.PROTECT)
+    target_label=models.CharField(max_length=600)
+    reason=models.TextField()
+    rejected_at=models.DateTimeField(default=timezone.now)
+    acknowledged_at=models.DateTimeField(null=True,blank=True)
+    resolved_at=models.DateTimeField(null=True,blank=True)
+    resolution_type=models.CharField(max_length=24,blank=True)
+    replacement_key=models.CharField(max_length=80,blank=True)
+
+    class Meta:
+        constraints=[models.UniqueConstraint(fields=['event','category','target_key'],name='unique_reader_rejection_event')]
+        indexes=[models.Index(fields=['reader','acknowledged_at','resolved_at'],name='reader_rejection_outstanding')]
+        ordering=['-rejected_at','-pk']

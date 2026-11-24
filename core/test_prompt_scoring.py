@@ -31,8 +31,10 @@ class PromptScoringTests(TransactionTestCase):
     def total(self):
         return challenge_score_totals(month=self.month,participant_ids=[self.reader.pk])[self.reader.pk]['total_pages']
     def review(self,book=None,**decisions):
-        return review_prompts(book or self.book,self.actor,decisions)
+        return review_prompts(book or self.book,self.actor,decisions,rejection_reasons={kind:'The book does not meet this prompt.' for kind in decisions})
     def correct(self,book=None,**changes):
+        if changes.get('prompt_decisions'):
+            changes.setdefault('prompt_rejection_reasons',{kind:'The book does not meet this prompt.' for kind in changes['prompt_decisions']})
         book=book or self.book;version=correction_version(book,self.actor)
         preview=preview_correction(submission=book,actor=self.actor,version=version,changes=changes)
         return apply_previewed_correction(submission=book,actor=self.actor,version=version,changes=changes,
@@ -112,7 +114,7 @@ class PromptScoringTests(TransactionTestCase):
 
     def test_stale_preview_has_no_writes(self):
         self.reserve(bingo=self.bingo[0].pk);self.review(bingo='qualified')
-        version=correction_version(self.book,self.actor);changes={'prompt_decisions':{'bingo':'rejected'}}
+        version=correction_version(self.book,self.actor);changes={'prompt_decisions':{'bingo':'rejected'},'prompt_rejection_reasons':{'bingo':'The book does not meet this prompt.'}}
         before=list(ModifierProvenance.objects.values());audits=AuditEvent.objects.count()
         preview=preview_correction(submission=self.book,actor=self.actor,version=version,changes=changes)
         self.assertEqual(list(ModifierProvenance.objects.values()),before);self.assertEqual(AuditEvent.objects.count(),audits)
@@ -250,14 +252,14 @@ class PromptScoringTests(TransactionTestCase):
         self.reserve(bingo=self.bingo[0].pk);self.review(bingo='qualified');self.client.force_login(self.actor)
         url=reverse('submission-edit',args=[self.group.slug,self.month.pk,self.book.pk])
         response=self.client.get(url);self.assertContains(response,'name="prompt_decision_bingo"')
-        data={'title':self.book.title,'author':self.book.author,'completed_on':'2027-01-03','submitted_pages':368,'version':response.context['form']['version'].value(),'bingo_prompt':self.bingo[0].pk,'prompt_decision_bingo':'rejected'}
+        data={'title':self.book.title,'author':self.book.author,'completed_on':'2027-01-03','submitted_pages':368,'version':response.context['form']['version'].value(),'bingo_prompt':self.bingo[0].pk,'prompt_decision_bingo':'rejected','prompt_rejection_reason_bingo':'The book does not meet this prompt.'}
         response=self.client.post(url,data)
         self.assertContains(response,'Preview before confirmation');self.assertContains(response,'Bingo qualification')
         self.assertEqual(self.total(),393)
 
 
     def test_completion_state_change_invalidates_correction_preview(self):
-        books=self.complete();book=books[-1];changes={'prompt_decisions':{'bingo':'rejected'}}
+        books=self.complete();book=books[-1];changes={'prompt_decisions':{'bingo':'rejected'},'prompt_rejection_reasons':{'bingo':'The book does not meet this prompt.'}}
         version=correction_version(book,self.actor)
         preview=preview_correction(submission=book,actor=self.actor,version=version,changes=changes)
         PromptCompletion.objects.filter(category__kind='bingo').update(is_active=False)

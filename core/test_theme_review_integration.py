@@ -90,6 +90,7 @@ class ThemeReviewIntegrationTests(TransactionTestCase):
             "status": submission_status,
             "verification_url": "",
             "review_notes": "Theme integration review",
+            "rejection_reason": "Unable to verify this book submission.",
             "claims-TOTAL_FORMS": str(len(claims)),
             "claims-INITIAL_FORMS": str(len(claims)),
             "claims-MIN_NUM_FORMS": "0",
@@ -100,6 +101,7 @@ class ThemeReviewIntegrationTests(TransactionTestCase):
                 f"claims-{index}-id": str(claim.pk),
                 f"claims-{index}-submission": str(self.submission.pk),
                 f"claims-{index}-status": claim_statuses[claim.pk],
+                f"claims-{index}-rejection_reason": "This book does not meet the selected Theme.",
             })
         response = self.client.post(
             url,

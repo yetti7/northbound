@@ -68,7 +68,7 @@ def _prompt(month, participant_id, prompt_id, *, photo_id=None):
 
 @atomic_reservations
 @observe_photo
-def create_photo_submission(*, month_id, actor, prompt_id, reader_confirmed, discord_message_url=''):
+def create_photo_submission(*, month_id, actor, prompt_id, reader_confirmed, discord_message_url='', replacement_notice=None):
     require_ready()
     if not actor.is_authenticated or not actor.is_active:
         raise PermissionDenied('An active authenticated Reader is required.')
@@ -114,6 +114,9 @@ def create_photo_submission(*, month_id, actor, prompt_id, reader_confirmed, dis
             'completion_bonus':prompt.category.completion_bonus,
             'required_prompt_set':prompt.category.frozen_prompt_set,
             'selected_at':now.isoformat(), 'selected_by_id':actor.pk})
+    if replacement_notice:
+        from .reader_rejections import resolve_replacement
+        resolve_replacement(actor,replacement_notice,category='photo',new_target=photo,photo=photo)
     _audit(photo, actor, 'scavenger_photo.created', prompt_id=prompt.pk)
     return photo
 
@@ -147,7 +150,7 @@ def transition_photo_reservation(*, photo_id, actor, version, status, reason='')
     before = photo.status
     if status == 'rejected' and before == 'pending':
         from .photo_review import review_photo_submission,photo_review_version
-        return review_photo_submission(photo_id=photo.pk,actor=actor,version=photo_review_version(photo,actor),decision='rejected')
+        return review_photo_submission(photo_id=photo.pk,actor=actor,version=photo_review_version(photo,actor),decision='rejected',rejection_reason=reason)
     if status == 'pending' and photo.reviewed_at:
         raise ValidationError('Reviewed Photo restoration belongs to the historical correction workflow. Submit a new attempt instead.')
     if before == status:

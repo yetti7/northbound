@@ -5,6 +5,7 @@ from .photo_validation import validate_discord_message_url
 
 
 class PhotoSubmissionForm(forms.Form):
+    replacement_notice=forms.IntegerField(required=False,min_value=1,widget=forms.HiddenInput)
     prompt = forms.ModelChoiceField(queryset=None, label='Scavenger Hunt Prompt', empty_label='Choose a Photo prompt')
     discord_message_url = forms.URLField(required=False, max_length=500, label='Discord Message Link (Optional)',
         help_text='A direct Discord message link, if available. Photos stay in Discord.')
@@ -32,6 +33,8 @@ class PhotoWithdrawalForm(forms.Form):
 
 
 class PhotoReviewForm(forms.Form):
+    rejection_reason=forms.CharField(required=False,max_length=4000,label='Reason for rejecting this photo submission',help_text='Visible to the Reader.',widget=forms.Textarea(attrs={'rows':2}))
+
     version = forms.CharField(widget=forms.HiddenInput)
     decision = forms.ChoiceField(choices=[('approved','Approve'),('rejected','Reject')], widget=forms.HiddenInput)
     reviewer_verified = forms.BooleanField(required=False, label='I have verified this photo in the designated Discord channel.')
@@ -40,6 +43,10 @@ class PhotoReviewForm(forms.Form):
         data = super().clean()
         if data.get('decision') == 'approved' and not data.get('reviewer_verified'):
             self.add_error('reviewer_verified','Confirm that you verified the photo before approval.')
+        if data.get('decision')=='rejected':
+            from .reader_rejections import validate_reason
+            try:data['rejection_reason']=validate_reason(data.get('rejection_reason',''))
+            except ValidationError as exc:self.add_error('rejection_reason',exc)
         return data
 
 
