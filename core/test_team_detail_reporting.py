@@ -74,6 +74,75 @@ class TeamDetailReportingTests(TestCase):
         self.client.force_login(user)
         return self.client.get(self.url, params or {})
 
+    def test_floater_reports_all_teams_without_enrollment_and_preserves_scores(self):
+        from .permissions import can_edit_submission, can_manage_months
+        user = get_user_model().objects.create_user("report-wide-floater")
+        member = self.member(user, "Floater")
+        staff = ChallengeStaffAssignment.objects.create(
+            month=self.month, membership=member, role=ChallengeStaffAssignment.Role.FLOATER,
+        )
+        self.add_progress()
+        before_books = list(BookSubmission.objects.values_list("pk", "approved_pages", "status"))
+        before_credits = list(ModifierProvenance.objects.values_list("pk", "amount", "is_active"))
+        edit_access = can_edit_submission(user, self.alpha_submission)
+        for team in self.month.teams.all():
+            url = reverse("team-detail", args=[self.group.slug, self.month.pk, team.pk])
+            self.client.force_login(user)
+            response = self.client.get(url, {"bonuses": "0", "sort": "base", "direction": "desc", "show_average": "1"})
+            self.assertEqual(response.status_code, 200)
+            for flag in ("can_view_reader_scores", "can_view_team_standings", "can_view_planning_data", "can_filter_progress"):
+                self.assertTrue(response.context[flag])
+            self.assertContains(response, 'type="date" name="from"')
+            self.assertContains(response, '<th>Base</th>', html=True)
+            self.assertNotContains(response, '<th>Modifier</th>', html=True)
+            self.assertEqual(response.context["sort_key"], "base")
+            for row in response.context["roster"]:
+                self.assertEqual(row.total_pages, row.base_pages)
+        response = self.get_as(user, {"from": "2026-08-05", "to": "2026-08-10", "bonuses": "1", "sort": "modifier", "direction": "desc"})
+        self.assertEqual(response.context["team_total"], 440)
+        self.assertEqual([(row.base_pages, row.modifier_pages, row.total_pages) for row in response.context["roster"]], [(300, 40, 340), (100, 0, 100), (0, 0, 0)])
+        response = self.get_as(user, {"themes": "complete", "tbr": "complete", "botm": "complete"})
+        self.assertEqual([row.participant_id for row in response.context["roster"]], [self.alpha.pk])
+        self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=member).exists())
+        self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=member).exists())
+        self.assertFalse(can_manage_months(user, self.group))
+        self.assertEqual(can_edit_submission(user, self.alpha_submission), edit_access)
+        self.assertEqual(self.client.get(reverse("team-create", args=[self.group.slug, self.month.pk])).status_code, 403)
+        self.assertEqual(list(BookSubmission.objects.values_list("pk", "approved_pages", "status")), before_books)
+        self.assertEqual(list(ModifierProvenance.objects.values_list("pk", "amount", "is_active")), before_credits)
+        # Same Group membership is insufficient outside the assigned Challenge.
+        other = ChallengeMonth.objects.create(group=self.group, name="Other", status="active", starts_on=self.month.starts_on, ends_on=self.month.ends_on)
+        other_team = Team.objects.create(month=other, name="Other Team", color="#123456")
+        url = reverse("team-detail", args=[self.group.slug, other.pk, other_team.pk])
+        self.assertFalse(self.client.get(url).context["can_view_reader_scores"])
+        staff.ended_at = timezone.now(); staff.save(update_fields=["ended_at"])
+        self.assertFalse(self.get_as(user).context["can_view_reader_scores"])
+
+    def test_role_controls_follow_existing_data_authority(self):
+        from .permissions import can_view_reader_scores, can_view_team_standings
+        users = [self.host_user, self.leader_user, self.ordinary_user]
+        for role in (Membership.Role.OWNER, Membership.Role.MODERATOR):
+            user = get_user_model().objects.create_user("report-" + role)
+            membership = self.member(user, role)
+            membership.role = role; membership.save(update_fields=["role"])
+            users.append(user)
+        users.append(get_user_model().objects.create_superuser("report-admin"))
+        for visibility in ChallengeMonth.CompetitionVisibility.values:
+            self.month.reader_scores_visibility = visibility
+            self.month.team_standings_visibility = visibility
+            self.month.save(update_fields=["reader_scores_visibility", "team_standings_visibility"])
+            for user in users:
+                with self.subTest(visibility=visibility, user=user.username):
+                    response = self.get_as(user, {"bonuses": "0", "show_average": "1", "show_last": "1", "show_completed": "1", "themes": "complete", "sort": "base"})
+                    score = can_view_reader_scores(user, self.month, team=self.team)
+                    self.assertEqual(response.context["can_view_reader_scores"], score)
+                    self.assertEqual('type="date" name="from"' in response.content.decode(), score)
+                    self.assertEqual('type="checkbox" name="show_average"' in response.content.decode(), response.context["can_view_planning_data"])
+                    self.assertEqual('<select name="themes"' in response.content.decode(), response.context["can_filter_progress"])
+                    self.assertEqual(response.context["sort_key"], "base" if score else "reader")
+                    if not can_view_team_standings(user, self.month, team=self.team):
+                        self.assertIsNone(response.context["team_total"])
+
     def add_progress(self):
         theme = MonthTheme.objects.create(bonus_rule="legacy_fixed", month=self.month, name="Theme", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
         ThemeClaim.objects.create(submission=self.alpha_submission, theme=theme, status=ThemeClaim.Status.APPROVED, approved_bonus_pages=20)
@@ -272,13 +341,17 @@ class TeamDetailReportingTests(TestCase):
                 self.assertContains(response, "731")
                 # Sorting preserves the viewer's query in hidden inputs; it must
                 # not expose actionable score controls or authoritative scores.
-                self.assertNotContains(response, 'type="date" name="from"')
-                self.assertNotContains(response, 'type="checkbox" name="bonuses"')
-                self.assertFalse(response.context["can_view_reader_scores"])
-                self.assertNotContains(response, '<th>Base</th>', html=True)
-                self.assertNotContains(response, '<th>Total</th>', html=True)
-                self.assertIsNone(response.context["team_total"])
-                self.assertFalse(hasattr(response.context["roster"][0], "base_pages"))
+                self.assertEqual(response.context["can_view_reader_scores"], whole_challenge)
+                if whole_challenge:
+                    self.assertContains(response, 'type="date" name="from"')
+                    self.assertContains(response, 'type="checkbox" name="bonuses"')
+                    self.assertContains(response, '<th>Base</th>', html=True)
+                    self.assertEqual(response.context["team_total"], 660)
+                else:
+                    self.assertNotContains(response, 'type="date" name="from"')
+                    self.assertNotContains(response, '<th>Base</th>', html=True)
+                    self.assertIsNone(response.context["team_total"])
+                    self.assertFalse(hasattr(response.context["roster"][0], "base_pages"))
                 listing = self.client.get(list_url, {"sort": "average"})
                 self.assertContains(listing, "AlphaDiscord")
                 self.assertContains(listing, "731")

@@ -345,6 +345,12 @@ def _can_view_competition_domain(user, month, visibility, *, team=None):
         return bool(team and team.month_id == month.pk and team.pk in host_teams)
     if _has_competition_staff_access(user, month, membership):
         return True
+    # Active Floaters report across their Challenge without Reader enrollment.
+    # Keep discoverability/lifecycle and restricted Host scope authoritative.
+    if (user.is_active and membership and can_view_challenge(user, month)
+            and (team is None or team.month_id == month.pk)
+            and is_active_floater(month, membership.pk)):
+        return True
     if not membership:
         return False
     if month.status in {month.Status.COMPLETED, month.Status.ARCHIVED}:

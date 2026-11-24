@@ -135,9 +135,9 @@ class FloaterStaffingTests(TestCase):
             self.assertEqual(response.status_code, 403)
         self.assertFalse(self.month.staff_assignments.filter(role=ChallengeStaffAssignment.Role.FLOATER).exists())
 
-    def test_floater_cannot_submit_or_gain_group_and_visibility_authority(self):
+    def test_floater_can_report_but_cannot_submit_or_gain_group_authority(self):
         self.create_floater()
-        self.assertFalse(can_view_team_standings(self.member_user, self.month))
+        self.assertTrue(can_view_team_standings(self.member_user, self.month))
         self.client.force_login(self.member_user)
         response = self.client.post(
             reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}),
