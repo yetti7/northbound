@@ -18,7 +18,7 @@ HOLDING=('reserved','qualified')
 
 
 def reservations_ready():
-    # Deliberately not environment activated in Phase 2. Tests may override settings.
+    # Released by default; retained for compatibility and fail-closed override tests.
     return getattr(settings,'NORTHBOUND_PROMPT_RESERVATIONS_READY',False) is True
 
 

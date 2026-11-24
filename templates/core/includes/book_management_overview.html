@@ -13,7 +13,8 @@
   {% endif %}{% endif %}
   {% for category in workspace.qualifications.prompts %}
   <article><h3>{{ category.label }}</h3><ul>{% for claim in category.claims %}<li>Prompt {{ claim.number }} · {{ claim.status }}</li>{% empty %}<li>No selected book prompt.</li>{% endfor %}</ul>
-  {% if not category.operational %}<p class="muted">Recorded history only; book-prompt automation is not available for this Challenge.</p>{% elif category.book_prompts %}<p>Existing book-prompt selections are available in the editor above. Selection does not award credit.</p>{% else %}<p>No book prompts are configured.</p>{% endif %}
+  <p class="muted">{{ category.availability }}</p>
+  {% if category.operational %}{% if category.book_prompts %}<p>Existing book-prompt selections are available in the editor above. Selection does not award credit.</p>{% else %}<p>No book prompts are configured.</p>{% endif %}{% if workspace.can_review %}{% if category.claims %}<a href="{{ workspace.review_url }}">Review {{ category.label }} qualification</a>{% endif %}{% endif %}{% endif %}
   {% if category.separate_photos %}<p>Scavenger photos use the separate Photo workflow; they are not book qualification claims.</p>{% endif %}
   {% if workspace.qualifications.prompt_report %}<a {% url 'prompt-progress-report' month.group.slug month.pk as progress_url %}href="{% navigation_url progress_url %}">View authorized prompt progress</a>{% endif %}</article>
   {% endfor %}
