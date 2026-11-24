@@ -7352,7 +7352,7 @@ def submission_review(request, group_slug, month_pk, pk):
                 or ModifierProvenance.objects.filter(source_type='theme_bonus',
                     source_reference=f'theme_claim:{claim_form.instance.pk}').exists())
         for field in list(matching_form.fields):
-            if field != 'matching_version':
+            if field != 'matching_version' and not field.startswith('prompt_'):
                 matching_form.fields.pop(field)
     claims_are_valid = claim_formset.is_valid() if claims.exists() else True
     if request.method == "POST":
@@ -7393,7 +7393,7 @@ def submission_review(request, group_slug, month_pk, pk):
                 return redirect('review-queue',group_slug=group_slug,month_pk=month_pk)
     _annotate_submission_edit(request.user, [submission])
     _annotate_submission_edit(request.user, [submission])
-    return _workspace_render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True) if prompt_reservations_ready() else []}, 'review')
+    return _workspace_render(request, "core/submission_review.html", {"timeline": submission_timeline(request.user, submission), "form": form, "claim_formset": claim_formset, "submission": submission, "matching_form": matching_form, "matching_cards": cards, "reader_requests": reader_requests, "reader_request_version": reader_service.version(submission, request.user), "prompt_review_claims": submission.prompt_claims.filter(is_current=True,state="reserved",earning_evidence={}) if prompt_reservations_ready() else []}, 'review')
 
 
 @login_required
