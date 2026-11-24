@@ -63,6 +63,23 @@ def resolve_replacement(user,pk,*,category,new_target,book=None,photo=None):
     notice.save(update_fields=['resolved_at','resolution_type','replacement_key'])
 
 
+def notice_cards(user,notices):
+    from django.urls import reverse
+    from .immersive import can_request_immersive
+    from .photo_submissions import can_submit_photo,available_photo_prompts
+    for notice in notices:
+        args=[notice.month.group.slug,notice.month_id]
+        view=reverse('photo-detail',args=[*args,notice.photo_id]) if notice.photo_id else reverse(
+            'submission-immersive' if notice.category=='immersive' else 'reader-submission',args=[*args,notice.book_id])
+        retry=''
+        if notice.category=='immersive' and notice.immersive_request.status=='rejected' and can_request_immersive(submission=notice.book,actor=user):
+            retry=reverse('submission-immersive',args=[*args,notice.book_id])+f'?retry_notice={notice.pk}'
+        elif (notice.category=='photo' and notice.photo.status=='rejected' and can_submit_photo(user,notice.month)
+              and available_photo_prompts(notice.month,notice.photo.participant_id).filter(pk=notice.photo.prompt_claim.prompt_id).exists()):
+            retry=reverse('photo-create',args=args)+f'?retry_notice={notice.pk}'
+        yield {'notice':notice,'view_url':view,'retry_url':retry}
+
+
 def replacement_notice(user,pk,category,*,book=None,month=None):
     try:key=int(pk)
     except (TypeError,ValueError):raise PermissionDenied('Invalid replacement notice.') from None

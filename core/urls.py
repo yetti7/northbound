@@ -13,7 +13,10 @@ from .discord_views import discord_notification_settings
 
 from .recap_views import recap_dashboard, recap_wrapped
 
+from .reader_rejection_views import acknowledge_notice
+
 urlpatterns = [
+    path('attention/rejections/<int:pk>/acknowledge/',acknowledge_notice,name='rejection-acknowledge'),
     path('groups/<slug:group_slug>/months/<int:month_pk>/teams/<int:team_pk>/reader-rumble/', reader_rumble, name='reader-rumble'),
     path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/correct/',photo_correct,name='photo-correct'),
     path('groups/<slug:group_slug>/months/<int:month_pk>/photos/<int:pk>/credit/<str:action>/',photo_credit_action,name='photo-credit-action'),

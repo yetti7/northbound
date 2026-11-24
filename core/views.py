@@ -184,6 +184,11 @@ def lifecycle_transition_targets(month):
 @login_required
 def needs_attention(request):
     summary = needs_attention_summary(request.user)
+    from .reader_rejections import outstanding,notice_cards
+    from django.core.paginator import Paginator
+    notices=outstanding(request.user).select_related('month__group','book__month__group','book__participant__user','photo__prompt_claim','immersive_request')
+    page=Paginator(notices,25).get_page(request.GET.get('rejections_page'))
+    summary.update(rejection_cards=list(notice_cards(request.user,page.object_list)),rejections_page=page)
     return render(request, "core/needs_attention.html", summary)
 
 
