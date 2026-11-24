@@ -604,6 +604,7 @@ DEFAULT_REGISTRATION_AGREEMENT = (
 
 
 class ChallengeMonth(models.Model):
+    host_review_access = models.CharField(max_length=12, null=True, blank=True, default="restricted", choices=[("restricted", "Restricted — Own Team Only"), ("unrestricted", "Unrestricted — All Teams")])
     branding_mode = models.CharField(max_length=16, choices=BRANDING_MODES, default="logo")
     discord_community_opt_in = models.BooleanField(default=False)
     discord_moderator_opt_in = models.BooleanField(default=False)

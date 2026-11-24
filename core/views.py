@@ -5083,8 +5083,18 @@ def challenge_host_list(request, group_slug, month_pk):
     if request.method == "POST" and not can_manage:
         return HttpResponseForbidden("Month management permission is required.")
     can_manage = can_manage and not challenge_history_locked(month)
-    form = ChallengeHostAssignmentForm(request.POST or None, month=month) if can_manage else None
-    if request.method == "POST" and form.is_valid():
+    from .forms import HostReviewAccessForm
+    access_before=month.host_review_access
+    access_action=request.method=='POST' and request.POST.get('action')=='host_review_access'
+    access_form=HostReviewAccessForm(request.POST if access_action else None,instance=month) if can_manage else None
+    if access_action and access_form.is_valid():
+        before=access_before
+        access_form.save()
+        AuditEvent.objects.create(actor=request.user,group=month.group,action='challenge.host_review_access',object_type='ChallengeMonth',object_id=str(month.pk),summary=f'Host Review Access: {before or "legacy"} → {month.host_review_access}')
+        messages.success(request,'Host Review Access saved.')
+        return redirect('challenge-host-list',group_slug=group_slug,month_pk=month_pk)
+    form = ChallengeHostAssignmentForm(request.POST if request.method=='POST' and not access_action else None, month=month) if can_manage else None
+    if request.method == "POST" and not access_action and form.is_valid():
         assignment = form.save(assigned_by=request.user)
         AuditEvent.objects.create(
             actor=request.user,
@@ -5106,6 +5116,7 @@ def challenge_host_list(request, group_slug, month_pk):
             "month": month,
             "form": form,
             "can_manage": can_manage,
+            "access_form": access_form,
             "current_hosts": assignments.filter(ended_at__isnull=True),
             "past_hosts": assignments.filter(ended_at__isnull=False).order_by("-ended_at"),
         },

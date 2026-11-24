@@ -166,6 +166,10 @@ def restricted_host_team_ids(user, month):
     if not getattr(user, "is_authenticated", False) or not is_challenge_host(user, month):
         return None
     enrollment = MonthEnrollment.objects.filter(month=month, participant__user=user).first()
+    if month.host_review_access == 'unrestricted':
+        return None
+    if month.host_review_access == 'restricted' and enrollment is not None and not enrollment.is_active:
+        return None
     if enrollment is None or (not enrollment.is_active and enrollment.host_scope_restored):
         return None
     if not enrollment.is_active:
@@ -173,6 +177,12 @@ def restricted_host_team_ids(user, month):
     return frozenset(TeamAssignment.objects.filter(
         month=month, participant_id=enrollment.participant_id, ended_at__isnull=True,
     ).values_list("team_id", flat=True))
+
+
+def host_self_review_allowed(user, month):
+    # NULL preserves pre-upgrade independent-review requirements until explicitly saved.
+    return bool(user.is_authenticated and user.is_active and month.host_review_access is not None
+                and is_challenge_host(user, month))
 
 
 def group_directory_visible_member_ids(user, group, participants):

@@ -1409,6 +1409,19 @@ class CompetitionVisibilityForm(forms.ModelForm):
         }
 
 
+class HostReviewAccessForm(forms.ModelForm):
+    host_review_access = forms.ChoiceField(label='Host Review Access', choices=ChallengeMonth._meta.get_field('host_review_access').choices)
+
+    class Meta:
+        model = ChallengeMonth
+        fields = ('host_review_access',)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.host_review_access is None:
+            self.initial['host_review_access']='restricted'
+
+
 class ChallengeHostAssignmentForm(forms.ModelForm):
     class Meta:
         model = ChallengeStaffAssignment
