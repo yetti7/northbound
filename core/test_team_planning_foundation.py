@@ -204,12 +204,18 @@ class TeamPlanningFoundationTests(TestCase):
         self.assertEqual((reader.base_pages, reader.modifier_pages, reader.total_pages), (100, 20, 120))
         self.assertContains(response, 'type="checkbox" name="bonuses" value="1" checked')
         self.assertContains(response, "Show Bonuses")
-        self.assertContains(response, "Filtered roster · Base + Modifier")
+        self.assertContains(response, "<small>Base + Bonus</small>", html=True)
+        self.assertEqual(response.context["team_total"], 430)
+        self.assertNotContains(response, "Filtered roster")
         base_only = self.client.get(self.team_url, {"bonuses": "0"})
         self.assertNotContains(base_only, "<th>Modifier</th>", html=True)
-        self.assertContains(base_only, "Filtered roster · Base only")
-        self.assertEqual(base_only.context["roster_total"], 350)
-        self.assertEqual(base_only.context["team_total"], 430)
+        self.assertContains(base_only, "<small>Base Pages</small>", html=True)
+        self.assertNotContains(base_only, "Filtered roster")
+        self.assertEqual(base_only.context["team_total"], 350)
+        for page in (response, base_only):
+            card = page.content.decode().split('data-team-total-card>', 1)[1].split('</div>', 1)[0]
+            self.assertEqual(card.count('<strong'), 1)
+            self.assertEqual(card.count('<small'), 1)
         submission.refresh_from_db()
         self.month.refresh_from_db()
         state_after = (

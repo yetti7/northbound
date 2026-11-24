@@ -115,10 +115,10 @@ class ChallengeParticipantDetailTests(TestCase):
         self.assertNotContains(floater, "secret response")
         self.assertNotContains(floater, "Private registration answer")
         self.assertContains(floater, "private.reader")
-        self.assertNotContains(floater, "<dt>Base</dt>", html=True)
-        self.assertNotContains(floater, ">100<")
-        self.assertNotContains(floater, ">25<")
-        self.assertNotContains(floater, "Modifiers / Rewards")
+        self.assertContains(floater, "<dt>Base</dt>", html=True)
+        self.assertContains(floater, ">100<")
+        self.assertContains(floater, ">25<")
+        self.assertContains(floater, "Modifiers / Rewards")
 
     def test_submissions_and_active_provenance_are_reader_and_challenge_scoped(self):
         other_submission = BookSubmission.objects.create(
@@ -161,6 +161,26 @@ class ChallengeParticipantDetailTests(TestCase):
             "group_slug": self.group.slug, "month_pk": self.month.pk, "pk": pending.pk,
         }) + '?section=review')
         self.assertContains(queue, hardcover_url)
+        self.assertNotContains(queue, "private-catalog-material")
+
+    def test_review_queue_hardcover_link_rejects_unsafe_catalog_urls(self):
+        pending = BookSubmission.objects.create(
+            month=self.month, participant=self.members["reader"],
+            title="Reference safety", author="Author", catalog_book=self.catalog_book,
+            catalog_edition=self.catalog_edition, book_format="ebook",
+            completed_on=date(2026, 8, 12), submitted_pages=120,
+        )
+        url = reverse("review-queue", args=[self.group.slug, self.month.pk])
+        for unsafe in ["javascript:alert(1)", "https://evil.example/books/fake", "https://hardcover.app@evil.example/books/fake"]:
+            self.catalog_edition.source_url = unsafe
+            self.catalog_edition.save(update_fields=["source_url"])
+            self.catalog_book.source_url = unsafe
+            self.catalog_book.save(update_fields=["source_url"])
+            response = self.get_as("host", url)
+            self.assertNotContains(response, 'class="external-book-link"')
+            self.assertNotContains(response, unsafe)
+            self.assertContains(response, pending.title)
+            self.assertEqual(response.context["queue_total"], 1)
 
     def test_progress_uses_zero_actual_denominators_without_creating_data(self):
         response = self.get_as("host")

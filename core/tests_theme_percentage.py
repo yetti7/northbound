@@ -61,7 +61,9 @@ class PercentageThemeTests(TestCase):
             c = ThemeClaim.objects.get(pk=pk)
             c.status = decision
             claims.append(c)
-        apply_submission_review(self.submission, claims, self.user, timezone.now())
+        apply_submission_review(self.submission, claims, self.user, timezone.now(),
+            rejection_reason="The submitted book could not be verified." if status == "rejected" else None,
+            theme_reasons={claim.pk: "The book does not meet this Theme requirement." for claim in claims if claim.status == "rejected"})
         self.submission.refresh_from_db()
 
     def request(self, target, action):

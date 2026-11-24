@@ -174,16 +174,19 @@ class GroupChallengeUi2Tests(TestCase):
                 "group_slug": self.group.slug, "month_pk": self.month.pk,
             }))
 
-    def test_needs_attention_is_one_stable_authorized_destination_at_zero(self):
+    def test_needs_attention_is_hidden_for_nonadministrators_at_zero(self):
         destination = reverse("needs-attention")
         for user in (self.host_user, self.floater_user):
             with self.subTest(user=user.username):
                 response = self.get_as(user, self.challenge_url)
-                self.assertEqual(response.content.decode().count(f'href="{destination}"'), 1)
-                self.assertContains(response, "Needs Attention")
+                self.assertNotContains(response, f'href="{destination}"')
                 self.assertNotContains(response, "needs-attention-count")
         reader = self.get_as(self.reader_user, self.challenge_url)
         self.assertNotContains(reader, destination)
+        administrator = get_user_model().objects.create_superuser("ui2-platform")
+        page = self.get_as(administrator, self.challenge_url)
+        self.assertContains(page, f'href="{destination}"')
+        self.assertContains(page, "Needs Attention")
 
     def test_ui2_mobile_rules_preserve_stacking_and_overflow_safety(self):
         with open("static/css/theme.css", encoding="utf-8") as stylesheet:

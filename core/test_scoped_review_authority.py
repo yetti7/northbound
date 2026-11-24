@@ -135,7 +135,7 @@ class ScopedReviewAuthorityTests(TestCase):
         self.assertEqual(self.submission_two.reviewed_by, self.floater_user)
         self.assertFalse(MonthEnrollment.objects.filter(month=self.month, participant=self.floater).exists())
         self.assertFalse(TeamAssignment.objects.filter(month=self.month, participant=self.floater).exists())
-        self.assertFalse(can_view_team_standings(self.floater_user, self.month))
+        self.assertTrue(can_view_team_standings(self.floater_user, self.month))
         self.assertEqual(self.client.post(reverse("challenge-floater-list", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk}), {"membership": self.owner.pk}).status_code, 403)
         self.assertEqual(self.client.get(reverse("submission-create", kwargs={"group_slug": self.group.slug, "month_pk": self.month.pk})).status_code, 403)
 

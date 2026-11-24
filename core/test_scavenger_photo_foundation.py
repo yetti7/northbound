@@ -53,6 +53,8 @@ class PhotoFoundationTests(TestCase):
             prompt_id=self.photo_prompt.pk, reader_confirmed=True, **values)
 
     def transition(self, photo, status, actor=None, **values):
+        if status == 'rejected':
+            values.setdefault('reason', 'The photo does not satisfy the selected prompt.')
         return transition_photo_reservation(photo_id=photo.pk, actor=actor or self.actor,
             version=photo.version, status=status, **values)
 

@@ -13,6 +13,7 @@
 <ul class="review-types" aria-label="Pending review types">{% for label,count in row.types %}<li class="pill">{{ label }}{% if count > 1 %} ({{ count }}){% endif %}</li>{% endfor %}</ul>
 {% for claim in row.immersive %}<p>{{ claim.captured_percent }}% · {{ claim.submission.approved_pages }} approved base pages · {{ claim.calculated_bonus }} bonus pages</p>{% endfor %}</div>
 <div class="review-row-actions">{% if row.kind == 'book' %}<a class="button secondary" {% url 'submission-manage' month.group.slug month.pk row.book.pk as review_url %}href="{% navigation_url review_url|add:'?section=review' %}">Review &amp; Scoring</a>
+{% include 'core/includes/hardcover_link.html' with url=row.book.hardcover_url book_title=row.book.title %}
 {% for claim in row.immersive %}<a href="{% url 'immersive-action' month.group.slug month.pk claim.pk 'approve' %}">Approve Immersive</a><a href="{% url 'immersive-action' month.group.slug month.pk claim.pk 'reject' %}">Reject Immersive</a>{% endfor %}
 {% else %}<a class="button secondary" href="{% url 'photo-review' month.group.slug month.pk row.photo.pk %}">Review Photo</a>{% if row.photo.discord_message_url %}<a href="{{ row.photo.discord_message_url }}" target="_blank" rel="noopener noreferrer">View Discord Post</a>{% endif %}{% endif %}</div>
 </article>{% endfor %}</div></details>{% endfor %}</details>{% empty %}<div class="empty-state"><strong>No pending reviews.</strong></div>{% endfor %}</div>

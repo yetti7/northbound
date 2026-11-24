@@ -101,16 +101,26 @@ class WrappedBrandingTests(TestCase):
             self.assertEqual(page.context['export_data']['slides'],before['slides'])
         self.assertEqual(AuditEvent.objects.count(),audits)
 
-    def test_partial_inheritance_and_logo_only_never_offer_banner(self):
+    def test_partial_inheritance_and_export_artwork_are_independent_of_card_modes(self):
         self.team.logo='';self.team.save(update_fields=['logo'])
         option=next(t for t in self.options(self.wrap())['teams'] if t['id']==str(self.team.pk))
         self.assertEqual(option['logo'],self.month.logo.url);self.assertEqual(option['banner'],self.team.banner.url)
         self.month.logo='';self.month.save(update_fields=['logo'])
         option=self.options(self.wrap())['teams'][0];self.assertEqual(option['logo'],self.group.logo.url)
         self.group.branding_mode='logo';self.group.save(update_fields=['branding_mode'])
+        # Group mode no longer hides independently configured Team banners.
+        self.assertTrue(any(t['banner'] for t in self.options(self.wrap())['teams']))
+        self.month.branding_mode='logo';self.month.save(update_fields=['branding_mode'])
+        self.month.teams.update(branding_mode='logo')
         options=self.options(self.wrap())
-        self.assertTrue(all(not t['banner'] for t in options['teams']))
+        self.assertEqual({t['id']: t['banner'] for t in options['teams']},
+                         {str(self.team.pk): self.team.banner.url})
         self.assertTrue(all(not t['banner'] for t in options['art'].values()))
+        # Missing actual assets, rather than card mode, remove export artwork.
+        self.month.teams.update(banner='missing-export-banner.png')
+        self.month.banner='';self.month.save(update_fields=['banner'])
+        self.group.banner='';self.group.save(update_fields=['banner'])
+        self.assertTrue(all(not t['banner'] for t in self.options(self.wrap())['teams']))
 
     def test_multiple_challenges_same_group_and_mixed_groups(self):
         other=ChallengeMonth.objects.create(group=self.group,name='Second Challenge',status='active',starts_on=self.month.starts_on,ends_on=self.month.ends_on)

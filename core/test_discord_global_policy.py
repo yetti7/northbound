@@ -234,17 +234,23 @@ class DiscordOverrideMigrationTests(TransactionTestCase):
 
     def test_existing_platform_and_group_settings_remain_inherited_and_unchanged(self):
         executor=MigrationExecutor(connection)
-        executor.migrate([self.previous])
-        old=executor.loader.project_state([self.previous]).apps
+        leaves=executor.loader.graph.leaf_nodes()
         try:
+            executor.migrate([self.previous])
+            old=executor.loader.project_state([self.previous]).apps
             old.get_model('core','PlatformSettings').objects.create(pk=1,display_name='Preserved Platform',timezone='UTC',allow_public_registration=False,allow_user_group_creation=False)
             group=old.get_model('core','ReadingGroup').objects.create(name='Preserved Group',slug='preserved-group')
             old.get_model('core','GroupDiscordNotification').objects.create(group_id=group.pk,enabled=True,moderator_enabled=True,community_enabled=False,encrypted_webhook='opaque-synthetic-ciphertext')
             before=list(old.get_model('core','GroupDiscordNotification').objects.values())
             MigrationExecutor(connection).migrate([self.target])
-            saved=PlatformSettings.objects.get(pk=1)
+            historical=MigrationExecutor(connection).loader.project_state([self.target]).apps
+            saved=historical.get_model('core','PlatformSettings').objects.get(pk=1)
             self.assertIsNone(saved.discord_notifications_override)
             self.assertEqual((saved.display_name,saved.timezone,saved.allow_public_registration,saved.allow_user_group_creation),('Preserved Platform','UTC',False,False))
-            self.assertEqual(before,list(GroupDiscordNotification.objects.values()))
+            self.assertEqual(before,list(historical.get_model('core','GroupDiscordNotification').objects.values()))
         finally:
-            MigrationExecutor(connection).migrate([self.target])
+            MigrationExecutor(connection).migrate(leaves)
+        # Current-model queries also prove later tests receive the restored schema.
+        list(GroupDiscordNotification.objects.values('community_cleanup'))
+        from .models import ChallengeMonth
+        list(ChallengeMonth.objects.values('host_review_access'))

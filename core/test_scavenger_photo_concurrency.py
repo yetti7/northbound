@@ -27,7 +27,8 @@ class PhotoSQLiteConcurrencyTests(TransactionTestCase):
             try:
                 barrier.wait(timeout=10)
                 pk,version,decision=request
-                result=review_photo_submission(photo_id=pk,actor=actor,version=version,decision=decision,reviewer_verified=True)
+                result=review_photo_submission(photo_id=pk,actor=actor,version=version,decision=decision,reviewer_verified=True,
+                    rejection_reason='The photo does not satisfy the selected prompt.' if decision == 'rejected' else '')
                 return ('ok',result.status)
             except (ValidationError,PermissionDenied) as exc:
                 return ('conflict',type(exc).__name__)
